@@ -93,7 +93,8 @@ function paintSidebar() {
   if (!el) return;
   const n = needsYou().length;
   const groups = groupSessions(S.sessions);
-  const html = `<header>${label("Collab", "sq ink")}${tag("Web")}<span class="end">${tag(engine.nano ? "Gemini Nano on device" : "Gemini", engine.nano ? "peri" : "accent")}</span></header>
+  const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${engine.nano ? "peri" : "accent"}" data-act="screen" data-screen="settings"
+      title="Which AI runs your agent — tap for details">✦ ${engine.nano ? "Gemini Nano · on this device" : "Powered by Gemini"}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>

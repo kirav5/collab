@@ -194,3 +194,8 @@ details.more[open] { display: grid; gap: 10px; }
 .qr svg { width: 100%; height: 100%; display: block; }
 @media (max-width: 520px) { .qr-card { grid-template-columns: 1fr; } }
 @media print { .sidebar, .topbar, .composer { display: none !important; } }
+
+/* Sidebar: which AI runs your agent (opens Settings › AI engine). */
+.engine-chip { font: 600 11px/1 var(--sans); padding: 6px 9px; border-radius: 999px; border: 1px solid var(--hairline); background: var(--surface2); color: var(--accent); cursor: pointer; }
+.engine-chip.peri { color: var(--peri); }
+.engine-chip:hover { border-color: currentColor; }
