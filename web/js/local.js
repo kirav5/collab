@@ -1,4 +1,5 @@
-// The device: what stays in this browser is only chat history (sessions). Facts of every tier — Private included —
+// The device: what this browser keeps is chat history (sessions), also kept in the account so every device and the
+// installed app show the same chats. Facts of every tier — Private included —
 // live on the server under the owner's account; Private is stored but the policy gate never shares it. The old
 // "facts"/"limits" stores may still exist in older browsers' IndexedDB; they are simply no longer read.
 const DB = "collab", VERSION = 1;

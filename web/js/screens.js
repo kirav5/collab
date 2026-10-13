@@ -193,7 +193,7 @@ export const screens = {
             : `<button class="btn secondary compact" data-act="push-on">🔔 Turn on notifications</button>`}</dd></dl></div>
         <div class="card">${label("Account", "sq")}
           ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and context on other devices.</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
-          <div class="row"><button class="btn danger compact" data-act="clear-device">Erase this device's chats</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
+          <div class="row"><button class="btn danger compact" data-act="clear-device">Delete chat history</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
     },
     async act(a, el, S, h) {
       if (a === "save-profile") { const f = new FormData(el.closest("form")); busy(el, true); S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), bio: f.get("bio"), areaName: f.get("area") }); h.toast("Saved."); h.paint(); return true; }
@@ -218,7 +218,7 @@ export const screens = {
         } catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
-      if (a === "clear-device") { if (confirm("Erase the chat history kept on this device? Your context and facts stay in your account.")) { await local.clear(); location.reload(); } return true; }
+      if (a === "clear-device") { if (confirm("Delete your chat history on every device? Your context, facts, people and deals stay.")) { await api("/api/chats/clear", {}); await local.clear(); location.reload(); } return true; }
       if (a === "sign-out") {
         if (session.user?.isAnonymous && !confirm("You're a guest: signing out loses this identity for good. Sign in with Google first to keep it. Sign out anyway?")) return true;
         await session.signOut(); return true;

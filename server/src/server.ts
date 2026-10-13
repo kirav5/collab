@@ -148,6 +148,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/a2a", a2a.router);
+app.use("/api/chats", express.json({ limit: "700kb" })); // chat history uploads are larger than any other call
 app.use("/api", express.json({ limit: "128kb" }));
 
 // App Check: calls to the API come from our own web app. "monitor" logs what would be refused; "enforce" refuses.
@@ -250,6 +251,28 @@ app.post("/api/engagements/:id/ask", route(async req => {
   if (side === "requester") await sendTurn(cfg, e.id, turn);
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn);
   return load(db, e.id);
+}));
+
+// Chat history follows the account (an installed app and a browser tab keep separate storage, and so do phones):
+// each chat is stored under its owner only, read back only by them. Like Private facts, it's never shared.
+const CHATS = "chats";
+const chatKey = (uid: string, id: string) => `${uid}_${id.replace(/[^\w-]/g, "").slice(0, 40)}`;
+app.get("/api/chats", route(async req => {
+  const rows = (await db.find(CHATS, [["owner", "==", req.uid]], 200)) as { id: string; updatedAt: number; json: string }[];
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100).flatMap(r => { try { return [JSON.parse(r.json)]; } catch { return []; } });
+}));
+app.post("/api/chats", route(async req => {
+  const c = req.body?.chat;
+  if (!c || typeof c.id !== "string" || !Array.isArray(c.messages)) throw new HttpError(400, "not a chat");
+  const json = JSON.stringify({ ...c, messages: c.messages.slice(-200) });
+  if (json.length > 600_000) throw new HttpError(413, "This chat is too long to keep in your account; it stays on this device.");
+  await db.set(CHATS, chatKey(req.uid, c.id), { owner: req.uid, id: c.id, updatedAt: Number(c.updatedAt) || now(), json });
+  return { ok: true };
+}));
+app.post("/api/chats/clear", route(async req => {
+  const rows = (await db.find(CHATS, [["owner", "==", req.uid]], 500)) as { id: string }[];
+  await Promise.all(rows.map(r => db.delete(CHATS, chatKey(req.uid, r.id))));
+  return { deleted: rows.length };
 }));
 
 app.get("/api/contacts", route(async req => db.find(CONTACTS, [["owner", "==", req.uid]], 300)));

@@ -67,6 +67,8 @@ async function boot() {
   detectNano().then(() => paintSidebar());
   S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
+  syncChats();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) syncChats(); });
   root.innerHTML = `<div class="app" id="app">
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
@@ -231,7 +233,34 @@ async function sendDirect(cur, text) {
 
 // MARK: - Sessions
 
-async function saveSession(s) { s.updatedAt = now(); await local.put("sessions", s); S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)]; }
+async function saveSession(s) { s.updatedAt = now(); await local.put("sessions", s); S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)]; upload(s); }
+
+// Chat history also lives in the account (owner-only), so the installed app, other browsers and other devices show
+// the same chats. Uploads wait a moment so a burst of edits is one write.
+const pending = new Map();
+function upload(s) {
+  clearTimeout(pending.get(s.id));
+  pending.set(s.id, setTimeout(() => { pending.delete(s.id); api("/api/chats", { chat: s }).catch(() => {}); }, 1500));
+}
+
+/** Brings in chats saved from other devices and sends up the ones only this device has (older chats included). */
+async function syncChats() {
+  const remote = await api("/api/chats").catch(() => null);
+  if (!remote) return;
+  const mine = new Map(S.sessions.map(s => [s.id, s]));
+  let changed = false;
+  for (const r of remote) {
+    const l = mine.get(r.id);
+    if (!l || r.updatedAt > l.updatedAt) { await local.put("sessions", r); mine.set(r.id, r); changed = true; }
+  }
+  const there = new Map(remote.map(r => [r.id, r.updatedAt]));
+  for (const l of S.sessions) if (!there.has(l.id) || l.updatedAt > there.get(l.id)) api("/api/chats", { chat: l }).catch(() => {});
+  if (changed) {
+    S.sessions = [...mine.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+    S.current ??= S.sessions[0]?.id ?? null;
+    paint();
+  }
+}
 
 async function send(text) {
   text = text.trim();
