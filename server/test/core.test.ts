@@ -1,0 +1,61 @@
+// Who may see what, and what may cross: the policy (deny by default), the privacy wall, and the brief providers see.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { memoryDocs } from "../src/docs.ts";
+import { FACTS, PROFILES, RULES, allowedFor, shapeAnswer } from "../src/core/policy.ts";
+import { clean } from "../src/core/wall.ts";
+import { SharedBriefTask } from "../src/core/tasks.ts";
+import type { Fact, Rule } from "../src/core/model.ts";
+
+const now = Math.floor(Date.now() / 1000);
+const fact = (id: string, tier: Fact["tier"], topics: string[] = []): Fact => ({ id, owner: "ann", text: id, tier, topics, offer: null, createdAt: now, updatedAt: now });
+const rule = (id: string, audience: string, topics: string[], extra: Partial<Rule> = {}): Rule =>
+  ({ id, owner: "ann", audience, audienceName: audience, topics, shape: "full", approval: "auto", expires: null, createdAt: now, ...extra });
+
+async function world() {
+  const db = memoryDocs();
+  await db.set(PROFILES, "ann", { uid: "ann", handle: "ann", name: "Ann", bio: "", area: null, createdAt: now });
+  for (const f of [fact("public note", "public"), fact("availability", "protected", ["availability"]), fact("health", "protected", ["health"]), fact("work", "protected", ["work"])]) await db.set(FACTS, f.id, f);
+  await db.set(RULES, "r1", rule("r1", "bob", ["availability"]));
+  await db.set(RULES, "r2", rule("r2", "anyone", ["work"], { approval: "review" }));
+  await db.set(RULES, "r3", rule("r3", "bob", ["health"], { expires: now - 10 }));
+  await db.set(RULES, "r4", rule("r4", "bob", ["health"], { revoked: true }));
+  return db;
+}
+
+test("strangers get Public facts and only what an 'anyone' rule names", async () => {
+  const db = await world();
+  assert.deepEqual((await allowedFor(db, "ann", null, now)).map(a => a.fact.id).sort(), ["public note", "work"]);
+});
+
+test("a named person gets their rule's topics; expired and revoked rules give nothing", async () => {
+  const db = await world();
+  const bob = await allowedFor(db, "ann", "bob", now);
+  assert.deepEqual(bob.map(a => a.fact.id).sort(), ["availability", "public note", "work"]);
+  assert.equal(bob.find(a => a.fact.id === "work")?.via?.approval, "review");
+  assert.ok(!bob.some(a => a.fact.id === "health"));
+});
+
+test("pausing shares nothing at all", async () => {
+  const db = await world();
+  await db.merge(PROFILES, "ann", { paused: true });
+  assert.deepEqual(await allowedFor(db, "ann", "bob", now), []);
+});
+
+test("answers are cut to the rule's level of detail", () => {
+  assert.equal(shapeAnswer("Yes, weekday evenings after 6. Not weekends.", "oneLine"), "Yes, weekday evenings after 6.");
+  assert.equal(shapeAnswer("No, not this week.", "yesNo"), "No.");
+});
+
+test("the wall removes contact details and the owner's other people, keeps the recipient's name", () => {
+  const out = clean("Call Priya on +91 98450 12345 or mail priya@x.com, Sam knows; see https://x.y", [{ name: "Priya", replacement: "a contact" }, { name: "Sam", replacement: "a contact" }], ["Sam"]);
+  assert.ok(!/98450|@x\.com|https/.test(out));
+  assert.ok(out.includes("a contact") && out.includes("Sam"));
+});
+
+test("the brief providers see carries no money and no limit", () => {
+  const input = { text: "2BHK in Indiranagar, budget 36000", category: "property-rent", limit: 36_000 };
+  assert.equal(SharedBriefTask.validate({ title: "2BHK in Indiranagar", summary: "Budget 36,000 a month." }, input), null);
+  assert.equal(SharedBriefTask.validate({ title: "2BHK in Indiranagar", summary: "Up to 36 thousand." }, input), null);
+  assert.ok(SharedBriefTask.validate({ title: "2BHK in Indiranagar", summary: "A two-bedroom flat to rent near 100 Feet Road, pets welcome." }, input));
+});

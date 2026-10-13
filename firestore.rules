@@ -1,0 +1,17 @@
+rules_version = '2';
+// The server (Cloud Run, Admin SDK) does every write. A signed-in person may watch, live, only the conversations
+// between agents they take part in and their own device's inbox. Facts, rules, limits and A2A tasks are server-only;
+// private context is never in Firestore at all (it stays on the owner's device).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /engagements/{id} {
+      allow read: if request.auth != null && request.auth.uid in resource.data.participants;
+    }
+    match /inbox/{id} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.owner;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,741 @@
+{
+ "version": 1,
+ "domains": [
+  {
+   "id": "property-sale",
+   "label": "Property for sale",
+   "family": "property",
+   "priceUnit": null,
+   "units": [],
+   "terms": [
+    {
+     "key": "bedrooms",
+     "label": "Bedrooms",
+     "kind": "number",
+     "required": true
+    },
+    {
+     "key": "bathrooms",
+     "label": "Bathrooms",
+     "kind": "number"
+    },
+    {
+     "key": "area",
+     "label": "Area (sq ft)",
+     "kind": "number",
+     "unit": "sq ft"
+    },
+    {
+     "key": "furnishing",
+     "label": "Furnishing",
+     "kind": "text"
+    },
+    {
+     "key": "parking",
+     "label": "Parking",
+     "kind": "text",
+     "ask": "Is there parking?"
+    },
+    {
+     "key": "floor",
+     "label": "Floor",
+     "kind": "text",
+     "ask": "Which floor is it on, and is there a lift?"
+    },
+    {
+     "key": "pets",
+     "label": "Pets allowed",
+     "kind": "text"
+    },
+    {
+     "key": "facing",
+     "label": "Facing",
+     "kind": "text",
+     "ask": "Which way does it face?"
+    },
+    {
+     "key": "age",
+     "label": "Building age",
+     "kind": "text",
+     "ask": "How old is the building?"
+    },
+    {
+     "key": "available",
+     "label": "Available from",
+     "kind": "text"
+    },
+    {
+     "key": "negotiable",
+     "label": "Price negotiable",
+     "kind": "text"
+    },
+    {
+     "key": "amenities",
+     "label": "Amenities",
+     "kind": "text",
+     "ask": "What amenities are there?"
+    }
+   ],
+   "sellerAsks": [
+    "When are you planning to buy?",
+    "Is your loan pre-approved, or is it a cash purchase?"
+   ],
+   "buyerAsks": [
+    "Is it still available?"
+   ]
+  },
+  {
+   "id": "property-rent",
+   "label": "Property for rent",
+   "family": "property",
+   "priceUnit": "month",
+   "units": [],
+   "terms": [
+    {
+     "key": "bedrooms",
+     "label": "Bedrooms",
+     "kind": "number",
+     "required": true
+    },
+    {
+     "key": "furnishing",
+     "label": "Furnishing",
+     "kind": "text",
+     "ask": "Is it furnished?"
+    },
+    {
+     "key": "parking",
+     "label": "Parking",
+     "kind": "text",
+     "ask": "Is there parking?"
+    },
+    {
+     "key": "pets",
+     "label": "Pets allowed",
+     "kind": "text"
+    },
+    {
+     "key": "deposit_months",
+     "label": "Deposit (months)",
+     "kind": "number",
+     "unit": "months",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "maintenance",
+     "label": "Maintenance",
+     "kind": "text",
+     "ask": "What's the monthly maintenance?"
+    },
+    {
+     "key": "available",
+     "label": "Available from",
+     "kind": "text",
+     "ask": "When is it available from?"
+    },
+    {
+     "key": "lock_in_months",
+     "label": "Lock-in (months)",
+     "kind": "number",
+     "unit": "months",
+     "buyerPrefers": "lower"
+    }
+   ],
+   "sellerAsks": [
+    "When would you like to move in?",
+    "Who will be living there?"
+   ],
+   "buyerAsks": [
+    "Is it still available?"
+   ]
+  },
+  {
+   "id": "wholesale",
+   "label": "Wholesale supply",
+   "family": "b2b",
+   "priceUnit": "unit",
+   "units": [
+    "bag",
+    "bags",
+    "kg",
+    "kgs",
+    "tonne",
+    "tonnes",
+    "ton",
+    "tons",
+    "quintal",
+    "quintals",
+    "carton",
+    "cartons",
+    "crate",
+    "crates",
+    "litre",
+    "litres",
+    "liter",
+    "liters",
+    "unit",
+    "units",
+    "box",
+    "boxes",
+    "piece",
+    "pieces",
+    "pcs"
+   ],
+   "terms": [
+    {
+     "key": "quantity",
+     "label": "Quantity",
+     "kind": "number",
+     "required": true
+    },
+    {
+     "key": "min_order",
+     "label": "Minimum order",
+     "kind": "number",
+     "ask": "What's the minimum order?"
+    },
+    {
+     "key": "delivery_days",
+     "label": "Delivery (days)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "payment_days",
+     "label": "Payment terms (days of credit)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "higher"
+    },
+    {
+     "key": "grade",
+     "label": "Grade / quality",
+     "kind": "text",
+     "ask": "What grade or variety is it?"
+    },
+    {
+     "key": "gst_invoice",
+     "label": "GST invoice",
+     "kind": "text",
+     "ask": "Do you provide a GST invoice?"
+    },
+    {
+     "key": "sample",
+     "label": "Sample",
+     "kind": "text",
+     "ask": "Can you share a sample first?"
+    }
+   ],
+   "sellerAsks": [
+    "What quantity do you need, and how often?",
+    "Where should it be delivered?"
+   ],
+   "buyerAsks": [
+    "What is your lead time?",
+    "Do you provide a GST invoice?"
+   ]
+  },
+  {
+   "id": "freight",
+   "label": "Freight / transport",
+   "family": "b2b",
+   "priceUnit": "trip",
+   "units": [
+    "trip",
+    "trips",
+    "tonne",
+    "tonnes",
+    "ton",
+    "tons",
+    "kg",
+    "km"
+   ],
+   "terms": [
+    {
+     "key": "weight_tonnes",
+     "label": "Weight (tonnes)",
+     "kind": "number",
+     "unit": "tonnes",
+     "required": true
+    },
+    {
+     "key": "route_to",
+     "label": "Destination",
+     "kind": "text"
+    },
+    {
+     "key": "pickup_days",
+     "label": "Pickup within (days)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "vehicle",
+     "label": "Vehicle",
+     "kind": "text",
+     "ask": "What type of vehicle will it be?"
+    },
+    {
+     "key": "insurance",
+     "label": "Insurance",
+     "kind": "text",
+     "ask": "Is transit insurance included?"
+    },
+    {
+     "key": "payment_days",
+     "label": "Payment terms (days)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "higher"
+    }
+   ],
+   "sellerAsks": [
+    "What's the load and pickup date?",
+    "Is loading/unloading included on your side?"
+   ],
+   "buyerAsks": [
+    "Is the vehicle available on that date?",
+    "Is transit insurance included?"
+   ]
+  },
+  {
+   "id": "services",
+   "label": "Professional services",
+   "family": "b2b",
+   "priceUnit": "project",
+   "units": [
+    "project",
+    "hour",
+    "hours",
+    "day",
+    "days",
+    "month",
+    "page",
+    "pages"
+   ],
+   "terms": [
+    {
+     "key": "deadline_days",
+     "label": "Delivery (days)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "revisions",
+     "label": "Revisions",
+     "kind": "number",
+     "buyerPrefers": "higher"
+    },
+    {
+     "key": "advance_percent",
+     "label": "Advance (%)",
+     "kind": "number",
+     "unit": "%",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "scope",
+     "label": "Scope",
+     "kind": "text",
+     "ask": "What exactly is included?"
+    },
+    {
+     "key": "portfolio",
+     "label": "Portfolio",
+     "kind": "text",
+     "ask": "Can you share previous work?"
+    }
+   ],
+   "sellerAsks": [
+    "What's the scope and your deadline?",
+    "Do you have a reference or brief?"
+   ],
+   "buyerAsks": [
+    "Can you share previous work?",
+    "How many revisions are included?"
+   ]
+  },
+  {
+   "id": "equipment-rental",
+   "label": "Equipment rental",
+   "family": "b2b",
+   "priceUnit": "day",
+   "units": [
+    "day",
+    "days",
+    "week",
+    "weeks",
+    "month",
+    "hour",
+    "hours"
+   ],
+   "terms": [
+    {
+     "key": "duration_days",
+     "label": "Duration (days)",
+     "kind": "number",
+     "unit": "days",
+     "required": true
+    },
+    {
+     "key": "operator",
+     "label": "Operator included",
+     "kind": "text",
+     "ask": "Is an operator included?"
+    },
+    {
+     "key": "fuel",
+     "label": "Fuel",
+     "kind": "text",
+     "ask": "Is fuel included?"
+    },
+    {
+     "key": "deposit_percent",
+     "label": "Deposit (%)",
+     "kind": "number",
+     "unit": "%",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "transport",
+     "label": "Transport to site",
+     "kind": "text",
+     "ask": "Is transport to the site included?"
+    }
+   ],
+   "sellerAsks": [
+    "Which dates and site location?",
+    "Do you need an operator?"
+   ],
+   "buyerAsks": [
+    "Is an operator included?",
+    "Is fuel included?"
+   ]
+  },
+  {
+   "id": "commercial-lease",
+   "label": "Commercial space",
+   "family": "b2b",
+   "priceUnit": "month",
+   "units": [
+    "sq ft",
+    "sqft",
+    "seats",
+    "seat"
+   ],
+   "terms": [
+    {
+     "key": "area",
+     "label": "Area (sq ft)",
+     "kind": "number",
+     "unit": "sq ft",
+     "required": true
+    },
+    {
+     "key": "lock_in_months",
+     "label": "Lock-in (months)",
+     "kind": "number",
+     "unit": "months",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "deposit_months",
+     "label": "Deposit (months)",
+     "kind": "number",
+     "unit": "months",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "escalation_percent",
+     "label": "Annual escalation (%)",
+     "kind": "number",
+     "unit": "%",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "fit_out",
+     "label": "Fit-out",
+     "kind": "text",
+     "ask": "Is it furnished or bare shell?"
+    },
+    {
+     "key": "available",
+     "label": "Available from",
+     "kind": "text",
+     "ask": "When is it available from?"
+    }
+   ],
+   "sellerAsks": [
+    "What's your business and team size?",
+    "When do you need possession?"
+   ],
+   "buyerAsks": [
+    "What is the lock-in period?",
+    "Is parking included?"
+   ]
+  },
+  {
+   "id": "manufacturing",
+   "label": "Manufacturing / job work",
+   "family": "b2b",
+   "priceUnit": "unit",
+   "units": [
+    "unit",
+    "units",
+    "piece",
+    "pieces",
+    "pcs",
+    "boxes",
+    "box",
+    "labels",
+    "kg"
+   ],
+   "terms": [
+    {
+     "key": "quantity",
+     "label": "Quantity",
+     "kind": "number",
+     "required": true
+    },
+    {
+     "key": "min_order",
+     "label": "Minimum order",
+     "kind": "number",
+     "ask": "What's the minimum order?"
+    },
+    {
+     "key": "lead_days",
+     "label": "Lead time (days)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "payment_days",
+     "label": "Payment terms (days)",
+     "kind": "number",
+     "unit": "days",
+     "buyerPrefers": "higher"
+    },
+    {
+     "key": "spec",
+     "label": "Specification",
+     "kind": "text",
+     "ask": "Can you meet our specification?"
+    },
+    {
+     "key": "sample",
+     "label": "Sample",
+     "kind": "text",
+     "ask": "Can you share a sample before the order?"
+    }
+   ],
+   "sellerAsks": [
+    "What quantity and specification?",
+    "When do you need delivery?"
+   ],
+   "buyerAsks": [
+    "Can you share a sample?",
+    "What is your lead time?"
+   ]
+  },
+  {
+   "id": "rides",
+   "label": "Rides",
+   "family": "local",
+   "mode": "in_person",
+   "priceUnit": "ride",
+   "units": [
+    "ride",
+    "rides",
+    "trip",
+    "km"
+   ],
+   "terms": [
+    {
+     "key": "route_to",
+     "label": "Drop-off",
+     "kind": "text"
+    },
+    {
+     "key": "pickup_time",
+     "label": "Pickup time",
+     "kind": "text",
+     "ask": "Can you pick up at that time?"
+    },
+    {
+     "key": "seats",
+     "label": "Seats",
+     "kind": "number",
+     "unit": "seats"
+    },
+    {
+     "key": "vehicle",
+     "label": "Vehicle",
+     "kind": "text",
+     "ask": "What vehicle will it be?"
+    }
+   ],
+   "sellerAsks": [
+    "Where to, and when?"
+   ],
+   "buyerAsks": [
+    "Can you pick up at that time?"
+   ]
+  },
+  {
+   "id": "food",
+   "label": "Food",
+   "family": "local",
+   "mode": "in_person",
+   "priceUnit": "order",
+   "units": [
+    "order",
+    "plate",
+    "plates",
+    "meal",
+    "meals",
+    "tiffin"
+   ],
+   "terms": [
+    {
+     "key": "dish",
+     "label": "Dish",
+     "kind": "text"
+    },
+    {
+     "key": "cuisine",
+     "label": "Cuisine",
+     "kind": "text"
+    },
+    {
+     "key": "veg",
+     "label": "Vegetarian",
+     "kind": "text",
+     "ask": "Is it vegetarian?"
+    },
+    {
+     "key": "servings",
+     "label": "Servings",
+     "kind": "number",
+     "unit": "servings"
+    },
+    {
+     "key": "delivery_time",
+     "label": "Ready by",
+     "kind": "text",
+     "ask": "Can it be ready by then?"
+    }
+   ],
+   "sellerAsks": [
+    "How many servings, and by when?"
+   ],
+   "buyerAsks": [
+    "Can it be ready by then?"
+   ]
+  },
+  {
+   "id": "lessons",
+   "label": "Lessons / teaching",
+   "family": "personal",
+   "mode": "either",
+   "priceUnit": "hour",
+   "units": [
+    "hour",
+    "hours",
+    "session",
+    "sessions",
+    "class",
+    "classes",
+    "month"
+   ],
+   "terms": [
+    {
+     "key": "skill",
+     "label": "Skill",
+     "kind": "text"
+    },
+    {
+     "key": "level",
+     "label": "Level",
+     "kind": "text"
+    },
+    {
+     "key": "experience_years",
+     "label": "Teaching experience",
+     "kind": "number",
+     "unit": "years",
+     "ask": "How many years have you been teaching this?"
+    },
+    {
+     "key": "language",
+     "label": "Language",
+     "kind": "text"
+    },
+    {
+     "key": "sessions_per_week",
+     "label": "Sessions per week",
+     "kind": "number",
+     "unit": "sessions"
+    }
+   ],
+   "sellerAsks": [
+    "What's your current level, and what do you want to learn?"
+   ],
+   "buyerAsks": [
+    "How many years have you been teaching this?"
+   ]
+  },
+  {
+   "id": "tasks",
+   "label": "Tasks / odd jobs",
+   "family": "personal",
+   "mode": "either",
+   "priceUnit": "task",
+   "units": [
+    "task",
+    "job",
+    "assignment",
+    "page",
+    "pages",
+    "hour",
+    "hours"
+   ],
+   "terms": [
+    {
+     "key": "subject",
+     "label": "Subject",
+     "kind": "text"
+    },
+    {
+     "key": "deadline_days",
+     "label": "Deadline (days)",
+     "kind": "number",
+     "unit": "days"
+    },
+    {
+     "key": "experience_years",
+     "label": "Experience",
+     "kind": "number",
+     "unit": "years",
+     "ask": "How much experience do you have with this kind of work?"
+    },
+    {
+     "key": "pages",
+     "label": "Pages",
+     "kind": "number",
+     "unit": "pages"
+    }
+   ],
+   "sellerAsks": [
+    "What exactly needs doing, and by when?"
+   ],
+   "buyerAsks": [
+    "Can you finish it by the deadline?"
+   ]
+  }
+ ]
+}

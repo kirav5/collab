@@ -1,0 +1,16 @@
+{
+  "hosting": {
+    "public": "web",
+    "ignore": ["firebase.json", "**/.*"],
+    "rewrites": [
+      { "source": "/api/**", "run": { "serviceId": "collab-market", "region": "asia-south1" } },
+      { "source": "/a2a/**", "run": { "serviceId": "collab-market", "region": "asia-south1" } },
+      { "source": "/health", "run": { "serviceId": "collab-market", "region": "asia-south1" } },
+      { "source": "**", "destination": "/index.html" }
+    ],
+    "headers": [
+      { "source": "**/*.@(js|css)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+    ]
+  },
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" }
+}
