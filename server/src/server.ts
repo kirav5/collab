@@ -22,7 +22,8 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, resolve as resolveItem, save as saveEngagement, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, type Turn } from "./core/engage.ts";
+import { offeredPrice } from "./core/direct.ts";
 import { forProvider, forRequester, insights, receipt, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
@@ -237,6 +238,9 @@ app.post("/api/engagements/:id/ask", route(async req => {
   const q = text(req.body?.text, 300).trim();
   if (q.length < 2) throw new HttpError(400, "Ask something.");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
+  // Naming a price in a chat with no listed price offers a deal: the other person confirms or says no.
+  const price = e.offer.price === null && e.phase !== "deal" ? offeredPrice(q) : null;
+  if (price) { await offerDeal(db, e, side, price, q); return load(db, e.id); }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });
   await saveEngagement(db, e);
   const turn: Turn = { kind: TURN, from: side, engagementId: e.id, questions: [{ id: Math.random().toString(36).slice(2, 12), question: q }] };
@@ -539,6 +543,12 @@ app.post("/api/inbox/:id", route(async req => {
   if (r.turn) {
     if (item.side === "requester") await sendTurn(cfg, e.id, r.turn);
     else await deliverProviderTurn(cfg, a2a.store, e.id, r.turn);
+  }
+  // An answer that names a price ("ok, I'll take it for 80rs") in a chat with no listed price offers that deal.
+  const named = item.kind === "answer" && typeof b.text === "string" ? offeredPrice(b.text) : null;
+  if (named) {
+    const now_ = await load(db, e.id);
+    if (now_.offer.price === null && ["asking", "negotiating"].includes(now_.phase)) await offerDeal(db, now_, item.side, named, null);
   }
   return load(db, e.id);
 }));

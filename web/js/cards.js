@@ -223,7 +223,8 @@ export function engagementCard(e, id) {
     ${items.length || e.phase === "agreed" ? "" : keyAnswer(e, mine)}
     ${items.map(inboxBlock).join("")}
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(them.name.split(" ")[0])}'s agent…" aria-label="Follow-up">
-      <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>` : ""}
+      <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
+      <span class="small faint">Name a price — “I'll sell for ₹100” — to offer a deal; they confirm or say no.</span>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>

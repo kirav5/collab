@@ -394,7 +394,11 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       }
     }
   } else if (item.kind === "confirm") {
-    if (r.decline) { e.phase = "closed"; out.decline = "My owner decided not to go ahead. Thank you."; say(e, s, "Walked away.", "owner"); }
+    if (r.decline && e.offer.price === null) {
+      // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
+      say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: "INR", period: e.offer.unit })}.`, "owner");
+      e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false };
+    } else if (r.decline) { e.phase = "closed"; out.decline = "My owner decided not to go ahead. Thank you."; say(e, s, "Walked away.", "owner"); }
     else { e.negotiation.confirmed[s] = true; out.confirm = true; say(e, s, "Confirmed.", "owner"); settle(e); }
   }
   await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
@@ -407,6 +411,25 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
   if (!e.waiting[s] && !out.decline && !["agreed", "closed", "declined"].includes(e.phase)) await afterAnswers(db, model, e, s, out);
   await save(db, e);
   return { e, turn: hasContent(out) ? out : null };
+}
+
+/**
+ * A deal one person offers in a direct chat (no listed price): it counts as their confirmation, and the other person
+ * is asked to confirm. Both confirming makes it agreed, with a receipt, like a negotiated deal.
+ */
+export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null) {
+  const p = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
+  (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
+  e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
+  e.negotiation.confirmed = { requester: s === "requester", provider: s === "provider" };
+  (e.negotiation.confirmedBy ??= {})[s] = "owner";
+  if (text) say(e, s, text, "owner");
+  say(e, "system", `Deal offered at ${moneyText({ amount: price, currency: "INR", period: e.offer.unit })}. Nothing is final until both confirm.`);
+  const o = other(s);
+  for (const id of e.waiting[o]?.inbox ?? []) await db.update(INBOX, id, (i: InboxItem | null) => (i && i.kind === "confirm" ? { ...i, status: "done" } : i));
+  e.waiting[o] = null;
+  await ask(db, e, o, { kind: "confirm" });
+  await save(db, e);
 }
 
 export function summary(e: Engagement): string {
