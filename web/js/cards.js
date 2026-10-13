@@ -44,7 +44,7 @@ function briefCard(c, at) {
       ${d.clarify.map((q, j) => `<div class="stack" style="gap:6px"><span class="small">${esc(q.question)}</span><div class="row">${q.options.map((o, k) => `<button class="chip" data-act="brief-clarify" data-j="${j}" data-k="${k}" ${at}>${esc(o)}</button>`).join("")}</div></div>`).join("")}</div>` : ""}
     ${s.questions.length ? `<div class="stack" style="gap:6px">${label("Your agent will ask")}<div class="row">${s.questions.map((q, j) => `<span class="chip" style="cursor:default">${esc(q)} <button class="btn quiet compact" data-act="brief-dropq" data-j="${j}" ${at} aria-label="Remove">×</button></span>`).join("")}</div></div>` : ""}
     <div class="stack" style="gap:6px">
-      ${label("Most you'll pay · private, stays on this device", "peri")}
+      ${label("Most you'll pay · private, never shown to anyone", "peri")}
       <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-edit="limit" value="${d.mandate?.price.limit ?? ""}" placeholder="optional">
       <span class="small muted">${s.budget ? `Providers see only “${esc(s.budget)}”.` : "Providers see no budget."}</span></div>
       ${autonomyPick(c)}
@@ -55,7 +55,7 @@ function briefCard(c, at) {
 }
 
 const autonomyPick = (c) => `<select class="field" data-edit="autonomy">
-    <option value="" ${!c.autonomy ? "selected" : ""}>Ask me for every move (limit stays on this device)</option>
+    <option value="" ${!c.autonomy ? "selected" : ""}>Ask me for every move</option>
     <option value="negotiate" ${c.autonomy === "negotiate" ? "selected" : ""}>My always-on agent negotiates inside my limit; I confirm the deal</option>
     <option value="close" ${c.autonomy === "close" ? "selected" : ""}>My always-on agent negotiates and closes inside my limit</option></select>
   ${c.autonomy ? `<select class="field" data-edit="days" style="max-width:110px">${[1, 7, 30].map(n => `<option value="${n}" ${(c.days ?? 7) === n ? "selected" : ""}>${n} days</option>`).join("")}</select>` : ""}`;
@@ -80,7 +80,7 @@ function matchesCard(c, at) {
 // MARK: - An offering
 
 function offerCard(c, at) {
-  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Anyone's agent can find this now. Your agent answers from it and from what your rules share; your floor${c.floor ? ` (${money(c.floor)})` : ""} stays ${c.autonomy === "close" ? `with your always-on agent (negotiates and closes, ${c.days ?? 7} days)` : c.autonomy ? "with your always-on agent (negotiates; you confirm)" : "on this device"}.</p></div>`;
+  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Anyone's agent can find this now. Your agent answers from it and from what your rules share; your floor${c.floor ? ` (${money(c.floor)})` : ""} is never revealed — ${c.autonomy === "close" ? `your always-on agent negotiates and closes inside it (${c.days ?? 7} days)` : c.autonomy ? "your always-on agent negotiates inside it; you confirm" : "your agent asks you for each move"}.</p></div>`;
   const o = c.offer;
   return `<div class="card" ${at}>
     <div class="row">${label("Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
@@ -88,7 +88,7 @@ function offerCard(c, at) {
       ${Object.keys(o.attributes).length ? `<dl class="kv">${Object.entries(o.attributes).filter(([k]) => k !== "negotiable").map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}` : ""}
     ${label("What the directory shows (public)")}
     <textarea class="field" data-edit="publicText" rows="3">${esc(c.publicText ?? c.text)}</textarea>
-    ${o ? `${label("Lowest you'll accept · private, stays on this device", "peri")}
+    ${o ? `${label("Lowest you'll accept · private, never shown to anyone", "peri")}
       <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-edit="floor" value="${c.floor ?? o.price.amount}"></div>
       ${autonomyPick(c)}
       ${c.insights?.length ? `<div class="card peri slim">${label("What similar listings agreed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}` : ""}
@@ -104,13 +104,13 @@ function savedCard(c, at) {
   return `<div class="card slim" ${at}>
     <div class="row">${tierTag(f.tier, f.topics)}<span class="small">${esc(f.text)}</span></div>
     <div class="row">${label("Who sees it")}
-      ${["private", "protected", "public"].map(t => `<button class="chip ${f.tier === t ? "on" : ""}" data-act="tier" data-tier="${t}" ${at}>${{ private: "Only me (on device)", protected: "People my rules name", public: "Anyone (discoverable)" }[t]}</button>`).join("")}</div>
+      ${["private", "protected", "public"].map(t => `<button class="chip ${f.tier === t ? "on" : ""}" data-act="tier" data-tier="${t}" ${at}>${{ private: "Only me", protected: "People my rules name", public: "Anyone (discoverable)" }[t]}</button>`).join("")}</div>
     ${c.suggestPublic && f.tier === "private" ? `<p class="small" style="color:var(--accent)">This sounds like something you offer — make it Public so others' agents can find you.</p>` : ""}
   </div>`;
 }
 
 function sourcesCard(c) {
-  return `<div class="card slim">${label(c.on === "device" ? "From your notes · answered on this device (Gemini Nano)" : "From your notes · Gemini, nothing stored", "peri")}
+  return `<div class="card slim">${label(c.on === "device" ? "From your notes · answered on this device (Gemini Nano)" : "From your notes · Gemini", "peri")}
     ${c.notes.map(n => `<div class="row">${tierTag(n.tier)}<span class="small">${esc(n.text)}</span></div>`).join("")}</div>`;
 }
 
@@ -171,7 +171,7 @@ function inboxBlock(i) {
   if (i.kind === "answer") {
     const d = drafts.get(i.id);
     return box(demo ? "Their agent needs them" : "Your agent needs you", `<span class="small">${i.side === "provider" ? "The requester's agent asks" : "Their agent asks"}: <b>${esc(i.question)}</b></span>
-      ${d ? `<div class="card peri slim">${label(`Found in your private notes · ${d.on === "device" ? "on this device" : "Gemini, not stored"}`, "peri")}<span class="small">“${esc(d.text)}”</span>
+      ${d ? `<div class="card peri slim">${label(`Found in your private notes · ${d.on === "device" ? "on this device" : "Gemini"}`, "peri")}<span class="small">“${esc(d.text)}”</span>
         <div class="row"><button class="btn accent compact" data-act="inbox-share" data-id="${esc(i.id)}">Share this</button><button class="btn secondary compact" data-act="inbox-decline" data-id="${esc(i.id)}">Don't share</button></div></div>` : ""}
       <textarea class="field" rows="2" data-reply="${esc(i.id)}" placeholder="${d ? "Or write your own answer" : "Your answer"}"></textarea>
       <div class="row"><button class="btn compact" data-act="inbox-answer" data-id="${esc(i.id)}">Send</button><button class="btn quiet compact" data-act="inbox-decline" data-id="${esc(i.id)}">I'd rather not say</button></div>`);
@@ -179,8 +179,8 @@ function inboxBlock(i) {
   if (i.kind === "approve") return box("Check before sharing", `<span class="small">Asked: <b>${esc(i.question)}</b></span>
     <div class="card slim">${label("Drafted from a Protected fact your rule covers")}<span class="small">“${esc(i.draft)}”</span></div>
     <div class="row"><button class="btn accent compact" data-act="inbox-approve" data-id="${esc(i.id)}">Share</button><button class="btn secondary compact" data-act="inbox-decline" data-id="${esc(i.id)}">Don't share</button></div>`);
-  if (i.kind === "move" && !i.question && !demo && !needsLimit.has(i.id)) return `<span class="thinking small"><span class="spinner"></span><span class="faint">Your agent is making a move with your private limit (on this device)…</span></span>`;
-  if (i.kind === "move") return box(i.question ? "No deal inside your limit yet" : "Your agent needs your limit", `${i.question ? `<span class="small">${esc(i.question)}</span>` : `<span class="small">Set the most you'll pay (or least you'll take). It stays on this device; your agent uses it for each move.</span>`}
+  if (i.kind === "move" && !i.question && !demo && !needsLimit.has(i.id)) return `<span class="thinking small"><span class="spinner"></span><span class="faint">Your agent is making a move with your private limit…</span></span>`;
+  if (i.kind === "move") return box(i.question ? "No deal inside your limit yet" : "Your agent needs your limit", `${i.question ? `<span class="small">${esc(i.question)}</span>` : `<span class="small">Set the most you'll pay (or least you'll take). It's never shared; your agent uses it for each move.</span>`}
     ${i.hint ? `<span class="small faint">${esc(i.hint)}</span>` : ""}
     <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-limit="${esc(i.id)}" placeholder="${i.listPrice ? money(i.listPrice) : "amount"}">
     <button class="btn accent compact" data-act="inbox-move" data-id="${esc(i.id)}">Keep negotiating</button><button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`);

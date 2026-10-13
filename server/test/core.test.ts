@@ -43,6 +43,14 @@ test("pausing shares nothing at all", async () => {
   assert.deepEqual(await allowedFor(db, "ann", "bob", now), []);
 });
 
+test("private facts live on the server but are returned to no one — even when a rule names their topic", async () => {
+  const db = await world();
+  await db.set(FACTS, "secret", { id: "secret", owner: "ann", text: "my PIN is 1234", tier: "private", topics: ["work"], offer: null, createdAt: now, updatedAt: now });
+  assert.ok(!(await allowedFor(db, "ann", "bob", now)).some(a => a.fact.id === "secret"));
+  assert.ok(!(await allowedFor(db, "ann", null, now)).some(a => a.fact.id === "secret"));
+  assert.ok(!(await allowedFor(db, "ann", "ann", now)).some(a => a.fact.id === "secret"));
+});
+
 test("answers are cut to the rule's level of detail", () => {
   assert.equal(shapeAnswer("Yes, weekday evenings after 6. Not weekends.", "oneLine"), "Yes, weekday evenings after 6.");
   assert.equal(shapeAnswer("No, not this week.", "yesNo"), "No.");

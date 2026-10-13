@@ -19,7 +19,7 @@ async function setup() {
   return new Promise(resolve => {
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
       ${label("Collab", "sq ink")}
-      <h1 class="headline">Your agent. <span class="soft">Your private context stays on this device.</span></h1>
+      <h1 class="headline">Your agent. <span class="soft">Your private context is never shared.</span></h1>
       <p class="small muted">Pick a handle — it's your agent's address (A2A) that other people's agents reach you at.</p>
       <input class="field" name="name" placeholder="Your name" required maxlength="60">
       <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" required minlength="3" maxlength="24" autocapitalize="none"></div>
@@ -101,7 +101,7 @@ function paintTop() {
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
-  $("#composer-note").innerHTML = label(engine.nano ? "Private notes are read on this device (Gemini Nano)" : "Private notes stay on this device · Gemini sees only what a request needs, nothing stored");
+  $("#composer-note").innerHTML = label(engine.nano ? "Private notes are read on this device (Gemini Nano)" : "Private notes are never shared · Gemini sees only what a request needs");
 }
 
 let painting = false, lastHTML = "";
@@ -132,7 +132,7 @@ async function paintContent(soft = false) {
 async function chatHTML() {
   const cur = S.sessions.find(s => s.id === S.current);
   if (!cur || !cur.messages.length) return emptyChat();
-  const facts = new Map((await local.all("facts")).map(f => [f.id, f]));
+  const facts = new Map((await api("/api/facts").catch(() => [])).map(f => [f.id, f]));
   for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
   return cur.messages.map(messageHTML).join("");
 }
@@ -142,10 +142,10 @@ function emptyChat() {
     ["Find anything", "Need a 2BHK to rent in Indiranagar, budget 36,000 a month, I have a small dog", "peri"],
     ["Offer something", "I teach tabla online and at home in Jayanagar, ₹700 an hour, lowest 600", ""],
     ["Your context", "What did I note about guitar?", ""]];
-  return `<h1 class="headline">Ask your agent. <span class="soft">It asks anyone's agent for anything — and your private context stays on this device.</span></h1>
+  return `<h1 class="headline">Ask your agent. <span class="soft">It asks anyone's agent for anything — and your private context is never shared.</span></h1>
     <div class="grid-tiles">${tiles.map(([l, p, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(p)}</p><span class="arrow">↗</span></button>`).join("")}</div>
     <div class="card">${label("Who sees what", "sq")}
-      <dl class="kv"><dt>${tag("On device", "peri")}</dt><dd>Private. Only you and your device agent. Never stored on the server.</dd>
+      <dl class="kv"><dt>${tag("Only me", "peri")}</dt><dd>Private. Stored with your account, but no rule can name it and no one else's agent ever sees it.</dd>
       <dt>${tag("Protected", "accent")}</dt><dd>Shared with the people your rules name, on the topics they name — answered by your always-on agent, or checked with you first.</dd>
       <dt>${tag("Public", "fresh")}</dt><dd>Anyone's agent can find it and be told it. What you offer lives here.</dd></dl>
       <p class="small muted">Requests go agent-to-agent over A2A. Your agent never reveals your limit, and anything it can't answer from what you shared comes to you.</p></div>`;
@@ -269,8 +269,7 @@ async function cardAction(a, el, { s, m, c }) {
   }
   if (a === "brief-send") {
     busy(el, true, "Searching");
-    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: c.autonomy ? { mandate: d.mandate, autonomy: c.autonomy, days: c.days ?? 7 } : null });
-    if (d.mandate) await local.put("limits", { id: `brief:${r.brief.id}`, mandate: d.mandate });
+    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: c.autonomy ?? "ask", days: c.days ?? 7 } : null });
     Object.assign(c, { step: "matches", briefId: r.brief.id, found: r.found, rankedByModel: r.rankedByModel, picked: r.found.slice(0, 2).map((_, j) => j) });
   }
   if (a === "brief-engage") {
@@ -287,11 +286,9 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "offer-publish") {
     busy(el, true, "Publishing");
     const fact = await api("/api/facts", { tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount) });
-    await local.put("facts", { id: fact.id, text: fact.text, tier: "public", topics: [], createdAt: fact.createdAt });
     if (c.offer && c.floor) {
       const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: 5 };
-      await local.put("limits", { id: `fact:${fact.id}`, mandate });
-      if (c.autonomy) await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: c.autonomy, days: c.days ?? 7 });
+      await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: c.autonomy ?? "ask", days: c.days ?? 7 });
     }
     c.step = "published"; c.publicText = fact.text;
   }
@@ -300,19 +297,12 @@ async function cardAction(a, el, { s, m, c }) {
   paint();
 }
 
-/** Moving a fact between tiers: Private lives only here; Protected and Public are also on the server. */
+/** Moving a fact between tiers: all three live on the server; Private is stored but never shared. */
 async function setTier(fact, tier, el) {
   if (!fact || fact.tier === tier) return;
   busy(el, true);
-  if (tier === "private") {
-    if (fact.tier !== "private") await api(`/api/facts/${fact.id}/delete`, {}).catch(() => {});
-    await local.put("facts", { ...fact, tier: "private", topics: [] });
-  } else {
-    const saved = await api("/api/facts", { id: fact.id, tier, text: fact.text });
-    await local.put("facts", { id: saved.id, text: saved.text, tier, topics: saved.topics, createdAt: fact.createdAt });
-    if (saved.id !== fact.id) await local.del("facts", fact.id);
-    if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Sharing to say who sees it.`, () => openScreen("sharing"));
-  }
+  const saved = await api("/api/facts", { id: fact.id, tier, text: fact.text });
+  if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Sharing to say who sees it.`, () => openScreen("sharing"));
 }
 
 async function inboxAction(a, el) {
@@ -331,12 +321,10 @@ async function inboxAction(a, el) {
     if (!(limit > 0)) return toast("Set an amount.");
     const e = live.engagements.get(item.engagementId);
     const key = item.side === "requester" ? `brief:${e.briefId}` : `fact:${e.offer.factId}`;
-    const prev = (await local.get("limits", key))?.mandate;
-    const mandate = item.side === "requester"
+    const prev = (await api("/api/limits").catch(() => [])).find(l => l.key === key)?.mandate;
+    body.mandate = item.side === "requester"
       ? { price: { opening: prev?.price.opening ?? Math.round(limit * 0.9), limit }, terms: {}, maxRounds: Math.min(12, (prev?.maxRounds ?? 5) + 3) }
       : { price: { opening: e.offer.price ?? limit, limit }, terms: {}, maxRounds: Math.min(12, (prev?.maxRounds ?? 5) + 3) };
-    await local.put("limits", { id: key, mandate });
-    body.mandate = mandate;
   }
   busy(el, true);
   live.inbox = live.inbox.filter(i => i.id !== itemId);

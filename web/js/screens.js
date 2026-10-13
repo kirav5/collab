@@ -6,24 +6,13 @@ import { engine } from "./agent.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
-import { busy, esc, id, label, now, tag, tierTag, time } from "./ui.js";
+import { busy, esc, label, tag, tierTag, time } from "./ui.js";
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
 
-/** Every fact the owner has: private ones from this device, shared ones from the server (the device keeps a copy). */
+/** Every fact the owner has — all tiers live on the server under their account; Private is never shared. */
 async function allFacts() {
-  const mine = await local.all("facts");
-  const shared = await api("/api/facts").catch(() => []);
-  const byId = new Map(mine.map(f => [f.id, f]));
-  for (const f of shared) {
-    const cur = byId.get(f.id);
-    const next = { id: f.id, text: f.text, tier: f.tier, topics: f.topics, createdAt: f.createdAt, offer: f.offer };
-    if (!cur || cur.tier !== f.tier || (cur.topics ?? []).join() !== f.topics.join()) await local.put("facts", next);
-    byId.set(f.id, next);
-  }
-  // A fact the device thinks is shared but the server no longer has (deleted elsewhere) is private again.
-  for (const f of mine) if (f.tier !== "private" && !shared.some(x => x.id === f.id)) { const p = { ...f, tier: "private", topics: [] }; await local.put("facts", p); byId.set(f.id, p); }
-  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
+  return (await api("/api/facts").catch(() => [])).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export const screens = {
@@ -32,10 +21,10 @@ export const screens = {
       const facts = await allFacts();
       const n = t => facts.filter(f => f.tier === t).length;
       return frame("Context", "What your agent knows", `
-        <div class="stats"><div>${label("On device", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
+        <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
           <textarea class="field" name="text" rows="2" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
-          <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Only me (on this device)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
+          <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Only me (never shared)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
         <div class="stack">${facts.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           <span>${esc(f.text)}</span>
@@ -48,22 +37,18 @@ export const screens = {
         const text = String(f.get("text") ?? "").trim(), tier = String(f.get("tier"));
         if (!text) return true;
         busy(el, true);
-        if (tier === "private") await local.put("facts", { id: id(), text, tier, topics: [], createdAt: now() });
-        else { const saved = await api("/api/facts", { text, tier }); await local.put("facts", { id: saved.id, text: saved.text, tier, topics: saved.topics, createdAt: saved.createdAt, offer: saved.offer }); }
+        await api("/api/facts", { text, tier });
         h.paint(); return true;
       }
       if (a === "fact-tier") {
         busy(el, true);
-        const f = await local.get("facts", el.dataset.id);
-        if (el.dataset.tier === "private") { await api(`/api/facts/${f.id}/delete`, {}).catch(() => {}); await local.put("facts", { ...f, tier: "private", topics: [] }); }
-        else { const saved = await api("/api/facts", { id: f.id, text: f.text, tier: el.dataset.tier }); await local.put("facts", { ...f, id: saved.id, tier: saved.tier, topics: saved.topics, offer: saved.offer }); }
+        const f = (await allFacts()).find(x => x.id === el.dataset.id);
+        if (f) await api("/api/facts", { id: f.id, text: f.text, tier: el.dataset.tier });
         h.paint(); return true;
       }
       if (a === "fact-delete") {
         if (!confirm("Delete this from your context?")) return true;
-        const f = await local.get("facts", el.dataset.id);
-        if (f && f.tier !== "private") await api(`/api/facts/${f.id}/delete`, {}).catch(() => {});
-        await local.del("facts", el.dataset.id);
+        await api(`/api/facts/${el.dataset.id}/delete`, {}).catch(() => {});
         h.paint(); return true;
       }
     },
@@ -159,16 +144,16 @@ export const screens = {
           <input class="field" name="bio" value="${esc(S.profile.bio)}" placeholder="One line about you (public)">
           <input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="Your area">
           <button class="btn" data-act="save-profile">Save</button></form>
-        <div class="card">${label("Engine", "sq")}<dl class="kv"><dt>Your notes</dt><dd>${engine.nano ? "Gemini Nano, on this device (Chrome built-in AI)" : "Gemini via Cloud Run, for that one call — nothing stored. (Chrome with built-in AI reads them on the device instead.)"}</dd>
+        <div class="card">${label("Engine", "sq")}<dl class="kv"><dt>Your notes</dt><dd>${engine.nano ? "Gemini Nano, on this device (Chrome built-in AI)" : "Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
         <div class="card">${label("Account", "sq")}
-          ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and shared facts on other devices (private facts stay on each device).</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
-          <div class="row"><button class="btn danger compact" data-act="clear-device">Erase this device's data</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
+          ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and context on other devices.</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
+          <div class="row"><button class="btn danger compact" data-act="clear-device">Erase this device's chats</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
     },
     async act(a, el, S, h) {
       if (a === "save-profile") { const f = new FormData(el.closest("form")); busy(el, true); S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), bio: f.get("bio"), areaName: f.get("area") }); h.toast("Saved."); h.paint(); return true; }
       if (a === "google") { await session.google(); h.paint(); return true; }
-      if (a === "clear-device") { if (confirm("Erase every private fact and chat on this device? Shared facts stay on the server.")) { await local.clear(); location.reload(); } return true; }
+      if (a === "clear-device") { if (confirm("Erase the chat history kept on this device? Your context and facts stay in your account.")) { await local.clear(); location.reload(); } return true; }
       if (a === "sign-out") { await session.signOut(); return true; }
     },
   },

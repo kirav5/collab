@@ -67,7 +67,8 @@ const uidOf = (e: Engagement, s: Side) => (s === "requester" ? e.requester.uid :
 async function limitFor(db: Docs, e: Engagement, s: Side): Promise<DelegatedLimit | null> {
   const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
   const l = (await db.get(LIMITS, key)) as DelegatedLimit | null;
-  return l && l.owner === uidOf(e, s) && !(l.expires && l.expires < now()) ? l : null;
+  // "ask" rows are stored so the owner's devices share the limit; the agent itself still waits on the owner.
+  return l && l.owner === uidOf(e, s) && l.autonomy !== "ask" && !(l.expires && l.expires < now()) ? l : null;
 }
 
 /** Whether a side has a device that can be asked (our users and demo people do; an outside A2A agent doesn't). */
@@ -370,6 +371,13 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
     if (r.decline) { e.phase = "closed"; out.decline = "My owner has decided not to go ahead. Thank you."; say(e, agentOf(s), out.decline, "owner"); }
     else if (r.mandate) {
       const res = await move(model, e, s, r.mandate, out);
+      // Store the limit the owner used, so every device of theirs sees the same one. A delegated row keeps its
+      // autonomy and expiry but takes the new mandate; an "ask" row never lets the agent move on its own.
+      const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
+      const existing = (await db.get(LIMITS, key)) as DelegatedLimit | null;
+      await db.set(LIMITS, key, existing && existing.owner === uidOf(e, s) && existing.autonomy !== "ask"
+        ? { ...existing, mandate: r.mandate }
+        : { key, owner: uidOf(e, s)!, mandate: r.mandate, autonomy: "ask", expires: null, createdAt: existing?.createdAt ?? now() });
       if (res?.escalate) {
         await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
         e.waiting[s] = null;

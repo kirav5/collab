@@ -1,14 +1,13 @@
-// The device agent: the half of your agent that runs in this browser and knows everything, private context
-// included. It routes what you type, answers from your notes, drafts requests and offerings with you, and handles
-// what your always-on agent can't: a move with your private limit (made automatically, the limit sent for that one
-// move and never stored), or a question only your private notes answer (drafted here, shared only if you say so).
+// The device agent: the half of your agent that runs in this browser. It routes what you type, answers from your
+// notes, drafts requests and offerings with you, and handles what your always-on agent can't alone: a move with
+// your private limit, or a question only your private notes answer (drafted here, shared only if you say so).
+// Private facts live in Firestore with everything else; the policy gate never shares them.
 //
 // Model calls over private notes use Gemini Nano in the browser when Chrome has it; otherwise Gemini through the
-// server for that one call, which stores and logs nothing.
+// server for that one call, which logs nothing.
 import { api, insightsLines, session } from "./api.js";
-import { local, relevant } from "./local.js";
+import { relevant } from "./local.js";
 import { live, onChange, poke } from "./live.js";
-import { id, now } from "./ui.js";
 
 export const engine = { nano: false };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
@@ -50,12 +49,11 @@ export async function chat(text, recent, area) {
   const route = await api("/api/route", { text, recent });
   switch (route.intent) {
     case "remember": {
-      const fact = { id: id(), text, tier: "private", topics: [], createdAt: now() };
-      await local.put("facts", fact);
-      return { text: "Saved to your context, on this device only.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
+      const fact = await api("/api/facts", { text, tier: "private" });
+      return { text: "Saved to your context — only your agent can use it; it's never shared.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {
-      const facts = await local.all("facts");
+      const facts = await api("/api/facts").catch(() => []);
       const notes = relevant(facts, text);
       const a = notes.length ? await think(text, notes) : null;
       if (!a) return { text: notes.length ? "Your notes don't clearly answer that." : "I don't have anything about that in your context yet.", cards: [] };
@@ -85,7 +83,8 @@ async function limitFor(item) {
   const e = live.engagements.get(item.engagementId);
   if (!e) return null;
   const key = item.side === "requester" ? `brief:${e.briefId}` : `fact:${e.offer.factId}`;
-  return (await local.get("limits", key))?.mandate ?? null;
+  const ls = await api("/api/limits").catch(() => []);
+  return ls.find(l => l.key === key)?.mandate ?? null;
 }
 
 /** Moves with a private limit happen on their own while this page is open; questions get a draft from private notes. */
@@ -99,7 +98,7 @@ async function work() {
       api(`/api/inbox/${item.id}`, { mandate }).then(poke).catch(() => {}).finally(() => setTimeout(() => inflight.delete(item.id), 5000));
     } else if (item.kind === "answer" && !drafts.has(item.id)) {
       inflight.add(item.id);
-      const facts = (await local.all("facts")).filter(f => f.tier === "private");
+      const facts = (await api("/api/facts").catch(() => [])).filter(f => f.tier === "private");
       const notes = relevant(facts, item.question ?? "");
       think(item.question, notes, item.side).then(a => { drafts.set(item.id, a ? { text: a.text, notes: notes.map(n => n.text), on: a.on } : null); for (const fn of live.listeners) fn(); })
         .catch(() => drafts.set(item.id, null)).finally(() => inflight.delete(item.id));

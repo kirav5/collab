@@ -1,6 +1,6 @@
-// The device: what stays in this browser. Private facts, chat sessions and private limits live in IndexedDB and are
-// never stored on the server. (A copy of the owner's shared facts is kept here too, so the owner's own agent can
-// search everything they know in one place.)
+// The device: what stays in this browser is only chat history (sessions). Facts of every tier — Private included —
+// live on the server under the owner's account; Private is stored but the policy gate never shares it. The old
+// "facts"/"limits" stores may still exist in older browsers' IndexedDB; they are simply no longer read.
 const DB = "collab", VERSION = 1;
 let dbp = null;
 
@@ -46,7 +46,7 @@ export const local = {
   async clear() { for (const s of ["facts", "sessions", "limits", "meta"]) for (const r of await this.all(s)) await this.del(s, r.id); },
 };
 
-/** The owner's notes that look relevant to a question: words in common, newest first (stays on the device). */
+/** The owner's notes that look relevant to a question: words in common, newest first. */
 export function relevant(facts, question, n = 8) {
   const words = new Set((question.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).map(w => w.replace(/s$/, "")));
   return facts.map(f => ({ f, score: (f.text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(w => words.has(w.replace(/s$/, ""))).length }))

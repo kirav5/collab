@@ -1,7 +1,7 @@
 // Who may see what (Collab's PolicyEngine, for facts): deterministic, deny by default. Public facts: anyone who
 // contacts the owner's agent. Protected facts: only an asker an active rule names (a person, or "anyone"), and only
 // facts carrying a topic that rule names — at most that rule's level of detail, and with the owner's review if the
-// rule says so. Private facts aren't on the server at all.
+// rule says so. Private facts are stored here but returned to no one: this function never yields them, whoever asks.
 //
 // This decides what the answering model is *given*. A fact this doesn't return never reaches the model, so no
 // question — however it's worded — can draw it out.
@@ -29,6 +29,7 @@ export async function allowedFor(db: Docs, owner: string, asker: string | null, 
   const out: Allowed[] = [];
   for (const f of facts) {
     if (f.tier === "public") { out.push({ fact: f, via: null }); continue; }
+    if (f.tier === "private") continue;
     const topics = new Set(f.topics.map(t => t.toLowerCase()));
     // The most specific rule wins: one naming this asker before an "anyone" rule.
     const via = rules.filter(r => r.topics.some(t => topics.has(t.toLowerCase())))

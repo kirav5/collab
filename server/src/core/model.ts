@@ -1,7 +1,7 @@
-// What the server holds. Private context is never here: it lives on the owner's device (the browser's IndexedDB) and
-// only crosses for a single model call the owner's own agent makes, which stores nothing. The server holds what the
-// owner chose to share — Protected facts (for the people their rules name) and Public facts (anyone, discoverable) —
-// plus the conversations between agents.
+// What the server holds. Every tier is stored here under the owner's uid; the tiers differ in who may be told, not
+// where they live. Private facts sit in Firestore like the rest, but the policy gate never returns them to anyone —
+// no rule can name them, no engagement can draw on them. Protected facts go to the people rules name; Public facts
+// are discoverable. The server also holds the conversations between agents.
 import type { DemandFilter, Mandate, Need, Offer, Proposal } from "../market/types.ts";
 
 export type Tier = "private" | "protected" | "public";
@@ -21,12 +21,12 @@ export interface Profile {
   paused?: boolean;
 }
 
-/** A Protected or Public fact. */
+/** A fact of any tier. Private: owner only, never shared. Protected: who a rule names. Public: anyone. */
 export interface Fact {
   id: string;
   owner: string;
   text: string;
-  tier: "protected" | "public";
+  tier: Tier;
   /** What a rule must name to see a Protected fact ("availability", "work"). */
   topics: string[];
   /** Read from a Public fact that offers something (a lesson, a flat, a ride): what, price, where. */
@@ -152,11 +152,12 @@ export interface InboxItem {
   createdAt: number;
 }
 
-/** A limit the owner chose to hand to their always-on agent, so it can negotiate while they're away. */
+/** A limit the owner set, stored with their account so every device of theirs sees the same one. */
 export interface DelegatedLimit {
   key: string; owner: string; mandate: Mandate;
-  /** "negotiate" (default): agent moves inside the limit, owner confirms. "close": the delegation is the confirmation. */
-  autonomy?: "negotiate" | "close";
+  /** "negotiate" (default): agent moves inside the limit, owner confirms. "close": the delegation is the confirmation.
+      "ask": stored only so the owner's devices share it — every move still waits on the owner. */
+  autonomy?: "negotiate" | "close" | "ask";
   expires?: number | null;
   createdAt?: number;
 }

@@ -211,11 +211,11 @@ app.post("/api/contacts", route(async req => {
 }));
 app.post("/api/contacts/remove", route(async req => { await db.delete(CONTACTS, `${req.uid}_${text(req.body?.uid, 128)}`); return { ok: true }; }));
 
-// Shared context (Protected and Public facts; Private never comes here)
+// Context (all tiers; Private is stored but the policy gate never shares it)
 app.get("/api/facts", route(async req => ((await db.find(FACTS, [["owner", "==", req.uid]], 500)) as Fact[]).map(publicFact).sort((a, b) => b.updatedAt - a.updatedAt)));
 app.post("/api/facts", route(async req => {
   const b = req.body ?? {};
-  if (b.tier !== "protected" && b.tier !== "public") throw new HttpError(400, "Private facts stay on your device.");
+  if (!["private", "protected", "public"].includes(b.tier)) throw new HttpError(400, "Tier must be private, protected or public.");
   await spend(req.uid, 2);
   return publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: text(b.text, 1000), tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true }));
 }));
@@ -235,14 +235,14 @@ app.post("/api/facts/:id/limit", route(async req => {
   if (m) {
     const days = num(req.body?.days, 1, 365);
     await db.set(LIMITS, `fact:${f.id}`, { key: `fact:${f.id}`, owner: req.uid, mandate: { ...m, price: { opening: f.offer.price.amount, limit: Math.min(m.price.limit, f.offer.price.amount) } },
-      autonomy: req.body?.autonomy === "close" ? "close" : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() });
+      autonomy: ["close", "ask"].includes(req.body?.autonomy) ? req.body.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() });
     // A floor below the ask means the price can move: the matcher may show it to near-budget requests.
     if (m.price.limit < f.offer.price.amount && f.offer.attributes.negotiable !== "yes")
       await db.set(FACTS, f.id, { ...f, offer: { ...f.offer, attributes: { ...f.offer.attributes, negotiable: "yes" } } });
   } else await db.delete(LIMITS, `fact:${f.id}`);
   return { delegated: !!m };
 }));
-app.get("/api/limits", route(async req => (await db.find(LIMITS, [["owner", "==", req.uid]], 200)).map((l: any) => ({ key: l.key, limit: l.mandate.price.limit, autonomy: l.autonomy ?? "negotiate", expires: l.expires ?? null }))));
+app.get("/api/limits", route(async req => (await db.find(LIMITS, [["owner", "==", req.uid]], 200)).map((l: any) => ({ key: l.key, mandate: l.mandate, limit: l.mandate.price.limit, autonomy: l.autonomy ?? "negotiate", expires: l.expires ?? null }))));
 app.post("/api/topics", route(async req => {
   await spend(req.uid);
   const existing = [...new Set(((await db.find(FACTS, [["owner", "==", req.uid]], 300)) as Fact[]).flatMap(f => f.topics))];
@@ -338,7 +338,7 @@ app.post("/api/briefs", route(async req => {
   const del = req.body?.delegate;
   const m = mandateFrom(del?.mandate ?? del);
   if (m) { const days = num(del?.days, 1, 365);
-    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: del?.autonomy === "close" ? "close" : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() }); }
+    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() }); }
   return { brief: b, ...(await search(db, model, b, req.uid)) };
 }));
 app.post("/api/briefs/:id/engage", route(async req => {

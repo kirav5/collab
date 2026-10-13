@@ -11,7 +11,7 @@ import { savedKey } from "../market/answer.ts";
 import { RankTask, rank } from "../market/match.ts";
 import { read } from "../market/read.ts";
 import { moneyText, newId } from "../market/types.ts";
-import type { Brief, Fact, Profile } from "./model.ts";
+import type { Brief, Fact, Profile, Tier } from "./model.ts";
 import { FACTS, PROFILES } from "./policy.ts";
 import { TopicsTask } from "./tasks.ts";
 
@@ -46,12 +46,22 @@ export async function byHandle(db: Docs, handle: string): Promise<Profile | null
   return h ? db.get(PROFILES, h.uid) : null;
 }
 
-/** Saves a Protected or Public fact (Private facts never come here). */
-export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: "protected" | "public"; topics?: string[]; negotiable?: boolean }): Promise<Fact> {
+/** Saves a fact of any tier. Private facts are stored plain: no topics, no offer read, no embedding — the model
+    never touches them, and the policy gate never returns them. */
+export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: Tier; topics?: string[]; negotiable?: boolean }): Promise<Fact> {
   const text = input.text.trim().slice(0, 1000);
   if (text.length < 3) throw new Problem("Say a bit more.");
   const prev = input.id ? ((await db.get(FACTS, input.id)) as Fact | null) : null;
   if (prev && prev.owner !== owner.uid) throw new Problem("not yours");
+  // Answers other requesters got from this fact are stale once its text or tier changes.
+  if (prev && (prev.text !== text || prev.tier !== input.tier))
+    for (const a of await db.find(ANSWERS, [["factId", "==", prev.id]], 200)) await db.delete(ANSWERS, docId(`${prev.id}:${savedKey(a.question)}`));
+  const fresh = input.id && /^[a-z0-9]{6,40}$/.test(input.id) ? input.id : newId();
+  if (input.tier === "private") {
+    const fact: Fact = { id: prev?.id ?? fresh, owner: owner.uid, text, tier: "private", topics: [], offer: null, createdAt: prev?.createdAt ?? now(), updatedAt: now() };
+    await db.set(FACTS, fact.id, fact);
+    return fact;
+  }
   let topics = (input.topics ?? []).map(t => t.toLowerCase().trim()).filter(Boolean).slice(0, 5);
   if (input.tier === "protected" && !topics.length) {
     const existing = [...new Set(((await db.find(FACTS, [["owner", "==", owner.uid]], 300)) as Fact[]).flatMap(f => f.topics))];
@@ -69,11 +79,6 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
   }
   // The owner said the price can move (a floor was stated or is delegated): near-budget requests may still match.
   if (offer && input.negotiable) offer = { ...offer, attributes: { ...offer.attributes, negotiable: "yes" } };
-  // Answers other requesters got from this fact are stale once its text changes.
-  if (prev && (prev.text !== text || prev.tier !== input.tier))
-    for (const a of await db.find(ANSWERS, [["factId", "==", prev.id]], 200)) await db.delete(ANSWERS, docId(`${prev.id}:${savedKey(a.question)}`));
-  // A fact keeps the id it had on the owner's device when it's first shared (so both copies stay one fact).
-  const fresh = input.id && /^[a-z0-9]{6,40}$/.test(input.id) ? input.id : newId();
   const fact: Fact = { id: prev?.id ?? fresh, owner: owner.uid, text, tier: input.tier, topics, offer,
     ...(embedding ? { embedding } : {}), createdAt: prev?.createdAt ?? now(), updatedAt: now() };
   await db.set(FACTS, fact.id, fact);

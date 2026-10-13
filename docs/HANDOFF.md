@@ -20,7 +20,7 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 | Secret | Secret Manager `agent-secret` (HMAC key our agents sign A2A calls with); local copy `.deploy/agent-secret` (git-ignored) |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 37/37 pass (`npm run check` = `tsc --strict` + `node --test`); live 12-case run 12/12 (§8) |
+| Tests | 39/39 pass (`npm run check` = `tsc --strict` + `node --test`); live 12-case run 12/12 (§8) |
 | Size | ~5.7k lines: server ~3.3k TS, web ~1.2k JS/CSS |
 
 ## 2. What was done (chronologically)
@@ -58,11 +58,16 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 
 ```
 Browser (device agent)                     Cloud Run: collab-market (Node 24, Express 5)            Firestore
-  IndexedDB: private facts, chats,   /api   ├─ API (auth: Firebase ID token + App Check)            profiles, handles, facts(+vector)
-  private limits                     ─────▶ ├─ directory: embeddings + vector search + ranking  ──▶ rules, contacts, briefs
-  Gemini Nano (if Chrome has it)            ├─ engagement engine (core/engage.ts)                    engagements (live), inbox
-  Firebase Auth / App Check / FS            ├─ A2A per person /a2a/<handle> (SDK)  ◀── other agents  a2a_tasks, limits, audit
-  listeners (engagements, inbox)            └─ Gemini (Vertex AI) via ai/gemini.ts                   rate, leases (TTL), meta
+  IndexedDB: chat history only       /api   ├─ API (auth: Firebase ID token + App Check)            profiles, handles, facts(+vector)
+  Gemini Nano (if Chrome has it)     ─────▶ ├─ directory: embeddings + vector search + ranking  ──▶ rules, contacts, briefs
+  Firebase Auth / App Check / FS            ├─ engagement engine (core/engage.ts)                    engagements (live), inbox
+  listeners (engagements, inbox)            ├─ A2A per person /a2a/<handle> (SDK)  ◀── other agents  a2a_tasks, limits, audit
+                                          └─ Gemini (Vertex AI) via ai/gemini.ts                   rate, leases (TTL), meta
+
+All fact tiers — Private included — live in Firestore under the owner's uid. "Private" now means *never shared*:
+allowedFor() never returns the tier (no rule can name it), Private facts get no topics/offer/embedding, so they
+can't leak through rules, listings, search, or engagements. Limits/mandates are stored too (LIMITS; autonomy "ask"
+= kept for the owner's devices, agent still asks each move).
 ```
 
 Requester's agent → provider's agent is a **real A2A HTTP call** (the server calls `PUBLIC_URL/a2a/<handle>` with an
@@ -93,7 +98,8 @@ server/src/
   market/match.ts      check(), modeServes, rank(), RankTask, budgetUpper/budgetBand (strictly above limit)
   market/negotiate.ts  Negotiator, guards (limits, pacing, no backtracking, leak detection), NegotiateTask (₹ only)
   market/answer.ts     offerFacts, AnswerTask (evidence-quoted, no new numbers/contacts), JudgeTask
-  market/{domains,places,geo,text,types}.ts + data/{domains.json (15 domains incl. goods, vehicles, other),
+  market/{domains,places,geo,text,types}.ts + data/{domains.json (19 domains: goods, vehicles, stays, jobs, events,
+                       pets, other …; FB Marketplace has ~19 top categories, OLX ~15),
                        places.tsv (GeoNames CC BY), places.extra.tsv (local supplement: Bengaluru localities)}
   ai/gemini.ts         Vertex/AI-Studio client, model fallback + resting, thinking level, embeddings (regional), stats
   ai/meter.ts          per-call token/latency/cost metering (GEMINI_PRICES)
@@ -120,7 +126,7 @@ web/
   js/agent.js          Device agent: chat routing, think() (Nano or /api/think), auto moves with local limits,
                        private-note drafts for answer items
   js/live.js           Engagements/inbox state, Firestore listeners or polling, notifications, poke()
-  js/local.js          IndexedDB (per-uid keys), relevant() note retrieval
+  js/local.js          IndexedDB for chat sessions only (per-uid keys), relevant() note retrieval
   js/api.js            Firebase Auth (anonymous, Google link), App Check token, Firestore listeners, api()
 deploy.sh              SA + IAM (retried), Secret Manager, TTL, Cloud Run deploy (--source), Firebase deploy
 monitoring.sh          One-time uptime check + alert (ALERT_EMAIL=…)
@@ -147,8 +153,9 @@ firebase.json, firestore.rules, firestore.indexes.json, Dockerfile, .github/work
 | `rate/*`, `leases/*` | TTL `expireAt` | server |
 | `meta/demo` | `{version:"demo-v3"}` — bump `SEEDED` in demo.ts to re-seed (v2 added labelled demo deals, v3 @nikhil + goods/vehicles deals) | server |
 
-Private facts and non-delegated limits exist **only** in the browser (IndexedDB `collab` → stores `facts`, `sessions`,
-`limits`, keyed `<uid>:<id>`).
+Only chat sessions stay in the browser (IndexedDB `collab` → store `sessions`, keyed `<uid>:<id>`). Facts of every
+tier and all limits live server-side; `autonomy: "ask"` on a LIMITS row stores a non-delegated limit for the owner's
+devices without letting the agent act on it.
 
 ## 6. Run · test · deploy
 
@@ -174,8 +181,9 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 
 - **Separate product, own data** (user's call): no AT Protocol / Nostr ingestion; the directory is this app's Public facts.
 - **Public + World merged** into Public (user's call).
-- **Private stays on device** (user's call); the cloud agent therefore only holds shareable data — this is what makes
-  leaks structurally impossible from the cloud side.
+- **Private facts are stored server-side** (user's call — simpler demo, works across devices) but the guarantee is
+  enforced by the same deterministic policy wall: `allowedFor` never yields the tier, so no answer, listing or
+  brief can contain it. Device-side storage remains an option (PRD R1) if the threat model needs it back.
 - **A2A with the official SDK**, multi-tenant via one `DefaultRequestHandler` per handle; agent card served in wire
   JSON (`AgentCard.toJSON`) because `agentCardHandler` stringifies what the provider returns.
 - **Turns are bounded requests** (Hosting rewrites cut at 60 s): `runTurns` stops at 35 s and leaves the next turn in
@@ -258,7 +266,8 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 13. **Receipt signatures** are HMACs with the server secret, so they prove "Collab recorded this", not independent
     owner keys; `deals.ts` ↔ `engage.ts` is an ESM import cycle (safe: all uses are inside functions).
 14. `GET /api/insights` has no spend charge (no model call) but is unthrottled beyond App Check.
-10. Local IndexedDB is unencrypted; a browser = a device (no sync of Private data).
+10. Private facts sit in Firestore like everything else (plaintext at rest — GCP encrypted, but readable by anyone
+    with DB access); no per-user encryption. Chat history is still only in IndexedDB.
 11. The deployed site's old tabs (pre-App-Check JS) get 401s until reloaded.
 12. `firebase deploy` used to prompt about TTL field overrides; now declared in `firestore.indexes.json`.
 

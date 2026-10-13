@@ -21,7 +21,7 @@ lives on someone's server.
 
 ## 2. Solution (one line)
 
-**Your agent asks anyone's agent for anything — and your private context never leaves your device.**
+**Your agent asks anyone's agent for anything — and a deterministic policy wall decides what it may say.**
 
 Each person has an agent. You say what you need; Gemini helps you shape it into a request; your agent finds the people
 whose **public** offerings fit and talks to *their* agents over Google's **A2A (Agent2Agent) protocol**. Their agents
@@ -57,7 +57,7 @@ answer only from what their owners chose to share, ask what they need to know, a
 
 | Level | Stored | Who can be told | Notes |
 |---|---|---|---|
-| **Private** (default) | Only on the device (IndexedDB) | Nobody automatically. The device agent may draft an answer from it; it's shared only if the owner taps *Share* | Includes private limits (most you'll pay / least you'll take) |
+| **Private** (default) | Firestore, under the owner's uid | Nobody — the policy gate never returns the tier (no rule can name it, no engagement draws on it, no embedding or listing is built from it). The device agent may draft an answer from it; it's shared only if the owner taps *Share* | Includes private limits (most you'll pay / least you'll take) |
 | **Protected** | Firestore, with topics | People a **rule** names (a person, or "anyone who contacts my agent"), on the rule's topics, cut to its level of detail (yes/no · one line · summary · full), automatically or after the owner approves | Rules expire (day/week/month/never) and can be revoked; "Pause everything" stops all sharing |
 | **Public** | Firestore, with a Gemini embedding | Anyone; discoverable in the directory | What you offer lives here; offerings are read by Gemini into structured listings (category, price, area, attributes) |
 
@@ -66,13 +66,13 @@ from the GeoNames gazetteer) is ever used; exact location is Private (see roadma
 
 ## 6. Agent model
 
-- **Always-on cloud agent** (Cloud Run): one A2A agent per person at `/a2a/<handle>`. Holds only Protected + Public
-  facts, rules, and limits the owner explicitly delegated. Answers, gathers requirements, negotiates while the owner
-  is away.
-- **Device agent** (the web app): holds everything including Private. Routes the owner's chat, answers from their
-  notes, drafts requests/offerings, makes negotiation moves with a private limit (sent for that single move, never
-  stored), drafts answers from private notes for approval. Uses Gemini Nano on device when Chrome provides it;
-  otherwise Gemini via the server for that one call, stored nowhere. (Roadmap R1: Gemma on device, fully offline.)
+- **Always-on cloud agent** (Cloud Run): one A2A agent per person at `/a2a/<handle>`. Answers and negotiates only
+  from what policy allows for that caller — Public for strangers, Protected under rules, Private for nobody.
+  Negotiates while the owner is away inside limits they delegated.
+- **Device agent** (the web app): the owner's own surface. Routes the owner's chat, answers from their notes,
+  drafts requests/offerings, makes negotiation moves with the private limit, drafts answers from private notes for
+  approval. Uses Gemini Nano on device when Chrome provides it; otherwise Gemini via the server. (Roadmap R1:
+  Gemma on device, fully offline.)
 
 ## 7. Core flows
 
@@ -93,23 +93,24 @@ from the GeoNames gazetteer) is ever used; exact location is Private (see roadma
    unanswerable → owner's device.
 3. Requester's cloud agent judges answers (met / unmet / unclear; a failed must-have ends it politely), answers the
    provider's questions from the brief and its shared facts, else asks its owner's device.
-4. When questions settle, the provider quotes; turns alternate; each move uses the side's limit (delegated, or the
-   device's for that move). Gemini picks moves from numbers only; guards enforce limits, pacing, no backtracking, no
-   leaks. Rounds run out → owner may widen the limit or walk away.
+4. When questions settle, the provider quotes; turns alternate; each move uses the side's stored limit (delegated
+   for autonomy, or "ask"-stored and sent by the owner's device for that move). Gemini picks moves from numbers
+   only; guards enforce limits, pacing, no backtracking, no leaks. Rounds run out → widen the limit or walk away.
 5. Accept → tentative deal → both owners confirm → agreed.
 
 ### F3 Offer something
 Owner types an offering → Gemini reads it into a listing; a stated floor ("lowest 600") is **removed from the public
-text** and kept on the device (or delegated) → owner reviews → *Publish* (Public, embedded, discoverable).
+text** and kept private (stored with the owner's limits, never revealed; optionally delegated with an autonomy
+level) → owner reviews → *Publish* (Public, embedded, discoverable).
 
 ### F4 Incoming
 Someone's agent contacts yours → live notification + a card in Requests. Your cloud agent works on its own; the card
 shows progress and asks you exactly when needed (answer / approve / limit / confirm).
 
 ### F5 Your own context
-Remember (saved Private on device; suggest Public if it's an offering), ask your notes (answered on device or by
-Gemini without storage, with sources), move facts between tiers (Protected gets topics from Gemini), rules in Sharing,
-an audit of everything your agent shared in Activity.
+Remember (saved Private — stored with the account, never shared; suggest Public if it's an offering), ask your
+notes (answered by Nano on device or by Gemini, with sources), move facts between tiers (Protected gets topics from
+Gemini), rules in Sharing, an audit of everything your agent shared in Activity.
 
 ## 8. Functional requirements (v1 — all implemented)
 
@@ -125,12 +126,12 @@ an audit of everything your agent shared in Activity.
 | FR8 | Provider requirement gathering; answers from allowed facts only; rule detail shaping; review approvals |
 | FR9 | Requester judging of answers; must-have failure ends politely |
 | FR10 | Negotiation with guarded Gemini moves and deterministic fallback; widen limit / walk away; dual confirmation |
-| FR11 | Device inbox: answer (with private-note draft + Share/Don't share), approve, move (automatic with local limit), confirm |
+| FR11 | Device inbox: answer (with private-note draft + Share/Don't share), approve, move (automatic with the stored limit), confirm |
 | FR12 | Live updates (Firestore listeners + polling fallback) and notifications (toast + browser Notification) |
 | FR13 | Offering publishing with floor removed from public text; delegated floor optional |
 | FR14 | Audit log of shared answers; privacy wall on every crossing message |
 | FR15 | Demo people (8) for solo judging; their devices simulated (the requester can answer for them, labelled "demo") |
-| FR15a | Any priced demand: 15 domains (property sale/rent, wholesale, freight, services, equipment rental, commercial lease, manufacturing, rides, food, lessons, tasks, goods, vehicles, other) — `other` is a catch-all, so the reader never refuses something bought, sold, rented or hired; only non-transactions are refused |
+| FR15a | Any priced demand: 19 domains (property sale/rent, wholesale, freight, services, equipment rental, commercial lease, manufacturing, rides, food, lessons, tasks, goods, vehicles, stays, jobs, events, pets, other) — comparable to Facebook Marketplace's ~19 and OLX's ~15 top-level categories; `other` is a catch-all, so the reader never refuses something bought, sold, rented or hired; only non-transactions are refused |
 | FR16 | Market insights from agreed deals ("similar deals closed at ₹X–₹Y, median ₹Z, ~N% under asking, in R rounds"), deterministic, for the requester (while setting a limit, when the limit runs out) and the provider (vs. the asking price); labelled when from demo deals |
 | FR17 | Mandates with an autonomy level — ask me every move / negotiate inside my limit, I confirm / negotiate and close inside my limit — and an expiry (1/7/30 days) |
 | FR18 | Signed deal receipt (hash of the agreed terms and parties, signed per owner, who confirmed: owner or mandate) |
@@ -141,7 +142,7 @@ an audit of everything your agent shared in Activity.
 
 | Area | Requirement | v1 state |
 |---|---|---|
-| Privacy | No Private data stored server-side; minimal disclosure | Met (raw request text and exact budget are not stored; brief carries a band strictly above the limit) |
+| Privacy | Private data never shared; minimal disclosure | Met (Private facts are stored server-side but the policy gate returns them to no one — they get no topics, offer or embedding; the brief carries a band strictly above the limit) |
 | Security | Verified Firebase ID tokens; server-only Firestore writes; App Check on `/api`; A2A rate limits; least-privilege service account; secret in Secret Manager | Met |
 | Scale | Stateless instances; cross-instance locks and rate limits in Firestore; vector index | Met for pilot; agent turns still run in-request (R7) |
 | Latency | Draft ≤ 8 s, search ≤ 5 s, agent turn ≤ 10 s | Draft ~6 s; search ~2–4 s on Cloud Run (first embedding call slower); turns 3–15 s |
@@ -178,7 +179,7 @@ an audit of everything your agent shared in Activity.
 
 Payments and escrow (AP2 role is declared, no payment mandates yet), identity verification/KYC, free-text reviews
 (only went-ahead / fell-through outcomes), native apps (the Collab iOS/macOS app is separate), reading
-the Collab app's AT Protocol/Nostr data, multi-device sync of Private data.
+the Collab app's AT Protocol/Nostr data.
 
 ## 13. Success metrics
 
@@ -199,7 +200,7 @@ the Collab app's AT Protocol/Nostr data, multi-device sync of Private data.
 | R6 | Reputation after deals | Trust | Ratings shown in matches |
 | R7 | Agent turns on Cloud Tasks (idempotent, retried) | Production robustness | No turn runs inside a user request |
 | R8 | Data rights: delete/export my account (server), Firestore PITR | DPDP compliance | One tap deletes all server data |
-| R9 | Encrypt Private data at rest in the browser (WebCrypto); optional encrypted sync | Shared computers, multiple devices | IndexedDB holds ciphertext only |
+| R9 | Encrypt Private facts at rest (client-side key or Cloud KMS envelope); optionally move Private storage back on-device | Shared DB access, multi-device | Server holds ciphertext only for the private tier |
 | R10 | Load test (k6), staging service | Known limits | Report with p95 at 50 rps |
 
 ## 15. Open questions

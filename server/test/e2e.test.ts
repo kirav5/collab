@@ -143,3 +143,14 @@ test("used goods: a requester finds a second-hand cycle and the agents close ins
   assert.equal(e.phase, "agreed", JSON.stringify(e.events.slice(-4)));
   assert.ok(e.negotiation.deal.price >= 3_800 && e.negotiation.deal.price <= 4_600, `deal ${e.negotiation.deal.price} inside both limits`);
 });
+
+test("private facts store with the account, list only for the owner, never surface publicly", async () => {
+  await as("pat", "/api/me", { handle: "pat", name: "Pat", areaName: "Jayanagar" });
+  await as("quinn", "/api/me", { handle: "quinn", name: "Quinn", areaName: "Jayanagar" });
+  const saved = await as("pat", "/api/facts", { tier: "private", text: "My gym locker code is 4321" });
+  assert.equal(saved.tier, "private");
+  assert.equal(saved.offer, null);
+  assert.ok((await as("pat", "/api/facts")).some((f: any) => f.id === saved.id && f.tier === "private"));
+  const pub = await as("quinn", "/api/people/pat");
+  assert.ok(!pub.facts.some((f: any) => f.text.includes("4321")));
+});
