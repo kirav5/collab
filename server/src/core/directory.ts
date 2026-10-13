@@ -8,7 +8,7 @@ import { type Docs, docId } from "../docs.ts";
 import { ANSWERS } from "./engage.ts";
 import { savedKey } from "../market/answer.ts";
 import { RankTask, rank } from "../market/match.ts";
-import { BROAD, stats } from "./deals.ts";
+import { BROAD, sameItem, stats } from "./deals.ts";
 import { read } from "../market/read.ts";
 import { moneyText, newId } from "../market/types.ts";
 import type { Brief, Fact, Profile, Tier } from "./model.ts";
@@ -106,14 +106,17 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
   // How close the best match is sets the bar for everything outside the request's category: a loosely related note
   // (an electrician for a water bottle) doesn't ride along just because nothing else is near.
   const closest = Math.min(...(near as { distance: number }[]).map(n => n.distance), 1);
+  const wanted = brief.need.attributes.item ?? brief.shared.requirements.find(r => /^item$/i.test(r.label))?.value ?? brief.shared.title;
   const bar = Math.min(0.55, closest + 0.08);
   // One entry per person: their closest Public fact.
   const best = new Map<string, { fact: Fact; distance: number }>();
   for (const { doc, distance } of near as { doc: Fact; distance: number }[]) {
     // Offerings in the request's own category always count (the hard filters below decide); anything else has to be
     // about as close in meaning as the best match.
-    // In a broad category ("goods" holds bicycles and bottles) sharing the category isn't enough either.
-    const sameKind = doc.offer?.category === brief.need.category && !BROAD.has(brief.need.category);
+    // In a broad category ("goods" holds bicycles and bottles) sharing the category isn't enough: the listing must also
+    // name the same kind of item as the request ("cycle"), or be about as close in meaning as the best match.
+    const sameKind = doc.offer?.category === brief.need.category
+      && (!BROAD.has(brief.need.category) || sameItem(`${doc.offer.title} ${doc.text}`, wanted));
     if (doc.owner === me || (!sameKind && distance > bar)) continue;
     const cur = best.get(doc.owner);
     if (!cur || distance < cur.distance) best.set(doc.owner, { fact: doc, distance });
