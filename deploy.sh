@@ -58,6 +58,8 @@ gcloud run deploy "$SERVICE" --quiet \
   --set-secrets "AGENT_SECRET=agent-secret:latest" \
   --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK"
 
+# The version open apps compare against when they come back to the front (they reload into a new one).
+echo "$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)" > web/version.txt
 firebase deploy --project "$PROJECT" --only hosting,firestore --non-interactive
 
 # Scheduled agents: Cloud Scheduler runs the due watches every 15 minutes (the token is derived from the agent secret).

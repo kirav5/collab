@@ -499,6 +499,16 @@ function driveRequester() {
   for (const e of live.engagements.values()) if (e.outbox && e.requester.uid === session.uid) run(e.id);
 }
 
+// An installed app can stay open for days: coming back to it checks the deployed version, and reloads into a new one
+// (unless something is being typed).
+const readVersion = () => fetch("/version.txt", { cache: "no-store" }).then(r => (r.ok ? r.text() : null)).then(t => t?.trim() || null).catch(() => null);
+let version = null;
+readVersion().then(v => { version = v; });
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) return;
+  const v = await readVersion();
+  if (version && v && v !== version && !document.querySelector("input:focus, textarea:focus")) location.reload();
+});
 // The service worker serves the app from this device and checks for a new version in the background.
 // A push that arrives while Collab is open shows here (the system shows it when Collab is closed).
 addEventListener("collab-push", e => {
