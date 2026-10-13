@@ -199,3 +199,7 @@ details.more[open] { display: grid; gap: 10px; }
 .engine-chip { font: 600 11px/1 var(--sans); padding: 6px 9px; border-radius: 999px; border: 1px solid var(--hairline); background: var(--surface2); color: var(--accent); cursor: pointer; }
 .engine-chip.peri { color: var(--peri); }
 .engine-chip:hover { border-color: currentColor; }
+
+/* Follow-up box on a resting conversation card. */
+.row.reply { gap: 6px; flex-wrap: nowrap; }
+.row.reply .field { flex: 1; min-width: 0; }

@@ -77,6 +77,10 @@ async function boot() {
   document.addEventListener("click", onClick);
   document.addEventListener("change", onEdit);
   document.addEventListener("input", onEdit);
+  document.addEventListener("keydown", e => {
+    const f = e.target.dataset?.followup;
+    if (f && e.key === "Enter") { e.preventDefault(); document.querySelector(`[data-act="eng-ask"][data-id="${CSS.escape(f)}"]`)?.click(); }
+  });
   start(openScreen);
   startDevice();
   onChange(() => { paintSidebar(); paintContent(true); driveRequester(); });
@@ -309,6 +313,15 @@ async function onClick(e) {
     if (a === "send-text") return send(el.dataset.text);
     if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
     if (a.startsWith("inbox-")) return inboxAction(a, el);
+    if (a === "eng-ask") {
+      const input = document.querySelector(`[data-followup="${CSS.escape(el.dataset.id)}"]`);
+      const q = input?.value.trim();
+      if (!q) return input?.focus();
+      busy(el, true, "Sending");
+      try { live.engagements.set(el.dataset.id, await api(`/api/engagements/${el.dataset.id}/ask`, { text: q })); input.value = ""; run(el.dataset.id); }
+      finally { busy(el, false); }
+      return refresh(openScreen);
+    }
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
     if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
     if (a === "eng-receipt") {

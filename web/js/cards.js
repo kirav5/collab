@@ -169,6 +169,14 @@ function stepper(e) {
   return `<ol class="steps ${ended ? "ended" : ""}" aria-label="Progress: ${STEPS[at]}">${STEPS.map((s, i) => `<li class="${i < at ? "done" : i === at ? "now" : ""}"><span>${s}</span></li>`).join("")}</ol>`;
 }
 
+/** A resting conversation: who spoke last, and that either person can carry on. */
+function openLine(e, mine, them) {
+  const first = esc(them.name.split(" ")[0]);
+  const last = e.qa.filter(q => q.answer).at(-1);
+  if (!last) return `Open — send ${first}'s agent a message below.`;
+  return last.from === mine ? `${first} answered. Ask something else, or tap Done.` : `You answered ${first}. Send something back, or tap Done.`;
+}
+
 /** One sentence: what's happening now, from this owner's side. */
 function statusLine(e, mine, them, items, talking) {
   const first = them.name.split(" ")[0];
@@ -200,16 +208,22 @@ export function engagementCard(e, id) {
   const [ph, tone] = PHASE[e.phase] ?? [e.phase, ""];
   const items = live.inbox.filter(i => i.engagementId === e.id && !(i.kind === "move" && !i.question && i.owner === session.uid && !needsLimit.has(i.id)));
   const autoMove = live.inbox.some(i => i.engagementId === e.id && i.kind === "move" && !i.question && i.owner === session.uid && !needsLimit.has(i.id));
-  const talking = autoMove || !!e.outbox || (["asking", "negotiating"].includes(e.phase) && !e.waiting?.requester && !e.waiting?.provider && !items.length);
+  // A conversation with nothing to negotiate (no price) rests once every question is answered: it's open for a
+  // follow-up from either person, not "still talking".
+  const unanswered = e.qa.some(q => q.status === "open" || q.status === "pending");
+  const open = ["asking", "negotiating"].includes(e.phase) && e.offer.price == null && !e.outbox && !e.waiting?.requester && !e.waiting?.provider && !items.length && !autoMove && !unanswered;
+  const talking = !open && (autoMove || !!e.outbox || (["asking", "negotiating"].includes(e.phase) && !e.waiting?.requester && !e.waiting?.provider && !items.length));
   const live_ = ["asking", "negotiating", "deal"].includes(e.phase);
   return `<div class="card eng ${items.length ? "needs-card" : ""}" data-engagement="${esc(e.id)}">
     <div class="row eng-head"><span class="avatar" aria-hidden="true">${esc(them.name.slice(0, 1).toUpperCase())}</span>
       <div class="eng-who"><b>${esc(them.name)}</b><span class="small faint">${mine === "requester" ? "You asked" : "Asked you"} · ${esc(e.title)}</span></div>
       <span class="end">${tag(ph, tone)}</span></div>
     ${stepper(e)}
-    ${e.phase === "agreed" ? "" : `<p class="status ${talking ? "busy" : ""}">${talking ? `<span class="spinner"></span>` : ""}<span>${statusLine(e, mine, them, items, talking)}</span>${e.offer.price ? `<span class="end faint small">listed ${money(e.offer.price, e.offer.unit)}</span>` : ""}</p>`}
+    ${e.phase === "agreed" ? "" : `<p class="status ${talking ? "busy" : ""}">${talking ? `<span class="spinner"></span>` : ""}<span>${open ? openLine(e, mine, them) : statusLine(e, mine, them, items, talking)}</span>${e.offer.price ? `<span class="end faint small">listed ${money(e.offer.price, e.offer.unit)}</span>` : ""}</p>`}
     ${items.length || e.phase === "agreed" ? "" : keyAnswer(e, mine)}
     ${items.map(inboxBlock).join("")}
+    ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(them.name.split(" ")[0])}'s agent…" aria-label="Follow-up">
+      <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>

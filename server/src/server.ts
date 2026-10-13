@@ -22,7 +22,7 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, resolve as resolveItem, save as saveEngagement } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, resolve as resolveItem, save as saveEngagement, type Turn } from "./core/engage.ts";
 import { forProvider, forRequester, insights, receipt, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
@@ -228,14 +228,20 @@ app.post("/api/people/:handle/ask", route(async req => {
   await saveEngagement(db, e);
   return e;
 }));
+// A follow-up in an open conversation, from either side: it goes over A2A like any turn, and the other agent answers
+// from what its owner shares or asks its owner (who gets a notification).
 app.post("/api/engagements/:id/ask", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  if (e.requester.uid !== req.uid) throw new HttpError(403, "only the person who asked can ask more");
   if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended — start a new one.");
   await spend(req.uid, 2);
   const q = text(req.body?.text, 300).trim();
   if (q.length < 2) throw new HttpError(400, "Ask something.");
-  await sendTurn(cfg, e.id, { kind: TURN, from: "requester", engagementId: e.id, questions: [{ id: Math.random().toString(36).slice(2, 12), question: q }] });
+  const side = e.requester.uid === req.uid ? "requester" : "provider";
+  e.events.push({ at: now(), who: side, text: q, by: "owner" });
+  await saveEngagement(db, e);
+  const turn: Turn = { kind: TURN, from: side, engagementId: e.id, questions: [{ id: Math.random().toString(36).slice(2, 12), question: q }] };
+  if (side === "requester") await sendTurn(cfg, e.id, turn);
+  else await deliverProviderTurn(cfg, a2a.store, e.id, turn);
   return load(db, e.id);
 }));
 
