@@ -40,7 +40,7 @@ export async function think(question, notes, side = "self") {
     } catch { /* fall through to Gemini */ }
   }
   const r = await api("/api/think", { question, notes: notes.map(n => ({ text: n.text })), side });
-  return r.action === "answer" ? { text: r.answer, evidence: r.evidence, on: "gemini" } : null;
+  return r.action === "answer" ? { text: r.text ?? r.answer, evidence: r.evidence, on: "gemini" } : null;
 }
 
 // MARK: - Your chat
