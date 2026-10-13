@@ -74,7 +74,7 @@ export async function chat(text, recent, area) {
       // A plain answer first; finding sellers is offered, never started on its own. The question and its answer are
       // kept as a Private chat memory (your agent can recall them; they're never shared).
       api("/api/facts", { tier: "private", source: "chat", text: `Asked: “${text.slice(0, 300)}” — answer: ${route.reply}` }).catch(() => {});
-      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: route.find, text: route.find }] }] : [] };
+      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: "Find sellers near me", text: route.find }] }] : [] };
     }
     default:
       return { text: route.reply ?? "I can remember things for you, answer from your notes, find people for anything you need, or publish what you offer.", cards: [] };

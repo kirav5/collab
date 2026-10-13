@@ -202,13 +202,15 @@ function termBounds(attributes: Record<string, string>, d: Domain, side: "buyer"
   return out;
 }
 
-export async function read(text: string, side: ReadSide, model: Model | null, now: number, here?: Place | null, category?: string | null): Promise<ReadResult> {
+/** `transaction`: the owner's agent already knows this is a request or an offer (the router said so), so a message
+ *  no listed category fits goes to "other" instead of being turned away. */
+export async function read(text: string, side: ReadSide, model: Model | null, now: number, here?: Place | null, category?: string | null, transaction = false): Promise<ReadResult> {
   const byModel: Record<string, boolean> = {};
   if (!model) return { draft: null, category: null, byModel, problem: "The model isn't configured on this server." };
   const hinted = category ? domainOf(category) : null;
   const c = hinted ? null : await decide(model, ClassifyTask, { text });
   byModel.category = hinted ? true : c!.byModel;
-  const d = hinted ?? (c!.output && c!.output !== "none" ? domainOf(c!.output) : null);
+  const d = hinted ?? (c!.output && c!.output !== "none" ? domainOf(c!.output) : transaction ? domainOf("other") : null);
   if (!hinted && !c!.byModel) return { draft: null, category: null, byModel, problem: "Gemini didn't answer in time — please try again in a moment." };
   if (!d) return { draft: null, category: null, byModel, problem: "That doesn't look like something to buy, sell, rent or hire." };
   // The fields and this request's filters are independent readings of the same text: asked at the same time.

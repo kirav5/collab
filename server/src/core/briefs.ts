@@ -16,7 +16,7 @@ export const BRIEFS = "briefs";
 export interface BriefDraft { need: Need; shared: SharedBrief; mandate: Mandate | null; clarify: Clarify[]; byModel: Record<string, boolean> }
 
 export async function draft(model: Model | null, text: string, here: Place | null, now: number, category?: string | null): Promise<{ draft: BriefDraft | null; problem?: string }> {
-  const r = await read(text, "find", model, now, here, category);
+  const r = await read(text, "find", model, now, here, category, true);
   if (r.draft?.kind !== "need") return { draft: null, problem: r.problem ?? "Couldn't read that as a request." };
   const need = r.draft.need;
   const known = [`area: ${need.place.name}`, ...(need.mode ? [`how: ${need.mode}`] : []), ...need.filters.map(f => `${f.label}: ${f.value}`)];

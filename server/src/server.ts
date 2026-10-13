@@ -298,7 +298,7 @@ app.post("/api/offers/draft", route(async req => {
   const t = text(req.body?.text, 1000).trim();
   if (t.length < 4) throw new HttpError(400, "Say a bit more.");
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
-  const r = await read(t, "sell", model, now(), here);
+  const r = await read(t, "sell", model, now(), here, null, true);
   if (r.draft?.kind !== "offer") return { offer: null, floor: null, publicText: t };
   // The model reads a stated floor; a written one ("lowest 600", "won't go below 600") is caught either way, so the
   // directory never shows it whatever the model does.
