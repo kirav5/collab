@@ -70,6 +70,12 @@ export async function chat(text, recent, area) {
       const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period }) : [];
       return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, floor: d.floor ?? null, insights, step: "review" }] };
     }
+    case "ask": {
+      // A plain answer first; finding sellers is offered, never started on its own. The question and its answer are
+      // kept as a Private chat memory (your agent can recall them; they're never shared).
+      api("/api/facts", { tier: "private", source: "chat", text: `Asked: “${text.slice(0, 300)}” — answer: ${route.reply}` }).catch(() => {});
+      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: route.find, text: route.find }] }] : [] };
+    }
     default:
       return { text: route.reply ?? "I can remember things for you, answer from your notes, find people for anything you need, or publish what you offer.", cards: [] };
   }

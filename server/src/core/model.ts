@@ -33,6 +33,8 @@ export interface Fact {
   offer: Offer | null;
   /** Search by meaning (Public only). */
   embedding?: number[];
+  /** "chat": remembered from the owner's own chat (a question and the answer they got) — always Private. */
+  source?: "chat";
   createdAt: number;
   updatedAt: number;
 }

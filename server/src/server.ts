@@ -217,7 +217,9 @@ app.post("/api/facts", route(async req => {
   const b = req.body ?? {};
   if (!["private", "protected", "public"].includes(b.tier)) throw new HttpError(400, "Tier must be private, protected or public.");
   await spend(req.uid, 2);
-  return publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: text(b.text, 1000), tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true }));
+  return publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: text(b.text, 1000), tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true,
+    // A chat memory is always Private: sharing it means rewriting it as a fact of its own.
+    ...(b.source === "chat" ? { source: "chat" as const, tier: "private" as const } : {}) }));
 }));
 app.post("/api/facts/:id/delete", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;

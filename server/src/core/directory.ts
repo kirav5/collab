@@ -48,7 +48,7 @@ export async function byHandle(db: Docs, handle: string): Promise<Profile | null
 
 /** Saves a fact of any tier. Private facts are stored plain: no topics, no offer read, no embedding — the model
     never touches them, and the policy gate never returns them. */
-export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: Tier; topics?: string[]; negotiable?: boolean }): Promise<Fact> {
+export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: Tier; topics?: string[]; negotiable?: boolean; source?: "chat" }): Promise<Fact> {
   const text = input.text.trim().slice(0, 1000);
   if (text.length < 3) throw new Problem("Say a bit more.");
   const prev = input.id ? ((await db.get(FACTS, input.id)) as Fact | null) : null;
@@ -58,7 +58,8 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
     for (const a of await db.find(ANSWERS, [["factId", "==", prev.id]], 200)) await db.delete(ANSWERS, docId(`${prev.id}:${savedKey(a.question)}`));
   const fresh = input.id && /^[a-z0-9]{6,40}$/.test(input.id) ? input.id : newId();
   if (input.tier === "private") {
-    const fact: Fact = { id: prev?.id ?? fresh, owner: owner.uid, text, tier: "private", topics: [], offer: null, createdAt: prev?.createdAt ?? now(), updatedAt: now() };
+    const fact: Fact = { id: prev?.id ?? fresh, owner: owner.uid, text, tier: "private", topics: [], offer: null,
+      ...(input.source === "chat" || prev?.source === "chat" ? { source: "chat" as const } : {}), createdAt: prev?.createdAt ?? now(), updatedAt: now() };
     await db.set(FACTS, fact.id, fact);
     return fact;
   }

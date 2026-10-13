@@ -19,6 +19,7 @@ export function renderCard(card, m, i) {
     case "offer": return offerCard(card, at);
     case "saved": return savedCard(card, at);
     case "sources": return sourcesCard(card);
+    case "suggest": return `<div class="row">${card.options.map(o => `<button class="chip" data-act="send-text" data-text="${esc(o.text)}">↗ ${esc(o.label)}</button>`).join("")}<span class="small faint">Saved to your private context.</span></div>`;
     case "engagement": return engagementCard(live.engagements.get(card.id), card.id);
     default: return "";
   }

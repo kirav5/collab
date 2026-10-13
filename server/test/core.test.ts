@@ -88,3 +88,15 @@ test("an information must-ask judged unmet never ends it; a yes/no check does", 
   assert.ok(out?.decline);
   assert.ok(check.events.some(x => x.text.includes("didn't meet a must-have")));
 });
+
+test("a general question is answered (never the canned fallback); finding sellers is only offered", async () => {
+  const { RouteTask } = await import("../src/core/tasks.ts");
+  const input = { text: "what is the price of water bottle", recent: [] };
+  assert.equal(RouteTask.validate({ intent: "ask", tier: null, reply: "", find: null }, input), null, "an empty answer is rejected");
+  const ok = RouteTask.validate({ intent: "ask", tier: "public", reply: "About ₹20 for a 1-litre bottle.", find: "Find a water bottle near me" }, input)!;
+  assert.equal(ok.reply, "About ₹20 for a 1-litre bottle.");
+  assert.equal(ok.find, "Find a water bottle near me");
+  assert.equal(ok.tier, null);
+  assert.equal(RouteTask.validate({ intent: "request", tier: null, reply: "x", find: "Find more" }, input)!.find, null, "only questions offer a search");
+  assert.equal(RouteTask.validate({ intent: "ask", tier: null, reply: "Sure.", find: "Call 98450 12345" }, input)!.find, null, "no contact details in a suggestion");
+});

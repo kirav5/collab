@@ -229,6 +229,7 @@ async function onClick(e) {
     if (a === "new-chat") { S.current = null; return openScreen("chat"); }
     if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
+    if (a === "send-text") return send(el.dataset.text);
     if (a.startsWith("inbox-")) return inboxAction(a, el);
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
     if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
