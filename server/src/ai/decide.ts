@@ -20,7 +20,7 @@ export interface Task<I, O> {
   settled?(input: I): O | null;
 }
 
-export interface Decision<O> { output: O; byModel: boolean }
+export interface Decision<O> { output: O; byModel: boolean; /** True when the task's `settled` hook answered (vs. the fallback). */ settled?: boolean }
 
 /** The first JSON object in a model's text (models sometimes wrap it in prose or a code fence). */
 export function firstJSON(text: string | null): any {
@@ -32,7 +32,7 @@ export function firstJSON(text: string | null): any {
 
 export async function decide<I, O>(model: Model | null, task: Task<I, O>, input: I): Promise<Decision<O>> {
   const s = task.settled?.(input);
-  if (s != null) return { output: s, byModel: false };
+  if (s != null) return { output: s, byModel: false, settled: true };
   if (model) {
     const raw = await model.complete({ instructions: task.instructions, prompt: task.prompt(input), schema: task.schema, maxTokens: task.maxTokens, task: task.name, tier: task.tier });
     const parsed = firstJSON(raw);

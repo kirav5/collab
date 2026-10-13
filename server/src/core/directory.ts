@@ -47,7 +47,7 @@ export async function byHandle(db: Docs, handle: string): Promise<Profile | null
 }
 
 /** Saves a Protected or Public fact (Private facts never come here). */
-export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: "protected" | "public"; topics?: string[] }): Promise<Fact> {
+export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: "protected" | "public"; topics?: string[]; negotiable?: boolean }): Promise<Fact> {
   const text = input.text.trim().slice(0, 1000);
   if (text.length < 3) throw new Problem("Say a bit more.");
   const prev = input.id ? ((await db.get(FACTS, input.id)) as Fact | null) : null;
@@ -67,6 +67,8 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
     const v = await model?.embed?.([offer ? `${offer.title}. ${text}` : text], "document");
     embedding = v?.[0];
   }
+  // The owner said the price can move (a floor was stated or is delegated): near-budget requests may still match.
+  if (offer && input.negotiable) offer = { ...offer, attributes: { ...offer.attributes, negotiable: "yes" } };
   // Answers other requesters got from this fact are stale once its text changes.
   if (prev && (prev.text !== text || prev.tier !== input.tier))
     for (const a of await db.find(ANSWERS, [["factId", "==", prev.id]], 200)) await db.delete(ANSWERS, docId(`${prev.id}:${savedKey(a.question)}`));

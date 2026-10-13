@@ -125,3 +125,21 @@ test("a hostile listing changes nothing: the requester's agent never offers abov
   assert.ok(e.negotiation.requester.length > 0 && e.negotiation.requester.every((p: any) => p.price <= 950), JSON.stringify(e.negotiation.requester));
   assert.ok(!e.events.some((x: any) => /50,?000/.test(x.text) && x.who === "requester_agent"));
 });
+
+test("used goods: a requester finds a second-hand cycle and the agents close inside both limits", async () => {
+  await as("eve", "/api/me", { handle: "eve", name: "Eve", areaName: "Koramangala" });
+  const d = (await as("eve", "/api/briefs/draft", { text: "Looking for a used cycle in Koramangala under 5000" })).draft;
+  assert.equal(d.need.category, "goods");
+  const sent = await as("eve", "/api/briefs", { need: d.need, shared: d.shared });
+  const nikhil = sent.found.find((f: any) => f.profile.handle === "nikhil");
+  assert.ok(nikhil, "Nikhil's cycle is found");
+  const [e0] = await as("eve", `/api/briefs/${sent.brief.id}/engage`, { providers: [{ factId: nikhil.fact.id }] });
+  let e = await as("eve", `/api/engagements/${e0.id}/run`, {});
+  const limits = { requester: { price: { opening: 3_800, limit: 4_600 }, terms: {}, maxRounds: 5 }, provider: { price: { opening: 4_500, limit: 3_800 }, terms: {}, maxRounds: 5 } };
+  for (let i = 0; i < 30 && e.phase !== "agreed"; i++) {
+    if (!(await device("eve", limits))) break;
+    e = await as("eve", `/api/engagements/${e.id}`);
+  }
+  assert.equal(e.phase, "agreed", JSON.stringify(e.events.slice(-4)));
+  assert.ok(e.negotiation.deal.price >= 3_800 && e.negotiation.deal.price <= 4_600, `deal ${e.negotiation.deal.price} inside both limits`);
+});

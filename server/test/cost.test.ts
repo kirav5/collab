@@ -8,8 +8,10 @@ import { modelsFor } from "../src/ai/gemini.ts";
 import { type Task, decide } from "../src/ai/decide.ts";
 import { type Docs, memoryDocs } from "../src/docs.ts";
 import { catalog, domain } from "../src/market/domains.ts";
+import { rank } from "../src/market/match.ts";
 import { type Context, NegotiateTask } from "../src/market/negotiate.ts";
 import { read } from "../src/market/read.ts";
+import type { Need } from "../src/market/types.ts";
 import { ANSWERS, type Turn, fresh, providerTurn } from "../src/core/engage.ts";
 import { saveFact } from "../src/core/directory.ts";
 import { PROFILES } from "../src/core/policy.ts";
@@ -51,7 +53,7 @@ test("a task that settles itself never calls the model", async () => {
   let calls = 0;
   const model: Model = { name: "counting", complete: async () => { calls++; return null; } };
   const t: Task<number, number> = { name: "t", instructions: "", prompt: () => "", parse: () => null, validate: v => v, fallback: () => -1, settled: i => (i > 0 ? i * 2 : null) };
-  assert.deepEqual(await decide(model, t, 3), { output: 6, byModel: false });
+  assert.deepEqual(await decide(model, t, 3), { output: 6, byModel: false, settled: true });
   assert.equal(calls, 0);
   const d = await decide(model, t, 0);
   assert.equal(calls, 1);
@@ -150,4 +152,17 @@ test("re-saving an unchanged Public fact reuses its offer and embedding", async 
   const b = await saveFact(db, model, owner, { ...input, topics: ["housing"] });
   assert.equal(embeds.n, 1, "no re-embed for identical text");
   assert.deepEqual(b.offer, a.offer);
+});
+
+test("a negotiable flag on save marks the listing so a tight budget still matches it", async () => {
+  const db = memoryDocs();
+  const f = await saveFact(db, readerModel({}), profile("pat"), { text: "2BHK flat for rent in Indiranagar, 38000 a month", tier: "public", negotiable: true });
+  assert.equal(f.offer?.attributes.negotiable, "yes");
+  const now = Math.floor(Date.now() / 1000);
+  const place = { name: "Indiranagar", lat: 12.97, lon: 77.64, isCity: false };
+  const need: Need = { id: "n", category: "property-rent", text: "", place, radiusKm: 3, maxPrice: 700, attributes: {}, mustAsk: [], unit: "month", mode: null, filters: [] };
+  const o = (attributes: Record<string, string>) => ({ id: "x", category: "property-rent", title: "x", details: "",
+    price: { amount: 800, currency: "INR", period: "month" }, place, attributes, askBuyer: [], publishedAt: now, expiresAt: now + 86_400, status: "active" as const });
+  assert.equal(rank([{ key: "y", offer: o({ negotiable: "yes" }) }], need, now).length, 1, "₹800 negotiable passes a ₹700 budget (within 15%)");
+  assert.equal(rank([{ key: "n", offer: o({}) }], need, now).length, 0, "₹800 fixed does not");
 });

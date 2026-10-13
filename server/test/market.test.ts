@@ -6,8 +6,9 @@ import type { Model } from "../src/ai/gemini.ts";
 import { decide } from "../src/ai/decide.ts";
 import { catalog, domain } from "../src/market/domains.ts";
 import { type Context, NegotiateTask, leaks, next } from "../src/market/negotiate.ts";
-import { DemandFiltersTask, ListingFieldsTask } from "../src/market/read.ts";
-import { AnswerTask } from "../src/market/answer.ts";
+import { DemandFiltersTask, ListingFieldsTask, read } from "../src/market/read.ts";
+import { fakeModel } from "../src/ai/fake.ts";
+import { AnswerTask, JudgeTask } from "../src/market/answer.ts";
 import { check, rank } from "../src/market/match.ts";
 import { resolve } from "../src/market/places.ts";
 import type { Need } from "../src/market/types.ts";
@@ -85,6 +86,16 @@ test("answers must quote the facts and invent no numbers or contacts", () => {
   assert.equal(AnswerTask.validate({ action: "answer", text: "Yes.", evidence: ["dogs welcome"] }, input), null);
 });
 
+test("a bare yes/no settles the judge without the model; anything wordier goes to it", async () => {
+  const yes = await decide(null, JudgeTask, { question: "Can you come this week?", answer: "Yes." });
+  assert.deepEqual([yes.output, yes.byModel, yes.settled], ["met", false, true]);
+  const no = await decide(null, JudgeTask, { question: "Can you come this week?", answer: "No." });
+  assert.deepEqual([no.output, no.byModel], ["unmet", false]);
+  const wordy = await decide(fake({ verdict: "met" }), JudgeTask, { question: "Can you come this week?", answer: "Yes, Tuesday works, parts are extra." });
+  assert.equal(JudgeTask.settled!({ question: "Can you come this week?", answer: "Yes, Tuesday works, parts are extra." }), null);
+  assert.equal(wordy.byModel, true);
+});
+
 test("matching: area, budget and required numbers filter; worded text is asked, not excluded", () => {
   const now = Math.floor(Date.now() / 1000);
   const place = (n: string) => resolve(n)!;
@@ -96,4 +107,28 @@ test("matching: area, budget and required numbers filter; worded text is asked, 
     offer("dear", "Indiranagar", 50_000, { bedrooms: "2" }), offer("one", "Indiranagar", 20_000, { bedrooms: "1" })], need, now);
   assert.deepEqual(m.map(x => x.key), ["near"]);
   assert.equal(check(need.filters[0], m[0].offer), null);
+});
+
+test("used goods read as 'goods', match like any category, and 'other' is the catch-all", async () => {
+  const now = Math.floor(Date.now() / 1000), here = resolve("Koramangala");
+  const sell = await read("Selling my used bicycle in Koramangala, 4500, lowest 4000", "sell", fakeModel(), now, here);
+  assert.equal(sell.draft?.kind, "offer");
+  if (sell.draft?.kind !== "offer") return;
+  assert.equal(sell.draft.offer.category, "goods");
+  assert.equal(sell.draft.offer.price.amount, 4_500);
+  assert.equal(sell.draft.mandate.price.limit, 4_000);
+  const find = await read("Looking for a used cycle in Koramangala under 5000", "find", fakeModel(), now, here);
+  assert.equal(find.draft?.kind, "need");
+  if (find.draft?.kind !== "need") return;
+  assert.equal(find.draft.need.category, "goods");
+  const nikhil = { key: "n", offer: { id: "n", category: "goods", title: "Used cycle", details: "", price: { amount: 4_500, currency: "INR", period: null },
+    place: here!, attributes: { brand: "Decathlon" }, askBuyer: [], publishedAt: now, expiresAt: now + 86_400, status: "active" as const } };
+  assert.equal(rank([nikhil], find.draft.need, now).length, 1, "the used-cycle need matches a goods listing under budget");
+  assert.ok(domain("other"));
+  assert.equal(catalog(domain("other")).termLabel("what"), "What");
+});
+
+test("the local gazetteer supplement resolves Bengaluru localities GeoNames lacks", () => {
+  const p = resolve("HSR Layout", resolve("Bengaluru"));
+  assert.ok(p && !p.isCity && p.name.startsWith("HSR Layout"), JSON.stringify(p));
 });

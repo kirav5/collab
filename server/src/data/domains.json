@@ -304,6 +304,7 @@
    "id": "services",
    "label": "Professional services",
    "family": "b2b",
+   "mode": "either",
    "priceUnit": "project",
    "units": [
     "project",
@@ -735,6 +736,184 @@
    ],
    "buyerAsks": [
     "Can you finish it by the deadline?"
+   ]
+  },
+  {
+   "id": "goods",
+   "label": "Items for sale (new or used)",
+   "family": "goods",
+   "mode": "in_person",
+   "priceUnit": null,
+   "units": [
+    "piece",
+    "pieces",
+    "pcs",
+    "set",
+    "kg",
+    "unit",
+    "units"
+   ],
+   "terms": [
+    {
+     "key": "brand",
+     "label": "Brand",
+     "kind": "text"
+    },
+    {
+     "key": "condition",
+     "label": "Condition",
+     "kind": "text",
+     "ask": "What condition is it in — any damage or repairs?"
+    },
+    {
+     "key": "age_years",
+     "label": "Age",
+     "kind": "number",
+     "unit": "years",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "warranty",
+     "label": "Warranty",
+     "kind": "text"
+    },
+    {
+     "key": "quantity",
+     "label": "Quantity",
+     "kind": "number",
+     "buyerPrefers": "higher"
+    },
+    {
+     "key": "delivery",
+     "label": "Delivery",
+     "kind": "text"
+    },
+    {
+     "key": "negotiable",
+     "label": "Price negotiable",
+     "kind": "text"
+    }
+   ],
+   "sellerAsks": [
+    "When can you pick it up?"
+   ],
+   "buyerAsks": [
+    "Is it still available, and can I see it before paying?"
+   ]
+  },
+  {
+   "id": "vehicles",
+   "label": "Vehicles (buy/sell)",
+   "family": "goods",
+   "mode": "in_person",
+   "priceUnit": null,
+   "units": [],
+   "terms": [
+    {
+     "key": "make",
+     "label": "Make",
+     "kind": "text"
+    },
+    {
+     "key": "model",
+     "label": "Model",
+     "kind": "text"
+    },
+    {
+     "key": "year",
+     "label": "Year",
+     "kind": "number",
+     "buyerPrefers": "higher"
+    },
+    {
+     "key": "km_driven",
+     "label": "Km driven",
+     "kind": "number",
+     "unit": "km",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "fuel",
+     "label": "Fuel",
+     "kind": "text"
+    },
+    {
+     "key": "owners",
+     "label": "Owners",
+     "kind": "number",
+     "buyerPrefers": "lower"
+    },
+    {
+     "key": "insurance_valid",
+     "label": "Insurance valid",
+     "kind": "text"
+    },
+    {
+     "key": "rc_transfer",
+     "label": "RC transfer",
+     "kind": "text"
+    }
+   ],
+   "sellerAsks": [
+    "Are you paying in full or financing?"
+   ],
+   "buyerAsks": [
+    "Is the RC clean and insurance valid?"
+   ]
+  },
+  {
+   "id": "other",
+   "label": "Anything else bought, sold, rented or hired",
+   "family": "personal",
+   "mode": "either",
+   "priceUnit": null,
+   "units": [
+    "hour",
+    "hours",
+    "day",
+    "days",
+    "week",
+    "month",
+    "piece",
+    "pieces",
+    "unit",
+    "units",
+    "job"
+   ],
+   "terms": [
+    {
+     "key": "what",
+     "label": "What",
+     "kind": "text"
+    },
+    {
+     "key": "quantity",
+     "label": "Quantity",
+     "kind": "number",
+     "buyerPrefers": "higher"
+    },
+    {
+     "key": "when",
+     "label": "When",
+     "kind": "text"
+    },
+    {
+     "key": "delivery",
+     "label": "Delivery",
+     "kind": "text"
+    },
+    {
+     "key": "experience_years",
+     "label": "Experience",
+     "kind": "number",
+     "unit": "years"
+    }
+   ],
+   "sellerAsks": [
+    "What exactly do you need, and by when?"
+   ],
+   "buyerAsks": [
+    "Can you do it by when I need it?"
    ]
   }
  ]

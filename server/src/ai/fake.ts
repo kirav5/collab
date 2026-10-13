@@ -6,7 +6,8 @@ import type { CompleteRequest, Model } from "./gemini.ts";
 import { EMBEDDING_DIMENSIONS } from "./gemini.ts";
 
 const CATEGORY: [RegExp, string][] = [[/\b(rent|flat|bhk|apartment)\b/i, "property-rent"], [/\b(guitar|tabla|lesson|teach|classes|tuition|english)\b/i, "lessons"],
-  [/\b(ride|cab|airport|taxi)\b/i, "rides"], [/\b(tiffin|food|lunch|meal)\b/i, "food"], [/\b(assignment|report|plumb|electric|repair)\b/i, "tasks"]];
+  [/\b(ride|cab|airport|taxi)\b/i, "rides"], [/\b(tiffin|food|lunch|meal)\b/i, "food"], [/\b(assignment|report|plumb|electric|repair)\b/i, "tasks"],
+  [/\b(honda|maruti|hyundai|car|scooter for sale|bike for sale)\b/i, "vehicles"], [/\b(bicycle|cycle|iphone|phone|sofa|fridge|for sale|second[- ]hand|used)\b/i, "goods"]];
 const AREAS = ["Indiranagar", "Koramangala", "Jayanagar", "Whitefield", "HSR Layout", "Malleshwaram", "Bengaluru"];
 
 const quoted = (prompt: string, label: string) => prompt.match(new RegExp(`${label}: "([\\s\\S]*?)"`))?.[1] ?? "";
@@ -21,8 +22,9 @@ function answer(req: CompleteRequest): object {
     const m = quoted(p, "Message");
     const place = AREAS.find(a => m.toLowerCase().includes(a.toLowerCase())) ?? null;
     const n = m.replace(/(\d),(?=\d)/g, "$1").match(/\d{3,}/)?.[0];
+    const lim = m.replace(/(\d),(?=\d)/g, "$1").match(/lowest[^0-9]*(\d+)/i)?.[1];
     const bhk = m.match(/(\d)\s*bhk/i)?.[1];
-    return { item: m.split(/\s+/).slice(0, 2).join(" "), place, price: n ? Number(n) : null, price_scale: "rupees", limit: null, attributes: bhk ? { bedrooms: bhk } : {}, questions: [] };
+    return { item: m.split(/\s+/).slice(0, 2).join(" "), place, price: n ? Number(n) : null, price_scale: "rupees", limit: lim ? Number(lim) : null, attributes: bhk ? { bedrooms: bhk } : {}, questions: [] };
   }
   if (ins.startsWith("Decide what this marketplace request needs")) return { mode: "none", filters: [] };
   if (ins.startsWith("Write what a person's agent tells providers")) {

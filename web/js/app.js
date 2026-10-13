@@ -211,7 +211,7 @@ function onEdit(e) {
       const n = Number(v);
       f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: 5 } : null;
       f.c.draft.need.maxPrice = n > 0 ? n : null;
-      if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null })
+      if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null, unit: f.c.draft.need.unit })
         .then(ls => { f.c.insights = ls; saveSession(f.s); paintContent(true); });
     }
   }
@@ -236,7 +236,7 @@ async function onClick(e) {
       busy(el, true);
       const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
       const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
-      const market = await insightsLines({ side: el.dataset.side, category: el.dataset.cat, area: el.dataset.area, price: el.dataset.price || null });
+      const market = await insightsLines({ side: el.dataset.side, category: el.dataset.cat, area: el.dataset.area, price: el.dataset.price || null, unit: el.dataset.unit });
       const confirmedBy = s => r.confirmedBy[s] === "mandate" ? "standing mandate" : "owner";
       const sig = s => (r.signatures[s] ? `${r.signatures[s].slice(0, 16)}…` : "—");
       box.innerHTML = `<div class="stack" style="gap:6px">
@@ -265,7 +265,7 @@ async function cardAction(a, el, { s, m, c }) {
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
     if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
-      c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit }); }
+      c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit }); }
   }
   if (a === "brief-send") {
     busy(el, true, "Searching");
@@ -286,7 +286,7 @@ async function cardAction(a, el, { s, m, c }) {
   }
   if (a === "offer-publish") {
     busy(el, true, "Publishing");
-    const fact = await api("/api/facts", { tier: "public", text: c.publicText ?? c.text });
+    const fact = await api("/api/facts", { tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount) });
     await local.put("facts", { id: fact.id, text: fact.text, tier: "public", topics: [], createdAt: fact.createdAt });
     if (c.offer && c.floor) {
       const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: 5 };

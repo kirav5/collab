@@ -41,9 +41,17 @@ export interface Insights {
 /** Linear-interpolation percentile over a sorted list. */
 const pct = (s: number[], q: number) => { const p = (s.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return s[lo] + (s[hi] - s[lo]) * (p - lo); };
 
-/** Closing-price stats for a category (or the area inside it), once at least 3 deals exist. */
-export async function insights(db: Docs, q: { category: string; area?: string | null }): Promise<Insights | null> {
-  const all = (await db.find(DEALS, [["category", "==", q.category]], 500)) as Deal[];
+/** Closing-price stats for a category (or the area inside it), once at least 3 deals exist. Prices only compare
+ *  within one unit: a per-visit median with per-day outliers is noise, so deals pool by `unit` (given or majority). */
+export async function insights(db: Docs, q: { category: string; area?: string | null; unit?: string | null }): Promise<Insights | null> {
+  let all = (await db.find(DEALS, [["category", "==", q.category]], 500)) as Deal[];
+  if (q.unit !== undefined) all = all.filter(d => d.unit === q.unit);
+  else {
+    const byUnit = new Map<string | null, number>();
+    for (const d of all) byUnit.set(d.unit, (byUnit.get(d.unit) ?? 0) + 1);
+    const top = [...byUnit.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (top !== undefined) all = all.filter(d => d.unit === top);
+  }
   const inArea = q.area ? all.filter(d => d.area === q.area) : [];
   const scope = inArea.length >= 3 ? "area" : all.length >= 3 ? "category" : null;
   if (!scope) return null;
@@ -51,10 +59,8 @@ export async function insights(db: Docs, q: { category: string; area?: string | 
   const prices = ds.map(d => d.dealPrice).sort((a, b) => a - b);
   const discounts = ds.map(d => d.discountPct).sort((a, b) => a - b);
   const rounds = ds.map(d => d.rounds).sort((a, b) => a - b);
-  const units = new Map<string, number>();
-  for (const d of ds) if (d.unit) units.set(d.unit, (units.get(d.unit) ?? 0) + 1);
   return { n: ds.length, scope, category: q.category, area: scope === "area" ? q.area! : null,
-    unit: [...units.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
+    unit: ds[0]?.unit ?? null,
     median: Math.round(pct(prices, 0.5)), p25: Math.round(pct(prices, 0.25)), p75: Math.round(pct(prices, 0.75)),
     discountPct: round1(pct(discounts, 0.5)), rounds: Math.round(pct(rounds, 0.5)), demo: ds.every(d => d.demo) };
 }

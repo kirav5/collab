@@ -129,7 +129,8 @@ an audit of everything your agent shared in Activity.
 | FR12 | Live updates (Firestore listeners + polling fallback) and notifications (toast + browser Notification) |
 | FR13 | Offering publishing with floor removed from public text; delegated floor optional |
 | FR14 | Audit log of shared answers; privacy wall on every crossing message |
-| FR15 | Demo people (7) for solo judging; their devices simulated (the requester can answer for them, labelled "demo") |
+| FR15 | Demo people (8) for solo judging; their devices simulated (the requester can answer for them, labelled "demo") |
+| FR15a | Any priced demand: 15 domains (property sale/rent, wholesale, freight, services, equipment rental, commercial lease, manufacturing, rides, food, lessons, tasks, goods, vehicles, other) — `other` is a catch-all, so the reader never refuses something bought, sold, rented or hired; only non-transactions are refused |
 | FR16 | Market insights from agreed deals ("similar deals closed at ₹X–₹Y, median ₹Z, ~N% under asking, in R rounds"), deterministic, for the requester (while setting a limit, when the limit runs out) and the provider (vs. the asking price); labelled when from demo deals |
 | FR17 | Mandates with an autonomy level — ask me every move / negotiate inside my limit, I confirm / negotiate and close inside my limit — and an expiry (1/7/30 days) |
 | FR18 | Signed deal receipt (hash of the agreed terms and parties, signed per owner, who confirmed: owner or mandate) |

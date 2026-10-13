@@ -38,6 +38,19 @@ test("insights needs 3 deals; area scope wins when 3+ match it", async () => {
   assert.equal(a?.median, 120);
 });
 
+test("insights pool one unit: the majority wins, or the asked-for unit filters", async () => {
+  const db = memoryDocs();
+  for (const [i, u] of ["hour", "hour", "hour", "day", "day"].entries())
+    await db.set(DEALS, `u${i}`, deal(`u${i}`, "services", null, 100 + i * 10, { unit: u }));
+  const i = await insights(db, { category: "services" });
+  assert.equal(i?.n, 3);
+  assert.equal(i?.unit, "hour");
+  assert.equal(i?.median, 110);
+  assert.equal(await insights(db, { category: "services", unit: "day" }), null, "fewer than 3 same-unit deals");
+  const d2 = await insights(db, { category: "services", unit: "hour" });
+  assert.equal(d2?.n, 3);
+});
+
 test("a deal record carries no person and no limit", () => {
   const e = fresh({ briefId: "b1", brief, requester: { uid: "amy", handle: "amy", name: "Amy" }, provider: { uid: "bob", handle: "bob", name: "Bob" },
     offer: { factId: "f1", title: "2BHK for rent", price: 38_000, unit: "month", category: "property-rent" } });

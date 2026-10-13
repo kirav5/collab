@@ -173,7 +173,8 @@ app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? 
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
 app.get("/api/insights", route(async req => {
-  const i = await insights(db, { category: text(req.query.category, 40), area: text(req.query.area, 120) || null });
+  const i = await insights(db, { category: text(req.query.category, 40), area: text(req.query.area, 120) || null,
+    unit: req.query.unit === undefined ? undefined : text(req.query.unit, 20) || null });
   if (!i) return { insights: null, lines: [] };
   const price = num(Number(req.query.price), 1, 1e12), limit = num(Number(req.query.limit), 1, 1e12);
   const lines = req.query.side === "provider" ? forProvider(i, price) : forRequester(i, limit, price);
@@ -216,7 +217,7 @@ app.post("/api/facts", route(async req => {
   const b = req.body ?? {};
   if (b.tier !== "protected" && b.tier !== "public") throw new HttpError(400, "Private facts stay on your device.");
   await spend(req.uid, 2);
-  return publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: text(b.text, 1000), tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined }));
+  return publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: text(b.text, 1000), tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true }));
 }));
 app.post("/api/facts/:id/delete", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
@@ -235,6 +236,9 @@ app.post("/api/facts/:id/limit", route(async req => {
     const days = num(req.body?.days, 1, 365);
     await db.set(LIMITS, `fact:${f.id}`, { key: `fact:${f.id}`, owner: req.uid, mandate: { ...m, price: { opening: f.offer.price.amount, limit: Math.min(m.price.limit, f.offer.price.amount) } },
       autonomy: req.body?.autonomy === "close" ? "close" : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() });
+    // A floor below the ask means the price can move: the matcher may show it to near-budget requests.
+    if (m.price.limit < f.offer.price.amount && f.offer.attributes.negotiable !== "yes")
+      await db.set(FACTS, f.id, { ...f, offer: { ...f.offer, attributes: { ...f.offer.attributes, negotiable: "yes" } } });
   } else await db.delete(LIMITS, `fact:${f.id}`);
   return { delegated: !!m };
 }));

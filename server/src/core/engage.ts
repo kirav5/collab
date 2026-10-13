@@ -199,7 +199,7 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
 async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   // What similar deals closed at, shown to the owner whenever they're asked for a move.
   const hint = async () => {
-    const i = await insights(db, { category: e.offer.category ?? "", area: e.brief.area });
+    const i = await insights(db, { category: e.offer.category ?? "", area: e.brief.area, unit: e.offer.unit });
     return i ? (s === "requester" ? forRequester(i, null, e.offer.price) : forProvider(i, e.offer.price)).join(" ") : undefined;
   };
   const l = await limitFor(db, e, s);
@@ -258,10 +258,16 @@ export async function requesterTurn(db: Docs, model: Model | null, e: Engagement
     const v = await decide(model, JudgeTask, { question: q.question, answer: a.answer });
     q.verdict = v.output;
     if (v.output === "unmet" && q.required) {
-      e.phase = "closed";
-      out.decline = "That doesn't work for my owner, so we'll leave it here. Thank you.";
-      say(e, "requester_agent", out.decline, by(v.byModel));
-      return out;
+      // Only a yes/no check can end it; an information answer that misses stays "not met" for the owner to weigh.
+      const isCheck = /^(can|could|do|does|is|are|will|would|have|has|did|shall)\b/i.test(q.question.trim());
+      if (isCheck && (v.byModel || v.settled)) {
+        e.phase = "closed";
+        out.decline = "That doesn't work for my owner, so we'll leave it here. Thank you.";
+        say(e, "system", `Ended: the answer to “${q.question}” didn't meet a must-have.`);
+        say(e, "requester_agent", out.decline, by(v.byModel));
+        return out;
+      }
+      if (!isCheck) say(e, "system", `The answer to “${q.question}” didn't settle a must-have; the owner can decide.`);
     }
   }
   if (["agreed", "declined", "closed"].includes(e.phase)) return null;

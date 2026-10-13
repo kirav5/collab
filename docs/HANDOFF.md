@@ -20,7 +20,7 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 | Secret | Secret Manager `agent-secret` (HMAC key our agents sign A2A calls with); local copy `.deploy/agent-secret` (git-ignored) |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 30/30 pass (`npm run check` = `tsc --strict` + `node --test`) |
+| Tests | 37/37 pass (`npm run check` = `tsc --strict` + `node --test`); live 12-case run 12/12 (§8) |
 | Size | ~5.7k lines: server ~3.3k TS, web ~1.2k JS/CSS |
 
 ## 2. What was done (chronologically)
@@ -93,13 +93,17 @@ server/src/
   market/match.ts      check(), modeServes, rank(), RankTask, budgetUpper/budgetBand (strictly above limit)
   market/negotiate.ts  Negotiator, guards (limits, pacing, no backtracking, leak detection), NegotiateTask (₹ only)
   market/answer.ts     offerFacts, AnswerTask (evidence-quoted, no new numbers/contacts), JudgeTask
-  market/{domains,places,geo,text,types}.ts + data/{domains.json, places.tsv (GeoNames CC BY)}
+  market/{domains,places,geo,text,types}.ts + data/{domains.json (15 domains incl. goods, vehicles, other),
+                       places.tsv (GeoNames CC BY), places.extra.tsv (local supplement: Bengaluru localities)}
   ai/gemini.ts         Vertex/AI-Studio client, model fallback + resting, thinking level, embeddings (regional), stats
   ai/meter.ts          per-call token/latency/cost metering (GEMINI_PRICES)
   ai/decide.ts         propose → parse → validate → fallback
   ai/fake.ts           GEMINI_FAKE=1 offline stand-in (keyword answers, word-hash embeddings) — tests/dev only
   docs.ts              Docs interface: memoryDocs() and firestoreDocs() (vector fields encoded as Firestore vectors)
-  demo.ts              7 demo people (riya, kabir, arjun, meera, dev, sana, fluent=hostile text); seeded once (meta/demo)
+  demo.ts              8 demo people (riya, kabir, arjun, meera, dev, sana, nikhil=used cycle, fluent=hostile text) +
+                       25 demo deals; seeded once (meta/demo)
+server/tools/          live-cases.ts (two-person cases against a running server, real Gemini; BASE=… node tools/live-cases.ts [ids]),
+                       read-probe.ts (what the reader decided for a message, step by step)
   log.ts               JSON logs (severity), Error Reporting shape
 server/test/           core.test.ts (policy, wall, brief), market.test.ts (guards, grounding, matching),
                        cost.test.ts (meter, tiers, settled moves, answer cache, fact reuse),
@@ -141,7 +145,7 @@ firebase.json, firestore.rules, firestore.indexes.json, Dockerfile, .github/work
 | `audit/{id}` | what the cloud agent shared, to whom, tier | server |
 | `answers/{factId:question}` | answers a provider's agent gave from an offering, reused for the same question | server |
 | `rate/*`, `leases/*` | TTL `expireAt` | server |
-| `meta/demo` | `{version:"demo-v2"}` — bump `SEEDED` in demo.ts to re-seed (v2 adds 18 labelled demo deals) | server |
+| `meta/demo` | `{version:"demo-v3"}` — bump `SEEDED` in demo.ts to re-seed (v2 added labelled demo deals, v3 @nikhil + goods/vehicles deals) | server |
 
 Private facts and non-delegated limits exist **only** in the browser (IndexedDB `collab` → stores `facts`, `sessions`,
 `limits`, keyed `<uid>:<id>`).
@@ -155,6 +159,7 @@ npm run dev                                 # memory store, real Gemini via serv
 # real Vertex + real Firestore locally (needs `gcloud auth application-default login`):
 GEMINI_API_KEY= GOOGLE_CLOUD_PROJECT=collab-55 GOOGLE_CLOUD_LOCATION=global DEV_AUTH=1 SEED_DEMO=1 PORT=8787 node src/server.ts
 npm run check                               # tsc --strict + all tests (~10 s)
+BASE=http://localhost:8787 node tools/live-cases.ts [goods hindi …]   # 12 two-person cases on real Gemini (~8 min, ≈ $0.20)
 cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4–6 min
 ```
 
@@ -178,6 +183,13 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 - **Demo people's devices are simulated**: their inbox items are shown to the requester talking to them (labelled).
 - **Gemini 3.6 Flash first** for latency; 3.8 as fallback. `gemini-flash-latest` does not exist on Vertex.
 - **Budget band strictly above the limit**, coarse (₹1,000 → "up to ₹1,500"); business categories send no band.
+- **Generality**: the only category-specific code is `domains.json` (terms, units, default questions) plus two
+  family checks (property needs a named area; b2b gets a 40 km radius and no budget band). `other` is a catch-all
+  so any priced request/offering can flow; `goods`/`vehicles` cover second-hand items. Non-property offerings fall
+  back to the owner's area (or online) when no place is named. A seller whose floor is below the ask (stated or
+  delegated) is marked `negotiable`, so near-budget requests (≤1.15×) still match.
+- **Judging answers**: a bare "Yes."/"No." is settled without the model; only a *yes/no check* question judged
+  unmet ends a conversation — information questions never do (the owner sees "not met" and decides).
 - **Gemini cost controls**: token/cost meter per task and model on `/health` (`model.tokens`, `model.costUSD`,
   `model.byTask`) and one `gemini` log line per call; cheap tasks (classify, judge, rank, route, topics, shared
   brief) on the lite model with minimal thinking, flash as fallback; accept/escalate negotiation moves are
@@ -217,6 +229,15 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 - Live: outside A2A client (no sign-in) → Riya's agent answered price (Public) and availability (Protected, rule
   "anyone"), sent "home address" to her device, asked two requirement questions; 7.5 s. App Check enforce: `/api`
   without token → 401; web app works; `/a2a` stays open.
+- **Two-person live cases on real Vertex** (`server/tools/live-cases.ts`, 12 cases: lessons, property-rent, rides,
+  food, tasks, goods, vehicles, services, wholesale, equipment-rental, a catch-all "tarot online", and a Hindi
+  request): each case publishes an offering with a delegated floor, drafts a request, finds the seller, and plays
+  both devices to a deal. Final run: **12/12 found, 12/12 agreed, 0 leaks** (floor never in public text or
+  conversation, exact budget never in the brief, every deal inside both limits), ~22 Gemini calls and ~$0.016 per
+  case (≈ ₹1.4), 30–55 s per case with scripted devices; Flash-Lite answering classify/rank/judge/brief. Three
+  runs before that found and fixed: b2b/online offerings requiring a named gazetteer place, missing Bengaluru
+  localities, negotiable sellers hidden by the budget filter, JudgeTask closing on a bare "Yes.", mixed units in
+  insights.
 
 ## 9. Known issues / rough edges
 
@@ -243,7 +264,7 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 
 ## 10. Next tasks (in order)
 
-1. **Deploy** (`APPCHECK=enforce ./deploy.sh`) — the demo re-seeds (`demo-v2`); check `/health → model.byModel`
+1. **Deploy** (`APPCHECK=enforce ./deploy.sh`) — the demo re-seeds (`demo-v3`); check `/health → model.byModel`
    shows Flash-Lite answering the cheap tasks, and that `/api/insights?category=lessons` returns demo lines.
 2. **Hackathon deliverables** (deadline 18 Oct): deck on the organisers' template (dashboard), < 3 min video (script:
    setup → request with Gemini questions → matches → live A2A card → needs-you → automatic negotiation → deal; the

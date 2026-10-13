@@ -16,7 +16,7 @@ let loaded: { byName: Map<string, Row[]>; buckets: Map<number, Row[]>; keys: str
 function index() {
   if (loaded) return loaded;
   const byName = new Map<string, Row[]>(), buckets = new Map<number, Row[]>();
-  const text = readFileSync(new URL("../data/places.tsv", import.meta.url), "utf8");
+  const text = ["places.tsv", "places.extra.tsv"].map(f => readFileSync(new URL(`../data/${f}`, import.meta.url), "utf8")).join("\n");
   for (const line of text.split("\n")) {
     if (!line || line[0] === "#") continue;
     const f = line.split("\t");

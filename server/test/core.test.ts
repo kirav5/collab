@@ -5,7 +5,8 @@ import { memoryDocs } from "../src/docs.ts";
 import { FACTS, PROFILES, RULES, allowedFor, shapeAnswer } from "../src/core/policy.ts";
 import { clean } from "../src/core/wall.ts";
 import { SharedBriefTask } from "../src/core/tasks.ts";
-import type { Fact, Rule } from "../src/core/model.ts";
+import { type Turn, fresh, requesterTurn } from "../src/core/engage.ts";
+import type { Engagement, Fact, Rule, SharedBrief } from "../src/core/model.ts";
 
 const now = Math.floor(Date.now() / 1000);
 const fact = (id: string, tier: Fact["tier"], topics: string[] = []): Fact => ({ id, owner: "ann", text: id, tier, topics, offer: null, createdAt: now, updatedAt: now });
@@ -58,4 +59,24 @@ test("the brief providers see carries no money and no limit", () => {
   assert.equal(SharedBriefTask.validate({ title: "2BHK in Indiranagar", summary: "Budget 36,000 a month." }, input), null);
   assert.equal(SharedBriefTask.validate({ title: "2BHK in Indiranagar", summary: "Up to 36 thousand." }, input), null);
   assert.ok(SharedBriefTask.validate({ title: "2BHK in Indiranagar", summary: "A two-bedroom flat to rent near 100 Feet Road, pets welcome." }, input));
+});
+
+test("an information must-ask judged unmet never ends it; a yes/no check does", async () => {
+  const db = memoryDocs();
+  const brief: SharedBrief = { title: "Guitar lessons", summary: "Wants lessons.", category: "lessons", mode: null, area: "Jayanagar", requirements: [], budget: null, questions: [] };
+  const mk = () => fresh({ briefId: "b1", brief, requester: { uid: "amy", handle: "amy", name: "Amy" }, provider: { uid: "pat", handle: "pat", name: "Pat" },
+    offer: { factId: null, title: "Guitar lessons", price: 800, unit: "hour", category: "lessons" } });
+  const turn = (e: Engagement, question: string): Turn => ({ kind: "collab.turn/v1", from: "provider", engagementId: e.id, answers: [{ id: "q1", question, answer: "No." }] });
+  const info = mk();
+  info.qa.push({ id: "q1", from: "requester", question: "How many years have you been teaching this?", status: "open", required: true });
+  await requesterTurn(db, null, info, turn(info, info.qa[0].question));
+  assert.notEqual(info.phase, "closed", "an information question can't end the conversation");
+  assert.equal(info.qa[0].verdict, "unmet");
+  assert.ok(info.events.some(x => x.text.includes("didn't settle a must-have")));
+  const check = mk();
+  check.qa.push({ id: "q1", from: "requester", question: "Can you come on weekends?", status: "open", required: true });
+  const out = await requesterTurn(db, null, check, turn(check, check.qa[0].question));
+  assert.equal(check.phase, "closed");
+  assert.ok(out?.decline);
+  assert.ok(check.events.some(x => x.text.includes("didn't meet a must-have")));
 });
