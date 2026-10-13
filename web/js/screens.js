@@ -1,7 +1,7 @@
 // The screens beside chat (Collab's Screens.swift): Context (what your agent knows, and who sees each thing),
 // People, Sharing (rules for Protected topics, pause everything), Requests (every conversation between agents, live),
 // Activity (what your agent shared, with whom) and Settings.
-import { api, session } from "./api.js";
+import { api, ios, session, standalone } from "./api.js";
 import { engine } from "./agent.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
@@ -182,17 +182,31 @@ export const screens = {
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>Your notes</dt><dd>${engine.nano ? "Gemini Nano, on this device (Chrome built-in AI)" : "Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
-        <div class="card">${label("Notifications", "sq")}<span class="small muted">When your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
-          ${"Notification" in window && Notification.permission === "granted" ? `<span class="small" style="color:var(--fresh)">● On for this device</span>` : `<button class="btn secondary compact" data-act="push-on">Turn on notifications</button>`}</div>
+        <div class="card">${label("App & notifications", "sq")}
+          <span class="small muted">Install Collab to open it like an app. Notifications tell you when your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
+          <dl class="kv"><dt>App</dt><dd>${standalone() ? `<span style="color:var(--fresh)">● Installed</span>`
+            : session.install ? `<button class="btn secondary compact" data-act="install">📲 Install Collab</button>`
+            : ios() ? `In Safari, tap <b>Share</b> (the square with an arrow), then <b>Add to Home Screen</b>. Open Collab from the home screen — notifications on iPhone only work there.`
+            : `In your browser's menu choose <b>Install app</b> or <b>Add to Home screen</b>.`}</dd>
+          <dt>Notifications</dt><dd>${session.pushOn ? `<span style="color:var(--fresh)">● On for this device</span> <button class="btn quiet compact" data-act="push-test">Send a test notification</button>`
+            : "Notification" in window && Notification.permission === "denied" ? `Blocked — allow notifications for this site in your browser's site settings, then reload.`
+            : `<button class="btn secondary compact" data-act="push-on">🔔 Turn on notifications</button>`}</dd></dl></div>
         <div class="card">${label("Account", "sq")}
           ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and context on other devices.</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
           <div class="row"><button class="btn danger compact" data-act="clear-device">Erase this device's chats</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
     },
     async act(a, el, S, h) {
       if (a === "save-profile") { const f = new FormData(el.closest("form")); busy(el, true); S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), bio: f.get("bio"), areaName: f.get("area") }); h.toast("Saved."); h.paint(); return true; }
+      if (a === "push-test") {
+        busy(el, true, "Sending");
+        try { const r = await api("/api/push/test", {}); h.toast(r.sent ? `Sent to ${r.sent} device${r.sent === 1 ? "" : "s"} — it should appear in a few seconds.` : "The notification service didn't accept it — try turning notifications off and on."); }
+        catch (err) { h.toast(err.message); }
+        busy(el, false); return true;
+      }
+      if (a === "install") { if (session.install && await session.install()) h.toast("Installed."); h.paint(); return true; }
       if (a === "push-on") {
         busy(el, true);
-        try { await session.push(); h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message); }
+        try { if (await session.push()) h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
       if (a === "google") {

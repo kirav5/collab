@@ -1,7 +1,7 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
 const FB = "https://www.gstatic.com/firebasejs/12.4.0";
-export const session = { fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
+export const session = { pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
 export const worker = "serviceWorker" in navigator ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
@@ -18,6 +18,21 @@ const fetchConfig = () => Promise.all([
   try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {}
   return c;
 });
+
+// Installing: Chrome/Edge/Android offer a prompt the app can show from its own button; iPhone and iPad install from
+// Safari's Share menu (and only an installed app can get notifications there).
+export const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+export const ios = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+export function installHint() {
+  if (ios() && !standalone()) return "On iPhone, notifications work only in the installed app: tap Share, then “Add to Home Screen”, and open Collab from there.";
+  return "This browser can't show notifications.";
+}
+addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  session.install = async () => { e.prompt(); const r = await e.userChoice; session.install = null; return r.outcome === "accepted"; };
+  dispatchEvent(new Event("collab-installable"));
+});
+addEventListener("appinstalled", () => { session.install = null; dispatchEvent(new Event("collab-installable")); });
 
 export async function signIn() {
   // The config this browser saw last is used at once (and refreshed in the background), so a returning visit doesn't
@@ -40,16 +55,19 @@ export async function signIn() {
     const as = new URLSearchParams(location.search).get("as")?.replace(/[^\w-]/g, "").slice(0, 24);
     const app = as ? initializeApp(config, `as-${as}`) : initializeApp(config);
     session.app = app;
-    // Push: asks the browser once (on a tap), then registers this device's token with the server.
-    session.push = async () => {
+    // Push: asks the browser (only ever from a tap), then registers this device's address with the server. Once
+    // permission is there, every visit re-registers quietly, since browsers rotate the address.
+    session.push = async (ask = true) => {
       const reg = await worker;
-      if (!reg || !("Notification" in window)) throw new Error("This browser can't show notifications.");
-      if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications are blocked for this site.");
+      if (!reg || !("Notification" in window) || !("PushManager" in window)) throw new Error(installHint());
+      if (Notification.permission === "denied") throw new Error("Notifications are blocked for this site — allow them in your browser's site settings, then try again.");
+      if (Notification.permission !== "granted" && (!ask || (await Notification.requestPermission()) !== "granted")) return false;
       const { getMessaging, getToken, onMessage } = await import(`${FB}/firebase-messaging.js`);
       const messaging = getMessaging(app);
-      const token = await getToken(messaging, { serviceWorkerRegistration: reg });
+      const token = await getToken(messaging, { serviceWorkerRegistration: await navigator.serviceWorker.ready });
       await api("/api/push/token", { token });
-      onMessage(messaging, m => window.dispatchEvent(new CustomEvent("collab-push", { detail: m.notification ?? {} })));
+      if (!session.pushOn) onMessage(messaging, m => window.dispatchEvent(new CustomEvent("collab-push", { detail: { ...(m.notification ?? {}), link: m.fcmOptions?.link } })));
+      session.pushOn = true;
       return true;
     };
     // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API. It runs on

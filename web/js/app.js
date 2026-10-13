@@ -2,7 +2,7 @@
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
 // screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
 // agents are doing (Requests) and what was shared (Activity).
-import { api, insightsLines, session, signIn } from "./api.js";
+import { api, insightsLines, ios, session, signIn, standalone } from "./api.js";
 import { chat, detectNano, engine, itemOf, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
@@ -80,7 +80,9 @@ async function boot() {
   start(openScreen);
   startDevice();
   onChange(() => { paintSidebar(); paintContent(true); driveRequester(); });
-  try { if ("Notification" in window && Notification.permission === "default") setTimeout(() => Notification.requestPermission().catch(() => {}), 4000); } catch {}
+  // Notifications: a device that already allowed them registers again quietly (asking needs a tap — see Settings).
+  session.push?.(false).then(() => paintSidebar()).catch(() => {});
+  addEventListener("collab-installable", () => paintSidebar());
   paint();
 }
 
@@ -98,6 +100,9 @@ function paintSidebar() {
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
+      ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
+        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}
+        ${!session.pushOn && session.push ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
         ${navRow("context", "▤", "Context", "")}
@@ -297,6 +302,7 @@ async function onClick(e) {
   try {
     if (a === "nav") return $("#app").classList.toggle("nav-open");
     if (a === "screen") return openScreen(el.dataset.screen);
+    if (a === "install") { if (session.install && await session.install()) toast("Installed — open Collab from your home screen or apps."); return paint(); }
     if (a === "new-chat") { S.current = null; return openScreen("chat"); }
     if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
@@ -438,6 +444,12 @@ function driveRequester() {
 }
 
 // The service worker serves the app from this device and checks for a new version in the background.
+// A push that arrives while Collab is open shows here (the system shows it when Collab is closed).
+addEventListener("collab-push", e => {
+  const n = e.detail ?? {};
+  toast(`🔔 ${n.title ?? "Collab"} — ${n.body ?? ""}`, () => { if (n.link && n.link !== "/") location.href = n.link; });
+  refresh(openScreen);
+});
 navigator.serviceWorker?.addEventListener("message", e => {
   if (e.data?.type === "collab-updated") toast("A new version of Collab is ready — tap to reload.", () => location.reload());
 });

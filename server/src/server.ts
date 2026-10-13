@@ -428,6 +428,13 @@ app.post("/api/briefs/:id/engage", route(async req => {
 }));
 
 app.post("/api/push/token", route(async req => { const t = text(req.body?.token, 4096); if (t.length > 20) await saveToken(req.uid, t); return { ok: true }; }));
+// A test notification to every device this person turned notifications on for.
+app.post("/api/push/test", route(async req => {
+  await spend(req.uid, 1);
+  const r = await pushTo(req.uid, "Collab · test notification", "Notifications work on this device. You'll hear here when your agent needs you.", "/?screen=settings");
+  if (!r.devices) throw new HttpError(400, "No device has notifications turned on for this account yet.");
+  return r;
+}));
 
 // Scheduled agents: watch a request and alert the owner when someone new fits.
 app.post("/api/watches", route(async req => {
