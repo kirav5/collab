@@ -45,14 +45,15 @@ for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer
 done
 gcloud secrets add-iam-policy-binding agent-secret --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
 
-# Request-based billing (CPU only while a request runs) keeps it inside the free tier; at most 2 instances caps cost.
+# Request-based billing (CPU only while a request runs); one instance kept warm so the app never waits ~3 s for a cold
+# start (MIN_INSTANCES=0 turns that off), startup CPU boost for when a second one starts, at most 2 instances caps cost.
 gcloud run deploy "$SERVICE" --quiet \
   --source . \
   --region "$REGION" \
   --service-account "$SA" \
   --allow-unauthenticated \
   --memory 1Gi --cpu 1 --concurrency 40 \
-  --min-instances 0 --max-instances 2 \
+  --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
   --timeout 60 \
   --set-secrets "AGENT_SECRET=agent-secret:latest" \
   --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK"

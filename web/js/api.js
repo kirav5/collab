@@ -1,18 +1,40 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
 const FB = "https://www.gstatic.com/firebasejs/12.4.0";
-export const session = { uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
+export const session = { fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
 export const worker = "serviceWorker" in navigator ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
 
+const CONFIG_KEY = "collab.config";
+
+/** The server's and Firebase's config, fetched together; null when the server can't be reached. */
+const fetchConfig = () => Promise.all([
+  fetch("/__/firebase/init.json").then(r => (r.ok ? r.json() : null)).catch(() => null),
+  fetch("/api/config").then(r => (r.ok ? r.json() : null)).catch(() => null),
+]).then(([hosted, server]) => {
+  if (!server) return null;
+  const c = { ...server, firebase: hosted ?? server.firebase ?? null };
+  try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {}
+  return c;
+});
+
 export async function signIn() {
-  const hosted = await fetch("/__/firebase/init.json").then(r => (r.ok ? r.json() : null)).catch(() => null);
-  session.config = await fetch("/api/config").then(r => r.json()).catch(() => ({}));
-  const config = hosted ?? session.config.firebase;
+  // The config this browser saw last is used at once (and refreshed in the background), so a returning visit doesn't
+  // wait on the server before signing in; the Firebase SDK starts loading at the same time.
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(CONFIG_KEY) ?? "null"); } catch {}
+  const fresh = fetchConfig();
+  const sdk = c => (c?.firebase ? Promise.all([import(`${FB}/firebase-app.js`), import(`${FB}/firebase-auth.js`)]) : null);
+  let loading = sdk(cached);
+  session.config = cached ?? (await fresh) ?? {};
+  if (cached) fresh.then(c => { if (c) session.config = { ...session.config, ...c }; });
+  else loading = sdk(session.config);
+  const config = session.config.firebase;
   if (config) {
-    const { initializeApp } = await import(`${FB}/firebase-app.js`);
-    const { getAuth, onAuthStateChanged, signInAnonymously, GoogleAuthProvider, linkWithPopup, signInWithPopup, signOut } = await import(`${FB}/firebase-auth.js`);
+    const [{ initializeApp }, authSdk] = await loading;
+    const { getAuth, onAuthStateChanged, signInAnonymously, GoogleAuthProvider, linkWithPopup, linkWithRedirect, signInWithPopup,
+      signInWithCredential, signInWithRedirect, getRedirectResult, signOut } = authSdk;
     // ?as=<name> gives this tab its own guest account (Firebase keeps sign-ins per app name), so one browser can be
     // two people — for trying both sides of a conversation.
     const as = new URLSearchParams(location.search).get("as")?.replace(/[^\w-]/g, "").slice(0, 24);
@@ -30,36 +52,57 @@ export async function signIn() {
       onMessage(messaging, m => window.dispatchEvent(new CustomEvent("collab-push", { detail: m.notification ?? {} })));
       return true;
     };
-    // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API.
-    if (session.config.appCheckSiteKey) {
-      try {
-        const { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken } = await import(`${FB}/firebase-app-check.js`);
-        const ac = initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
-        session.appCheck = async () => (await getToken(ac, false)).token;
-      } catch { /* the server decides whether calls without it are allowed */ }
-    }
+    // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API. It loads in
+    // the background while sign-in runs; calls wait for it only if it isn't ready yet.
+    const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken }) => {
+      const ac = initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
+      getToken(ac, false).catch(() => {});
+      return async () => (await getToken(ac, false)).token;
+    }).catch(() => null) : null;
+    if (appCheck) session.appCheck = async () => { const get = await appCheck; return get ? get() : null; };
     const auth = getAuth(app);
+    // Returning from a Google redirect (used where pop-ups don't work, like some installed apps).
+    await getRedirectResult(auth).catch(async e => {
+      const cred = GoogleAuthProvider.credentialFromError(e);
+      if (e.code === "auth/credential-already-in-use" && cred) await signInWithCredential(auth, cred);
+    });
     await new Promise(resolve => onAuthStateChanged(auth, async u => {
       if (!u) { await signInAnonymously(auth); return; }
       session.uid = u.uid; session.user = u;
       session.token = () => u.getIdToken();
       resolve();
     }));
+    /**
+     * Google sign-in. A guest's account is upgraded in place (same identity, handle and context); if that Google
+     * account already has a Collab identity, this device switches to it. Returns "linked" or "switched".
+     */
     session.google = async () => {
       const provider = new GoogleAuthProvider();
-      try { await linkWithPopup(auth.currentUser, provider); }
-      catch (e) { if (e.code === "auth/credential-already-in-use") { await signInWithPopup(auth, provider); location.reload(); } else throw e; }
+      provider.setCustomParameters({ prompt: "select_account" });
+      try {
+        if (auth.currentUser?.isAnonymous) await linkWithPopup(auth.currentUser, provider);
+        else await signInWithPopup(auth, provider);
+        session.user = auth.currentUser;
+        return "linked";
+      } catch (e) {
+        const cred = GoogleAuthProvider.credentialFromError(e);
+        if (e.code === "auth/credential-already-in-use" && cred) { await signInWithCredential(auth, cred); return "switched"; }
+        if (/popup-blocked|operation-not-supported|web-storage-unsupported/.test(e.code ?? "")) { await (auth.currentUser?.isAnonymous ? linkWithRedirect(auth.currentUser, provider) : signInWithRedirect(auth, provider)); return "redirect"; }
+        if (/popup-closed|cancelled-popup/.test(e.code ?? "")) return "cancelled";
+        throw e;
+      }
     };
     session.signOut = async () => { await signOut(auth); location.reload(); };
-    try {
-      const { getFirestore, collection, doc, query, where, onSnapshot } = await import(`${FB}/firebase-firestore.js`);
+    // Live updates (Firestore) load after sign-in without holding up the first screen; until then the app polls.
+    session.fsReady = import(`${FB}/firebase-firestore.js`).then(({ getFirestore, collection, doc, query, where, onSnapshot }) => {
       const db = getFirestore(app);
       session.fs = {
         engagements: cb => onSnapshot(query(collection(db, "engagements"), where("participants", "array-contains", session.uid)), s => cb(s.docs.map(d => d.data())), () => {}),
         inbox: cb => onSnapshot(query(collection(db, "inbox"), where("owner", "==", session.uid), where("status", "==", "open")), s => cb(s.docs.map(d => d.data())), () => {}),
         engagement: (id, cb) => onSnapshot(doc(db, "engagements", id), s => s.exists() && cb(s.data()), () => {}),
       };
-    } catch { /* polling instead */ }
+      return session.fs;
+    }).catch(() => null);
   } else if (session.config.devAuth) {
     // Local test accounts: ?as=<name> switches, so two tabs can be two people.
     const as = new URLSearchParams(location.search).get("as");
@@ -75,7 +118,7 @@ export async function signIn() {
 export async function api(path, body) {
   const headers = { "content-type": "application/json" };
   if (session.token) headers.authorization = `Bearer ${await session.token()}`;
-  if (session.appCheck) { try { headers["x-firebase-appcheck"] = await session.appCheck(); } catch { /* sent without */ } }
+  if (session.appCheck) { try { const t = await session.appCheck(); if (t) headers["x-firebase-appcheck"] = t; } catch { /* sent without */ } }
   const res = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; throw e; }

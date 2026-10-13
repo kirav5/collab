@@ -12,6 +12,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="/styles.css">
+  <!-- Every module and the sign-in SDK start downloading at once instead of one import after another. -->
+  <link rel="modulepreload" href="/js/app.js">
+  <link rel="modulepreload" href="/js/api.js">
+  <link rel="modulepreload" href="/js/agent.js">
+  <link rel="modulepreload" href="/js/local.js">
+  <link rel="modulepreload" href="/js/live.js">
+  <link rel="modulepreload" href="/js/cards.js">
+  <link rel="modulepreload" href="/js/screens.js">
+  <link rel="modulepreload" href="/js/ui.js">
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js">
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js">
+  <link rel="preconnect" href="https://identitytoolkit.googleapis.com">
+  <link rel="preconnect" href="https://securetoken.googleapis.com">
+  <link rel="preconnect" href="https://www.google.com">
 </head>
 <body>
   <div id="root"></div>

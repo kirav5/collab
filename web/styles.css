@@ -135,6 +135,10 @@ textarea.field { resize: vertical; min-height: 64px; }
 
 .setup { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
 .setup .card { width: min(520px, 100%); gap: 14px; padding: 22px; }
+.btn.google { background: #fff; color: #1f1f1f; border: 1px solid #dadce0; display: inline-flex; align-items: center; justify-content: center; gap: 10px; font-weight: 600; }
+.btn.google:hover { background: #f7f8f8; }
+.setup .or { display: flex; align-items: center; gap: 10px; color: var(--text3); font-size: 12px; }
+.setup .or::before, .setup .or::after { content: ""; flex: 1; border-top: 1px solid var(--hairline); }
 
 dialog { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); color: var(--text); padding: 18px; width: min(460px, calc(100vw - 32px)); }
 dialog::backdrop { background: rgb(0 0 0 / 45%); }

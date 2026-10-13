@@ -195,9 +195,20 @@ export const screens = {
         try { await session.push(); h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
-      if (a === "google") { await session.google(); h.paint(); return true; }
+      if (a === "google") {
+        busy(el, true, "Opening Google");
+        try {
+          const r = await session.google();
+          if (r === "switched") { h.toast("That Google account already has Collab — switching to it."); setTimeout(() => location.reload(), 800); return true; }
+          if (r === "linked") h.toast("Signed in with Google. Your handle and context now follow you to any device.");
+        } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
       if (a === "clear-device") { if (confirm("Erase the chat history kept on this device? Your context and facts stay in your account.")) { await local.clear(); location.reload(); } return true; }
-      if (a === "sign-out") { await session.signOut(); return true; }
+      if (a === "sign-out") {
+        if (session.user?.isAnonymous && !confirm("You're a guest: signing out loses this identity for good. Sign in with Google first to keep it. Sign out anyway?")) return true;
+        await session.signOut(); return true;
+      }
     },
   },
 };

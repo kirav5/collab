@@ -67,14 +67,18 @@ export function start(openChat) {
   live.started = true;
   opener = openChat;
   refresh(openChat);
-  if (session.fs) {
-    session.fs.engagements(list => setEngagements(list, openChat));
+  // Polls until Firestore's live listeners are attached, then only as a backstop.
+  let poll = setInterval(() => refresh(openChat), 3_000);
+  session.fsReady?.then(fs => {
+    if (!fs) return;
+    clearInterval(poll);
+    fs.engagements(list => setEngagements(list, openChat));
     // Demo people's devices are simulated on the server, so their items come through the API: checked less often.
-    session.fs.inbox(() => refresh(openChat));
-    setInterval(() => refresh(openChat), 12_000);
-  } else {
-    setInterval(() => refresh(openChat), 3_000);
-  }
+    // The listener's first snapshot is what refresh() above already loaded.
+    let first = true;
+    fs.inbox(() => { if (first) { first = false; return; } refresh(openChat); });
+    poll = setInterval(() => refresh(openChat), 12_000);
+  });
 }
 
 export const needsYou = () => [...live.inbox.filter(i => i.kind !== "move" || i.question), ...live.alerts];

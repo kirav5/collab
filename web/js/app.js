@@ -16,16 +16,41 @@ const root = $("#root");
 // MARK: - Boot
 
 async function setup() {
+  const to = new URLSearchParams(location.search).get("to")?.replace(/[^\w-]/g, "").slice(0, 24);
+  const google = session.user && !session.user.isAnonymous;
+  const suggest = (session.user?.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
   return new Promise(resolve => {
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
       ${label("Collab", "sq ink")}
       <h1 class="headline">Your agent. <span class="soft">Your private context is never shared.</span></h1>
+      ${to ? `<p class="small">You're opening <b>@${esc(to)}</b>'s agent. Start your own first — it takes ten seconds.</p>` : ""}
+      ${session.google ? (google
+        ? `<p class="small muted">Signed in as <b>${esc(session.user.email ?? session.user.displayName ?? "Google")}</b> — this identity follows you to any device.</p>`
+        : `<button type="button" class="btn google" id="google"><svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg> Continue with Google</button>
+           <p class="small faint">Keeps your handle, context and deals on every device. Already have Collab? This signs you back in.</p>
+           <div class="or"><span>or start as a guest</span></div>`) : ""}
       <p class="small muted">Pick a handle — it's your agent's address (A2A) that other people's agents reach you at.</p>
-      <input class="field" name="name" placeholder="Your name" required maxlength="60">
-      <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" required minlength="3" maxlength="24" autocapitalize="none"></div>
+      <input class="field" name="name" placeholder="Your name" required maxlength="60" value="${esc(session.user?.displayName ?? "")}">
+      <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" required minlength="3" maxlength="24" autocapitalize="none" value="${esc(suggest.length >= 3 ? suggest : "")}"></div>
       <input class="field" name="area" placeholder="Your area (e.g. Indiranagar, Bengaluru)" value="Bengaluru">
       <p class="small faint">Only a neighbourhood is ever used — never your exact location.</p>
       <button class="btn accent">Start</button><p class="small" id="setup-err" style="color:var(--danger)"></p></form></div>`;
+    const g = $("#google");
+    if (g) g.onclick = async () => {
+      busy(g, true, "Opening Google");
+      try {
+        const r = await session.google();
+        if (r === "switched") { location.reload(); return; }
+        if (r === "linked") {
+          // A Google account that already has Collab elsewhere comes back with its identity.
+          S.profile = await api("/api/me").catch(() => null);
+          if (S.profile) { resolve(); return; }
+          resolve(setup());
+          return;
+        }
+        busy(g, false);
+      } catch (err) { $("#setup-err").textContent = err.message; busy(g, false); }
+    };
     $("#setup").onsubmit = async e => {
       e.preventDefault();
       const f = new FormData(e.target), b = e.submitter;
@@ -81,7 +106,8 @@ function paintSidebar() {
         ${navRow("activity", "≡", "Activity", "")}
         ${navRow("settings", "⚙", "Settings", "")}
       </div>
-      <div class="stack" style="gap:4px">${label("Your agent's address (A2A)")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a></div>
+      <div class="stack" style="gap:4px">${label("Your agent's address (A2A)")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a>
+        ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
     </div>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
 }
@@ -130,11 +156,20 @@ async function paintContent(soft = false) {
   }
 }
 
+// Saved-note cards show the note as it is now (it may have moved tier on another screen); fetched at most every 20 s.
+let factsCache = null;
+function savedFacts() {
+  if (!factsCache || Date.now() - factsCache.at > 20_000) factsCache = { at: Date.now(), map: api("/api/facts").then(fs => new Map(fs.map(f => [f.id, f]))).catch(() => new Map()) };
+  return factsCache.map;
+}
+
 async function chatHTML() {
   const cur = S.sessions.find(s => s.id === S.current);
   if (!cur || !cur.messages.length) return emptyChat();
-  const facts = new Map((await api("/api/facts").catch(() => [])).map(f => [f.id, f]));
-  for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
+  if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
+    const facts = await savedFacts();
+    for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
+  }
   return cur.messages.map(messageHTML).join("");
 }
 
@@ -349,6 +384,7 @@ async function setTier(fact, tier, el) {
   if (!fact || fact.tier === tier) return;
   busy(el, true);
   const saved = await api("/api/facts", { id: fact.id, tier, text: fact.text });
+  factsCache = null;
   if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Sharing to say who sees it.`, () => openScreen("sharing"));
 }
 
@@ -400,12 +436,18 @@ function driveRequester() {
   for (const e of live.engagements.values()) if (e.outbox && e.requester.uid === session.uid) run(e.id);
 }
 
+// The service worker serves the app from this device and checks for a new version in the background.
+navigator.serviceWorker?.addEventListener("message", e => {
+  if (e.data?.type === "collab-updated") toast("A new version of Collab is ready — tap to reload.", () => location.reload());
+});
+
 // Started last, once everything above is defined.
 await signIn();
 if (!session.uid) { root.innerHTML = `<div class="setup"><div class="card">${label("Collab", "sq ink")}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
 setOwner(session.uid);
 S.profile = await api("/api/me").catch(() => null);
 if (!S.profile) await setup();
+setOwner(session.uid);
 await boot();
 // Links from notifications, the installed app's shortcuts and QR codes open the right place.
 {
