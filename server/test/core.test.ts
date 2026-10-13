@@ -128,3 +128,12 @@ test("a deal's receipt is registered once at agreement; any later change to the 
   e.negotiation.deal = { ...e.negotiation.deal, price: 300 };
   assert.equal((await verifyReceipt(db, e)).matches, false, "a changed price no longer matches what was registered");
 });
+
+test("changing an open request: only real, checked edits; 'wider' always widens even without the model", async () => {
+  const { RefineTask, RouteTask } = await import("../src/core/tasks.ts");
+  const input = { text: "it doesn't have to be electric, and try a wider area", area: "Indiranagar", radiusKm: 8, limit: 2_000_000, requirements: [{ label: "Fuel", value: "electric" }, { label: "Seats", value: "6" }] };
+  const r = RefineTask.validate({ radiusKm: 20, area: "Mars", limit: 999, drop: ["electric", "Colour"] }, input)!;
+  assert.deepEqual(r, { radiusKm: 20, area: null, limit: null, drop: ["Fuel"] }, "unwritten place and number are dropped; a value maps to its label");
+  assert.equal(RefineTask.fallback(input).radiusKm, 24);
+  assert.equal(RouteTask.validate({ intent: "refine", tier: null, reply: null, find: null }, { text: "try wider area", recent: [], open: null }), null, "nothing to refine without an open request");
+});

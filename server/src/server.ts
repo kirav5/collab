@@ -12,6 +12,7 @@ import { geminiFromEnv } from "./ai/gemini.ts";
 import { fakeModel } from "./ai/fake.ts";
 import { decide } from "./ai/decide.ts";
 import { AnswerTask } from "./market/answer.ts";
+import { budgetBand } from "./market/match.ts";
 import { read } from "./market/read.ts";
 import { numbers } from "./market/text.ts";
 import { domain as domainOf } from "./market/domains.ts";
@@ -25,7 +26,7 @@ import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, l
 import { forProvider, forRequester, insights, receipt, registerReceipt, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
-import { RouteTask, TopicsTask } from "./core/tasks.ts";
+import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
 import { seedDemo } from "./demo.ts";
@@ -281,7 +282,8 @@ app.get("/api/activity", route(async req => (await db.find(AUDIT, [["owner", "==
 // The device agent's model calls: what it sends is used for this one call and not stored or logged.
 app.post("/api/route", route(async req => {
   await spend(req.uid);
-  return (await decide(model, RouteTask, { text: text(req.body?.text, 600), recent: (Array.isArray(req.body?.recent) ? req.body.recent : []).slice(-4).map((r: unknown) => text(r, 200)) })).output;
+  return (await decide(model, RouteTask, { text: text(req.body?.text, 600), recent: (Array.isArray(req.body?.recent) ? req.body.recent : []).slice(-4).map((r: unknown) => text(r, 200)),
+    open: typeof req.body?.open === "string" ? text(req.body.open, 120) : null })).output;
 }));
 app.post("/api/think", route(async req => {
   await spend(req.uid);
@@ -332,6 +334,30 @@ app.post("/api/briefs/draft", route(async req => {
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
   return draft(model, t, here, now(), hint);
 }));
+/** The owner changes their open request ("try a wider area", "up to 600", "in Koramangala instead"): Gemini reads the
+ *  change, code checks it, and the updated request comes back to be searched again. Says exactly what changed. */
+app.post("/api/briefs/refine", route(async req => {
+  await spend(req.uid);
+  const need = needFrom(req.body?.need), shared = sharedFrom(req.body?.shared, need);
+  const limit = num(req.body?.limit, 1, 1e12);
+  const r = (await decide(model, RefineTask, { text: text(req.body?.text, 300), area: need.place.name, radiusKm: need.radiusKm, limit,
+    requirements: shared.requirements.map(q => ({ label: q.label, value: q.value })) })).output;
+  const changes: string[] = [];
+  if (r.area) {
+    const p = resolve(r.area, need.place);
+    if (p) { need.place = p; shared.area = p.name; changes.push(`area: ${p.name}`); }
+  }
+  if (r.radiusKm) { need.radiusKm = r.radiusKm; changes.push(`within ${r.radiusKm} km`); }
+  if (r.drop.length) {
+    const gone = new Set(r.drop.map(d => d.toLowerCase()));
+    shared.requirements = shared.requirements.filter(q => !gone.has(q.label.toLowerCase()));
+    need.filters = need.filters.filter(f => !gone.has(f.label.toLowerCase()));
+    changes.push(`dropped ${r.drop.join(", ")}`);
+  }
+  if (r.limit) { shared.budget = budgetBand({ ...need, maxPrice: r.limit, mandate: null }); changes.push("new limit (private)"); }
+  return { need, shared, limit: r.limit ?? limit, changes };
+}));
+
 app.post("/api/briefs", route(async req => {
   await me(req.uid);
   await spend(req.uid, 2);

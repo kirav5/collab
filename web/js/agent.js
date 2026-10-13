@@ -48,8 +48,9 @@ export const itemOf = draft => draft.need.attributes?.item ?? draft.shared.requi
 
 // MARK: - Your chat
 
-export async function chat(text, recent, area) {
-  const route = await api("/api/route", { text, recent });
+/** `open`: the latest request card in this chat ({ draft, autonomy, days }), so follow-ups can change it. */
+export async function chat(text, recent, area, open = null) {
+  const route = await api("/api/route", { text, recent, open: open?.draft.shared.title ?? null });
   switch (route.intent) {
     case "remember": {
       const fact = await api("/api/facts", { text, tier: "private" });
@@ -72,6 +73,18 @@ export async function chat(text, recent, area) {
       const d = await api("/api/offers/draft", { text, here: area });
       const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }) : [];
       return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, floor: d.floor ?? null, insights, step: "review" }] };
+    }
+    case "refine": {
+      // Change the open request and search again — for real; the reply says exactly what changed and what was found.
+      const d = open.draft;
+      const r = await api("/api/briefs/refine", { need: d.need, shared: d.shared, text, limit: d.mandate?.price.limit ?? null });
+      const mandate = r.limit ? { price: { opening: Math.round(r.limit * 0.9), limit: r.limit }, terms: {}, maxRounds: d.mandate?.maxRounds ?? 5 } : d.mandate;
+      const draft = { ...d, need: { ...r.need, mandate }, shared: r.shared, mandate };
+      const s = await api("/api/briefs", { need: draft.need, shared: draft.shared, delegate: mandate && open.autonomy ? { mandate, autonomy: open.autonomy, days: open.days ?? 7 } : null });
+      const found = [...s.found, ...(s.overBudget ?? []).map(f => ({ ...f, over: true }))];
+      const what = r.changes.length ? `Searched again — ${r.changes.join(", ")}.` : "Searched again with the same request.";
+      const result = s.found.length ? `${s.found.length} ${s.found.length === 1 ? "match" : "matches"}.` : s.overBudget?.length ? "Still no exact match." : "Still no one — try a different area, or fewer requirements.";
+      return { text: `${what} ${result}`, cards: found.length ? [{ type: "brief", step: "matches", text, draft, briefId: s.brief.id, found, rankedByModel: s.rankedByModel, picked: s.found.length ? [0] : [], autonomy: open.autonomy, days: open.days }] : [] };
     }
     case "ask": {
       // A plain answer first; finding sellers is offered, never started on its own. The question and its answer are

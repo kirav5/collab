@@ -170,7 +170,9 @@ async function send(text) {
   paint();
   try {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
-    const r = await chat(text, recent, S.profile.area);
+    // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
+    const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
+    const r = await chat(text, recent, S.profile.area, open);
     Object.assign(reply, r, { pending: null, engine: r.cards?.some(c => c.on === "device") ? "Gemini Nano · on device" : "Gemini" });
   } catch (e) {
     Object.assign(reply, { pending: null, text: e.status === 429 ? e.message : `Something went wrong: ${e.message}` });
