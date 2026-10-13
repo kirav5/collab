@@ -6,9 +6,9 @@ import type { Model } from "../ai/gemini.ts";
 import { decide } from "../ai/decide.ts";
 import { type Docs, docId } from "../docs.ts";
 import { ANSWERS } from "./engage.ts";
-import { stats } from "./deals.ts";
 import { savedKey } from "../market/answer.ts";
 import { RankTask, rank } from "../market/match.ts";
+import { BROAD, stats } from "./deals.ts";
 import { read } from "../market/read.ts";
 import { moneyText, newId } from "../market/types.ts";
 import type { Brief, Fact, Profile, Tier } from "./model.ts";
@@ -96,25 +96,32 @@ export interface Found {
 }
 
 /** People whose Public facts fit a brief, best first. */
-export async function search(db: Docs, model: Model | null, brief: Brief, me: string): Promise<{ found: Found[]; rankedByModel: boolean; considered: number }> {
+export async function search(db: Docs, model: Model | null, brief: Brief, me: string): Promise<{ found: Found[]; overBudget: Found[]; rankedByModel: boolean; considered: number }> {
   const query = `${brief.shared.title}. ${brief.shared.summary} ${brief.shared.requirements.map(r => `${r.label}: ${r.value}`).join("; ")}`;
   const v = await model?.embed?.([query], "query");
   let near = v ? await db.nearest(FACTS, "embedding", v[0], [["tier", "==", "public"]], 60) : [];
   // Without embeddings (the model is down), every Public fact is a candidate and Gemini's ranking — or the rules — order them.
   if (!near.length) near = (await db.find(FACTS, [["tier", "==", "public"]], 200)).map(doc => ({ doc, distance: 0.5 }));
   const t = now();
+  // How close the best match is sets the bar for everything outside the request's category: a loosely related note
+  // (an electrician for a water bottle) doesn't ride along just because nothing else is near.
+  const closest = Math.min(...(near as { distance: number }[]).map(n => n.distance), 1);
+  const bar = Math.min(0.55, closest + 0.08);
   // One entry per person: their closest Public fact.
   const best = new Map<string, { fact: Fact; distance: number }>();
   for (const { doc, distance } of near as { doc: Fact; distance: number }[]) {
     // Offerings in the request's own category always count (the hard filters below decide); anything else has to be
-    // close in meaning.
-    if (doc.owner === me || (doc.offer?.category !== brief.need.category && distance > 0.55)) continue;
+    // about as close in meaning as the best match.
+    // In a broad category ("goods" holds bicycles and bottles) sharing the category isn't enough either.
+    const sameKind = doc.offer?.category === brief.need.category && !BROAD.has(brief.need.category);
+    if (doc.owner === me || (!sameKind && distance > bar)) continue;
     const cur = best.get(doc.owner);
     if (!cur || distance < cur.distance) best.set(doc.owner, { fact: doc, distance });
   }
   // Offerings in the request's own category go through the request's hard filters; other close matches stay
   // (they're judged by meaning, and asked about in the conversation).
   const candidates: (Found & { fact: Fact })[] = [];
+  const overBudget: Found[] = [];
   const profiles = new Map(await Promise.all([...best.keys()].map(async uid => [uid, (await db.get(PROFILES, uid)) as Profile | null] as const)));
   for (const [uid, { fact, distance }] of best) {
     const profile = profiles.get(uid) ?? null;
@@ -122,7 +129,13 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
     let distanceKm: number | null = null, met: string[] = [], unknown: string[] = [], score = 1 - distance;
     if (fact.offer && fact.offer.category === brief.need.category) {
       const [m] = rank([{ key: fact.id, offer: fact.offer }], brief.need, t);
-      if (!m) continue;
+      if (!m) {
+        // Only the price is in the way: say so (the owner may raise their limit) instead of dropping it silently.
+        const [priced] = rank([{ key: fact.id, offer: fact.offer }], { ...brief.need, maxPrice: null }, t);
+        if (priced) overBudget.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: await stats(db, uid) },
+          fact: { id: fact.id, text: fact.text, offer: fact.offer }, why: null, distanceKm: priced.distanceKm || null, met: priced.met, unknown: priced.unknown, score: 0 });
+        continue;
+      }
       distanceKm = m.distanceKm || null; met = m.met; unknown = m.unknown;
       score += m.score * 0.5;
     }
@@ -139,5 +152,5 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
     for (const c of list) c.why = r.output.why[c.fact.id] ?? null;
     byModel = r.byModel;
   }
-  return { found: list.slice(0, 8).map(c => ({ ...c, fact: { id: c.fact.id, text: c.fact.text, offer: c.fact.offer } })), rankedByModel: byModel, considered: best.size };
+  return { found: list.slice(0, 8).map(c => ({ ...c, fact: { id: c.fact.id, text: c.fact.text, offer: c.fact.offer } })), overBudget: overBudget.slice(0, 3), rankedByModel: byModel, considered: best.size };
 }

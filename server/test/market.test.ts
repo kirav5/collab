@@ -132,3 +132,10 @@ test("the local gazetteer supplement resolves Bengaluru localities GeoNames lack
   const p = resolve("HSR Layout", resolve("Bengaluru"));
   assert.ok(p && !p.isCity && p.name.startsWith("HSR Layout"), JSON.stringify(p));
 });
+
+test("Gemini answering 'none of these fit' is respected, not replaced by every candidate", async () => {
+  const { RankTask } = await import("../src/market/match.ts");
+  const input = { need: "steel water bottle", candidates: [{ id: "flat", summary: "2BHK for rent" }, { id: "tiffin", summary: "Veg tiffin" }] };
+  assert.deepEqual(RankTask.validate({ order: [], why: {} }, input), { order: [], why: {} });
+  assert.deepEqual(RankTask.validate({ order: ["made-up", "tiffin"], why: { tiffin: "x" } }, input)?.order, ["tiffin"]);
+});

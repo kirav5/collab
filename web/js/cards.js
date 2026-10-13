@@ -61,15 +61,17 @@ const autonomyPick = (c) => `<select class="field" data-edit="autonomy">
 
 function matchesCard(c, at) {
   const found = c.found ?? [];
+  const real = found.filter(f => !f.over).length;
   if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Your request is kept; try a wider area or fewer requirements.</p></div>`;
   return `<div class="card" ${at}>
-    <div class="row">${label(`${found.length} ${found.length === 1 ? "match" : "matches"}`, "sq ink")}${c.rankedByModel ? `<span class="small faint">ranked by Gemini</span>` : ""}</div>
+    <div class="row">${label(real ? `${real} ${real === 1 ? "match" : "matches"}` : "No exact match", "sq ink")}${c.rankedByModel && real ? `<span class="small faint">ranked by Gemini</span>` : ""}${found.length > real ? `<span class="small faint">· ${found.length - real} above your budget</span>` : ""}</div>
     ${found.map((f, j) => `<label class="match-row">
       <input type="checkbox" data-pick="${j}" ${c.picked?.includes(j) ? "checked" : ""} ${at}>
       <span class="avatar" aria-hidden="true">${esc(f.profile.name.slice(0, 1).toUpperCase())}</span>
-      <span class="match-main"><span class="row"><b>${esc(f.profile.name)}</b>${f.profile.demo ? tag("demo") : ""}${f.profile.stats?.deals ? tag(`${f.profile.stats.kept}/${f.profile.stats.deals} went ahead`, "fresh") : ""}
+      <span class="match-main"><span class="row"><b>${esc(f.profile.name)}</b>${f.profile.demo ? tag("demo") : ""}${f.profile.stats?.kept ? tag(`${f.profile.stats.kept} deal${f.profile.stats.kept === 1 ? "" : "s"} done`, "fresh") : ""}
           <span class="end">${f.fact.offer ? `<b>${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</b>` : ""}</span></span>
         <span class="small muted">${esc(f.why ?? f.fact.offer?.title ?? f.fact.text.slice(0, 120))}</span>
+        ${f.over ? `<span class="small" style="color:var(--stale)">Above your budget — ticking it lets your agent try to bring the price down.</span>` : ""}
         <span class="small faint">${[f.distanceKm ? `${f.distanceKm} km` : null, ...f.met.slice(0, 2).map(x => `✓ ${x}`), f.unknown.length ? `${f.unknown.length} to ask` : null].filter(Boolean).map(esc).join(" · ")}</span></span>
     </label>`).join("")}
     <div class="row"><button class="btn accent" data-act="brief-engage" ${at}>Ask their agents</button><span class="small faint">Your limit and private notes are never shared.</span></div>

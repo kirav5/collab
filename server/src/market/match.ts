@@ -113,8 +113,9 @@ export const RankTask: Task<RankInput, { order: string[]; why: Record<string, st
   validate(r, i) {
     const ids = new Set(i.candidates.map(c => c.id));
     const seen = new Set<string>();
+    // An empty order is an answer — "none of these fit" — not a failure; only ids that were offered may come back.
     const order = r.order.filter(id => ids.has(id) && !seen.has(id) && seen.add(id));
-    return order.length ? { order, why: Object.fromEntries(Object.entries(r.why).filter(([id]) => seen.has(id))) } : null;
+    return { order, why: Object.fromEntries(Object.entries(r.why).filter(([id]) => seen.has(id))) };
   },
   fallback: i => ({ order: i.candidates.map(c => c.id), why: {} }),
 };

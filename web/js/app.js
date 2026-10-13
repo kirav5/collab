@@ -272,7 +272,8 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "brief-send") {
     busy(el, true, "Searching");
     const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: c.autonomy ?? "ask", days: c.days ?? 7 } : null });
-    Object.assign(c, { step: "matches", briefId: r.brief.id, found: r.found, rankedByModel: r.rankedByModel, picked: r.found.slice(0, 2).map((_, j) => j) });
+    // Real matches first (only the best one pre-ticked); sellers that fit but cost more than the limit come last, unticked.
+    Object.assign(c, { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] });
   }
   if (a === "brief-engage") {
     const picks = (c.picked ?? []).map(j => c.found[j]).filter(Boolean);

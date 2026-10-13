@@ -18,7 +18,7 @@ export interface Deal {
 }
 
 /** Categories too broad to compare by category alone ("goods" holds both phones and water bottles). */
-const BROAD = new Set(["goods", "other", "tasks", "events", "vehicles"]);
+export const BROAD = new Set(["goods", "other", "tasks", "events", "vehicles"]);
 const STOP = new Set(["for", "sale", "the", "and", "with", "new", "used", "items", "item", "near", "online", "home", "your", "from"]);
 const words = (s: string) => new Set((s.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter(w => !STOP.has(w)).map(w => w.replace(/(es|s)$/, "")));
 /** Two item descriptions name the same kind of thing (a word in common, ignoring filler). */
