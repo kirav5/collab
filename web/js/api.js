@@ -52,10 +52,11 @@ export async function signIn() {
       onMessage(messaging, m => window.dispatchEvent(new CustomEvent("collab-push", { detail: m.notification ?? {} })));
       return true;
     };
-    // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API. It loads in
-    // the background while sign-in runs; calls wait for it only if it isn't ready yet.
+    // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API. It runs on
+    // its own Firebase app instance so sign-in doesn't wait for reCAPTCHA (Auth would otherwise attach a token to
+    // every call): the two run side by side, and API calls wait for the token only if it isn't ready yet.
     const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken }) => {
-      const ac = initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
+      const ac = initializeAppCheck(initializeApp(config, `check-${as ?? "main"}`), { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
       getToken(ac, false).catch(() => {});
       return async () => (await getToken(ac, false)).token;
     }).catch(() => null) : null;

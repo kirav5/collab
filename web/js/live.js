@@ -18,7 +18,7 @@ function notify(title, body, open) {
   } catch { /* not available */ }
 }
 
-function setEngagements(list, openChat) {
+function setEngagements(list, openChat, quiet = false) {
   for (const e of list) {
     const prev = live.engagements.get(e.id);
     live.engagements.set(e.id, e);
@@ -26,7 +26,7 @@ function setEngagements(list, openChat) {
     if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("requests", e.id));
     seen.engagements.add(e.id);
   }
-  emit();
+  if (!quiet) emit();
 }
 
 function setInbox(items, openChat) {
@@ -35,7 +35,6 @@ function setInbox(items, openChat) {
     if (!first && !seen.inbox.has(i.id) && i.kind !== "move") notify("Your agent needs you", i.question ?? (i.kind === "confirm" ? `Confirm the deal: ${i.title}` : i.title), () => openChat("requests", i.engagementId));
     seen.inbox.add(i.id);
   }
-  emit();
 }
 
 /** What scheduled agents found: someone new who fits a watched request. */
@@ -46,16 +45,17 @@ function setAlerts(alerts, watches, openChat) {
     if (!first && !seen.alerts.has(a.id)) notify(`New match · ${a.title}`, a.text, () => openChat("requests"));
     seen.alerts.add(a.id);
   }
-  emit();
 }
 
 export async function refresh(openChat) {
   const [es, inbox, alerts, watches] = await Promise.all([api("/api/engagements").catch(() => null), api("/api/inbox").catch(() => null),
     api("/api/alerts").catch(() => null), api("/api/watches").catch(() => null)]);
-  if (es) setEngagements(es, openChat);
+  if (es) setEngagements(es, openChat, true);
   if (inbox) setInbox(inbox, openChat);
   if (alerts && watches) setAlerts(alerts, watches, openChat);
   first = false;
+  // One repaint for the whole check, not one per list.
+  emit();
 }
 
 let opener = () => {};
