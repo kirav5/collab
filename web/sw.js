@@ -2,7 +2,7 @@
 // Firebase Cloud Messaging delivers "your agent needs you" while the app is closed.
 const SHELL = "collab-shell-v3";
 const FILES = ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/icon-192.png",
-  "/js/app.js", "/js/api.js", "/js/agent.js", "/js/cards.js", "/js/live.js", "/js/local.js", "/js/screens.js", "/js/ui.js"];
+  "/js/app.js", "/js/api.js", "/js/agent.js", "/js/cards.js", "/js/live.js", "/js/local.js", "/js/screens.js", "/js/ui.js", "/js/version.js"];
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
@@ -14,7 +14,8 @@ self.addEventListener("activate", e => {
 // version stamp the app checks for updates.
 self.addEventListener("fetch", e => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.origin !== location.origin || /^\/(api|a2a|cron|__)\//.test(url.pathname) || ["/health", "/version.txt"].includes(url.pathname)) return;
+  if (e.request.method !== "GET" || url.origin !== location.origin || /^\/(api|a2a|cron|public|__)\//.test(url.pathname) || ["/health", "/version.txt"].includes(url.pathname)) return;
+  if (["/pickup.html", "/verify.html"].includes(url.pathname)) return;
   const key = e.request.mode === "navigate" ? "/index.html" : url.pathname;
   const net = fetch(e.request).then(r => {
     if (r.ok && r.type === "basic") { const copy = r.clone(); caches.open(SHELL).then(c => c.put(key, copy)); }

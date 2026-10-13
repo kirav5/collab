@@ -251,6 +251,7 @@ async function scan(h) {
       const to = (() => { try { return new URL(raw).searchParams.get("to"); } catch { return null; } })();
       stop();
       if (to) return h.openDirect(to);
+      try { const u = new URL(raw); if (u.origin === location.origin && u.pathname === "/pickup.html") { location.href = u.href; return; } } catch {}
       return h.toast("That isn't a Collab QR code.");
     }
     await new Promise(r => setTimeout(r, 250));

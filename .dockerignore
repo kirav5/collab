@@ -2,4 +2,7 @@
 **/.env
 .git
 .firebase
+.deploy
+**/*.env
+docs/bench
 server/test

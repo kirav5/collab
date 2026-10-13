@@ -68,8 +68,11 @@ export function pay(e: Engagement, side: Side, sign: (uid: string, hash: string)
 }
 
 function stripCart(c: CartMandate) {
-  const { hash: _h, merchantSignature: _s, ...body } = c;
-  return body;
+  // Explicit order survives Firestore's map reordering.
+  return { type: c.type, id: c.id, dealHash: c.dealHash,
+    merchant: { handle: c.merchant.handle, name: c.merchant.name }, buyer: { handle: c.buyer.handle, name: c.buyer.name },
+    items: c.items.map(i => ({ label: i.label, amount: i.amount })), total: { currency: c.total.currency, value: c.total.value },
+    createdAt: c.createdAt, expiresAt: c.expiresAt };
 }
 
 /** Does everything still add up: the cart for the deal both confirmed, the payment for that cart? */
@@ -80,8 +83,11 @@ export function checkPayment(e: Engagement, verify: (uid: string, hash: string, 
   const cartOk = digest(stripCart(p.cart)) === p.cart.hash && p.cart.dealHash === (e.negotiation.deal ? sealed(e).hash : "") && !!seller.uid && verify(seller.uid, p.cart.hash, p.cart.merchantSignature);
   let paymentOk: boolean | null = null;
   if (p.mandate) {
-    const { hash, payerSignature, ...body } = p.mandate;
-    paymentOk = digest(body) === hash && p.mandate.cartHash === p.cart.hash && !!buyer.uid && verify(buyer.uid, hash, payerSignature);
+    const m = p.mandate;
+    const body = { type: m.type, id: m.id, cartId: m.cartId, cartHash: m.cartHash,
+      amount: { currency: m.amount.currency, value: m.amount.value }, method: m.method, payer: m.payer, payee: m.payee, userPresent: m.userPresent, createdAt: m.createdAt };
+    paymentOk = digest(body) === m.hash && m.cartHash === p.cart.hash && m.cartId === p.cart.id && m.amount.currency === p.cart.total.currency && m.amount.value === p.cart.total.value
+      && m.payer === buyer.handle && m.payee === seller.handle && !!buyer.uid && verify(buyer.uid, m.hash, m.payerSignature);
   }
   return { cartOk, paymentOk };
 }

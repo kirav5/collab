@@ -20,6 +20,12 @@ if ! gcloud secrets describe agent-secret >/dev/null 2>&1; then
   [ -f .deploy/agent-secret ] || openssl rand -hex 32 > .deploy/agent-secret
   gcloud secrets create agent-secret --replication-policy=automatic --data-file=.deploy/agent-secret >/dev/null
 fi
+# Receipt signing is separate from A2A authentication. Keep this key stable across instances and deploys.
+if ! gcloud secrets describe receipt-key >/dev/null 2>&1; then
+  mkdir -p .deploy
+  (umask 077; [ -f .deploy/receipt-key ] || openssl genpkey -algorithm ED25519 -out .deploy/receipt-key)
+  gcloud secrets create receipt-key --replication-policy=automatic --data-file=.deploy/receipt-key >/dev/null
+fi
 RECAPTCHA_SITE_KEY="${RECAPTCHA_SITE_KEY:-6LcWVO0tAAAAAGE87CLYa8anCDcS9mnidBl2geJN}"
 APPCHECK="${APPCHECK:-monitor}"
 
@@ -45,6 +51,8 @@ for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer
 done
 gcloud secrets add-iam-policy-binding agent-secret --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
 
+gcloud secrets add-iam-policy-binding receipt-key --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
+
 # Request-based billing (CPU only while a request runs); one instance kept warm so the app never waits ~3 s for a cold
 # start (MIN_INSTANCES=0 turns that off), startup CPU boost for when a second one starts, at most 2 instances caps cost.
 gcloud run deploy "$SERVICE" --quiet \
@@ -55,7 +63,7 @@ gcloud run deploy "$SERVICE" --quiet \
   --memory 1Gi --cpu 1 --concurrency 40 \
   --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
   --timeout 60 \
-  --set-secrets "AGENT_SECRET=agent-secret:latest" \
+  --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
   --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).

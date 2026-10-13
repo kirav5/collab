@@ -2,6 +2,7 @@
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
 // screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
 // agents are doing (Requests) and what was shared (Activity).
+import { shouldReload } from "./version.js";
 import { api, insightsLines, ios, session, signIn, standalone } from "./api.js";
 import { chat, detectNano, engine, itemOf, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
@@ -360,6 +361,25 @@ async function onClick(e) {
       toast(a === "eng-pay" ? "Paid — test mode, no money moved. Their agent has the payment." : "Marked as paid outside the app.");
       return refresh(openScreen);
     }
+    if (a === "price-check") {
+      busy(el, true, "Checking sources");
+      const box = el.parentElement.querySelector("[data-price-result]");
+      try {
+        const r = await api("/api/price-check", { item: el.dataset.item, area: el.dataset.area });
+        box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · typical ${money(r.typical)}/${esc(r.unit)}` : "Not enough comparable evidence"}</b><span class="small">${esc(r.note)}</span>${r.items.map(i => `<p class="small">${esc(i.label)} · ${money(i.price)}/${esc(i.unit)} ${i.sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" · ")}</p>`).join("")}<span class="small faint">Only you see this · ${r.remaining} checks left today · ${new Date(r.checkedAt * 1000).toLocaleString()}</span></div>`;
+        if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = r.searchEntryPoint; frame.style.cssText = "width:100%;border:0;min-height:110px"; box.append(frame); }
+      } finally { busy(el, false); }
+      return;
+    }
+    if (a === "eng-pickup") {
+      busy(el, true);
+      const p = await api(`/api/engagements/${el.dataset.id}/pickup`);
+      const link = `${location.origin}${p.path}`;
+      let qr = "";
+      try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1 }); } catch {}
+      document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="Pickup QR">${qr}</div><b>${p.collectedAt ? `Already collected at ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : "✓ Paid (test mode) · Not collected yet"}</b><a class="btn secondary" href="${esc(link)}">Open pickup pass</a><span class="small faint">Show this pass to the seller. Keep the link private.</span></div>`;
+      return;
+    }
     if (a === "eng-receipt") {
       busy(el, true);
       const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
@@ -370,6 +390,7 @@ async function onClick(e) {
         <div class="row">${r.matches ? tag("✓ Verified", "fresh") : tag(r.registered ? "Changed since agreed" : "Not registered", "danger")}
           <span class="small">${esc(r.parties.requester.name)} ↔ ${esc(r.parties.provider.name)} · <b>${money(r.terms.price, r.terms.unit)}</b></span></div>
         <span class="small muted">“${esc(r.terms.title)}” · agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
+        <a class="btn secondary compact" href="${esc(r.verifyPath)}" target="_blank" rel="noopener">Public verification & download</a><span class="small faint">Anyone with that link can view the receipt.</span>
         <details class="more"><summary>How this is checked</summary>
           <span class="small muted">When both sides confirmed, Collab hashed the terms, both parties and the time (SHA-256) and registered that hash. Verify recomputes it from the conversation: any change to price, terms or parties breaks the match. Confirmed by ${by("requester")} (requester) and ${by("provider")} (provider).</span>
           <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details>
@@ -507,7 +528,7 @@ readVersion().then(v => { version = v; });
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden) return;
   const v = await readVersion();
-  if (version && v && v !== version && !document.querySelector("input:focus, textarea:focus")) location.reload();
+  if (shouldReload(version, v, !!document.querySelector("input:focus, textarea:focus"))) location.reload();
 });
 // The service worker serves the app from this device and checks for a new version in the background.
 // A push that arrives while Collab is open shows here (the system shows it when Collab is closed).

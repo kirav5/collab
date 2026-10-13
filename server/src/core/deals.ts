@@ -130,10 +130,10 @@ export function sealed(e: Engagement) {
 }
 
 /** Registers the deal's hash once, at agreement (append-only: a registered receipt is never rewritten). */
-export async function registerReceipt(db: Docs, e: Engagement, now: number) {
+export async function registerReceipt(db: Docs, e: Engagement, now: number, sign?: (uid: string, hash: string) => string) {
   if (e.phase !== "agreed" || !e.negotiation.deal) return;
   const { hash, at } = sealed(e);
-  await db.update(RECEIPTS, e.id, (cur: unknown) => (cur ? null : { engagementId: e.id, hash, agreedAt: at, registeredAt: now }));
+  await db.update(RECEIPTS, e.id, (cur: unknown) => (cur ? null : { engagementId: e.id, hash, agreedAt: at, registeredAt: now, ...(sign ? { receipt: receipt(e, sign) } : {}) }));
 }
 
 /** Does the conversation still say what was registered when the deal was agreed? */

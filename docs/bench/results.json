@@ -1,0 +1,92 @@
+{
+  "runId": "mv728v6i",
+  "at": "2026-10-13T19:14:58.651Z",
+  "base": "https://collab-55.web.app",
+  "mode": "smoke",
+  "rows": [],
+  "liveModel": true,
+  "costs": {
+    "tokenEstimateUSD": null,
+    "searchUSD": null,
+    "note": "Health meters are per-instance lifetime counters. Deltas are diagnostic only, not attributable billing. Infrastructure and search excluded."
+  },
+  "healthBefore": {
+    "ok": true,
+    "model": {
+      "calls": 2,
+      "failures": 0,
+      "avgMs": 1415,
+      "slowest": {
+        "ms": 1728,
+        "task": "answer.listing"
+      },
+      "tokens": {
+        "input": 1148,
+        "output": 14,
+        "thinking": 46,
+        "cached": 0
+      },
+      "costUSD": 0.0010860000000000002,
+      "byTask": {
+        "answer.listing": {
+          "calls": 2,
+          "ms": 2829,
+          "tokens": {
+            "input": 1148,
+            "output": 14,
+            "thinking": 46,
+            "cached": 0
+          },
+          "costUSD": 0.0010860000000000002
+        }
+      },
+      "byModel": {
+        "gemini-3.6-flash": 2
+      },
+      "model": "gemini-3.6-flash",
+      "models": [
+        "gemini-3.6-flash",
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite"
+      ],
+      "backend": "vertex-ai",
+      "lastError": null,
+      "lastModel": "gemini-3.6-flash"
+    },
+    "store": "firestore",
+    "a2a": "https://collab-55.web.app/a2a/<handle>"
+  },
+  "blocked": "Error returned from server while signing a custom token: Permission 'iam.serviceAccounts.signBlob' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWExMzZiMC04NmE2LTdiNjktYjZkZC01MmE2M2RkZTkxYzASAA%3D%3D .",
+  "latency": {},
+  "summary": {
+    "privacy": {
+      "attempted": 0,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0
+    },
+    "negotiation": {
+      "attempted": 0,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0
+    },
+    "intent": {
+      "attempted": 0,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0
+    },
+    "load": {
+      "attempted": 0,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0
+    }
+  },
+  "negotiation": {
+    "agreements": 0,
+    "insideBothLimits": 0,
+    "meanRounds": null
+  }
+}

@@ -24,7 +24,7 @@ import { pushTo } from "../core/push.ts";
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
 
-export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; secret: string; verifyIdToken: (t: string) => Promise<string> }
+export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; secret: string; receiptKey?: object; receiptSubject?: (uid: string) => string; verifyIdToken: (t: string) => Promise<string> }
 
 // MARK: - Who is calling
 
@@ -84,7 +84,7 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     capabilities: { streaming: false, pushNotifications: false,
       extensions: [{ uri: "https://github.com/google-agentic-commerce/AP2/tree/v0.1",
         description: "Agentic Payments Protocol roles: merchant (this agent's Public offerings) and shopper (requests it sends). After a deal both owners confirmed, the seller's agent issues a signed Cart Mandate and the buyer's agent sends a signed Payment Mandate for it in a collab.turn/v1 data part (test mode: no money moves).",
-        required: false, params: { roles: ["merchant", "shopper"] } }] },
+        required: false, params: { roles: ["merchant", "shopper"], mode: "test", conformance: "AP2-inspired custom v0.1 flow", publicKey: cfg.receiptKey, subject: cfg.receiptSubject?.(p.uid) } }] },
     securitySchemes: { firebase: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Firebase ID token", description: "Optional. Without it you're a stranger: Public facts only." } } },
     defaultInputModes: ["text/plain", "application/json"],
     defaultOutputModes: ["text/plain", "application/json"],

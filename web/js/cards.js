@@ -65,6 +65,7 @@ function briefCard(c, at) {
       <div class="stack" style="gap:6px">${label("While you're away")}${autonomyPick(c)}</div>
       ${c.insights?.length ? `<div class="stack" style="gap:4px">${label("What similar deals closed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}
     </details>
+    <div><button class="btn secondary compact" data-act="price-check" data-item="${esc(s.title)}" data-area="${esc(need.place.name)}">Check fair price</button><span class="small faint"> Private hint · 5/day · item description sent to Google Search</span><div data-price-result></div></div>
     <div class="row"><button class="btn accent" data-act="brief-send" ${at}>Find people</button><span class="small faint">Nothing is sent until you choose who.</span></div>
   </div>`;
 }
@@ -225,6 +226,7 @@ export function engagementCard(e, id) {
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(them.name.split(" ")[0])}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">Name a price — “I'll sell for ₹100” — to offer a deal; they confirm or say no.</span>` : ""}
+    ${["deal", "agreed", "negotiating"].includes(e.phase) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(e.offer.title)}" data-area="${esc(e.brief.area ?? "India")}">Check fair price</button><span class="small faint"> Private hint · 5/day · item sent to Google Search</span><div data-price-result></div></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>
@@ -257,6 +259,7 @@ function dealBlock(e, mine) {
   return `<div class="deal">
     <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you sell" : "you buy"}</span></div>
     ${pay}
+    ${p?.status === "paid" ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">Pickup pass</button></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
   </div>`;
 }

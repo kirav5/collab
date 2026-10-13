@@ -23,10 +23,13 @@ import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setSigner, type Turn } from "./core/engage.ts";
+import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
+import { signer } from "./core/signatures.ts";
+import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, pay, sellerOf } from "./core/pay.ts";
 import { offeredPrice } from "./core/direct.ts";
 import { moneyText } from "./market/types.ts";
-import { forProvider, forRequester, insights, receipt, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
+import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
@@ -63,9 +66,11 @@ async function verifyIdToken(token: string): Promise<string> {
   return verifier(token);
 }
 
-const cfg = { db, model, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
+const signing = signer(env.RECEIPT_KEY, env.STORE === "memory");
+const verifySigned = (uid: string, hash: string, sig: string) => sig.startsWith("ed25519.") ? signing.verify(uid, hash, sig) : signReceipt(cfg.secret, uid, hash) === sig;
+const cfg = { db, model, receiptKey: signing.publicKey, receiptSubject: signing.subject, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
-setSigner((uid, hash) => signReceipt(cfg.secret, uid, hash));
+setSigner(signing.sign);
 initPush(db, env.STORE !== "memory");
 
 // MARK: - Plumbing
@@ -266,8 +271,9 @@ app.post("/api/chats", route(async req => {
   if (!c || typeof c.id !== "string" || !Array.isArray(c.messages)) throw new HttpError(400, "not a chat");
   const json = JSON.stringify({ ...c, messages: c.messages.slice(-200) });
   if (json.length > 600_000) throw new HttpError(413, "This chat is too long to keep in your account; it stays on this device.");
-  await db.set(CHATS, chatKey(req.uid, c.id), { owner: req.uid, id: c.id, updatedAt: Number(c.updatedAt) || now(), json });
-  return { ok: true };
+  const updatedAt = Number(c.updatedAt) || now();
+  const stored = await db.update(CHATS, chatKey(req.uid, c.id), cur => cur && cur.updatedAt > updatedAt ? null : { owner: req.uid, id: c.id, updatedAt, json });
+  return { ok: true, stale: !stored };
 }));
 app.post("/api/chats/clear", route(async req => {
   const rows = (await db.find(CHATS, [["owner", "==", req.uid]], 500)) as { id: string }[];
@@ -493,6 +499,12 @@ app.post("/api/alerts/:id/done", route(async req => {
   return { ok: true };
 }));
 
+app.post("/api/price-check", route(async req => {
+  try { return await checkPrice(db, model, req.uid, text(req.body?.item, 200), text(req.body?.area, 120), now()); }
+  catch (err) { if (err instanceof PriceCheckError) throw new HttpError(err.status, err.message); throw err; }
+}));
+app.get("/api/price-check", route(async req => db.get(PRICE_CHECKS, req.uid)));
+
 app.get("/api/engagements", route(async req => ((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 200)) as Engagement[]).sort((a, b) => b.updatedAt - a.updatedAt)));
 async function participant(uid: string, id: string): Promise<Engagement> {
   const e = await load(db, id).catch(() => null);
@@ -507,12 +519,54 @@ app.post("/api/engagements/:id/run", route(async req => {
 }));
 app.get("/api/engagements/:id/receipt", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  const r = receipt(e, (uid, hash) => signReceipt(cfg.secret, uid, hash));
-  if (!r) throw new HttpError(404, "no deal yet");
-  await registerReceipt(db, e, now()); // deals agreed before receipts were registered get theirs now
-  const payment = e.payment ? { ...e.payment, buyer: buyerOf(e), seller: sellerOf(e),
-    check: checkPayment(e, (uid, hash, sig) => signReceipt(cfg.secret, uid, hash) === sig) } : null;
-  return { ...r, ...(await verifyReceipt(db, e)), payment };
+  return receiptBundle(e);
+}));
+async function receiptBundle(e: Engagement) {
+  if (e.phase !== "agreed" || !e.negotiation.deal) throw new HttpError(404, "no deal yet");
+  const check = await verifyReceipt(db, e);
+  if (!check.registered || !check.matches) throw new HttpError(409, "The agreement does not match its registered receipt.");
+  const registered = await db.get(RECEIPTS, e.id);
+  const r = registered.receipt ?? receipt(e, signing.sign);
+  const payment = e.payment ? { ...e.payment, buyer: buyerOf(e), seller: sellerOf(e), check: checkPayment(e, verifySigned) } : null;
+  return { ...r, ...check, payment, publicKey: signing.publicKey,
+    subjects: { requester: e.requester.uid ? signing.subject(e.requester.uid) : null, provider: signing.subject(e.provider.uid) },
+    legacyAttestation: !registered.receipt, signatureAuthority: "Collab server, on behalf of its agents",
+    verifyPath: `/verify.html#${e.id}.${passCode(cfg.secret, e.id, "receipt")}` };
+}
+// Bearer receipt links share only the sealed deal, never the conversation, notes or private limits.
+app.get("/public/keys", route(async () => ({ keys: [signing.publicKey] }), false));
+app.get("/public/receipts/:id", route(async req => {
+  const id = String(req.params.id);
+  if (!validCode(cfg.secret, id, "receipt", req.query.code)) throw new HttpError(404, "receipt not found");
+  return receiptBundle(await load(db, id));
+}, false));
+app.get("/api/engagements/:id/pickup", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  let details;
+  try { details = pickupDetails(e); } catch (err) { throw new HttpError(400, (err as Error).message); }
+  const check = checkPayment(e, verifySigned);
+  if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  return { ...details, collectedAt: (await db.get(PICKUPS, e.id))?.collectedAt ?? null,
+    path: `/pickup.html#${e.id}.${passCode(cfg.secret, e.id, "pickup")}` };
+}));
+app.get("/public/pickup/:id", route(async req => {
+  const id = String(req.params.id);
+  if (!validCode(cfg.secret, id, "pickup", req.query.code)) throw new HttpError(404, "pass not found");
+  const e = await load(db, id), check = checkPayment(e, verifySigned);
+  if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  return { ...pickupDetails(e), collectedAt: (await db.get(PICKUPS, id))?.collectedAt ?? null };
+}, false));
+app.post("/api/pickup/:id/collect", route(async req => {
+  const id = String(req.params.id);
+  if (!validCode(cfg.secret, id, "pickup", req.body?.code)) throw new HttpError(404, "pass not found");
+  const e = await participant(req.uid, id), check = checkPayment(e, verifySigned);
+  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark collected.");
+  if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  const result = await collect(db, e, req.uid, now());
+  if (result.alreadyCollected) throw new HttpError(409, `Already collected at ${new Date(result.collectedAt * 1000).toISOString()}`);
+  const buyer = e[buyerOf(e)];
+  if (buyer.uid) void pushTo(buyer.uid, "Collected", e.offer.title, `/?engagement=${e.id}`);
+  return { collectedAt: result.collectedAt };
 }));
 /** Anyone signed in who has the engagement id can check a deal against its registered receipt (yes/no, nothing else). */
 app.get("/api/engagements/:id/verify", route(async req => {
@@ -527,7 +581,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   await spend(req.uid, 1);
   let mandate;
-  try { mandate = pay(e, side, (uid, hash) => signReceipt(cfg.secret, uid, hash), now()); } catch (err) { throw new HttpError(400, (err as Error).message); }
+  try { mandate = pay(e, side, signing.sign, now()); } catch (err) { throw new HttpError(400, (err as Error).message); }
   e.events.push({ at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" });
   await saveEngagement(db, e);
   const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate };

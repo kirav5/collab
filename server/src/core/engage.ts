@@ -63,7 +63,7 @@ export const setSigner = (fn: (uid: string, hash: string) => string) => { signer
 
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
-  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now()); }
+  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now(), signer ?? undefined); }
   // AP2: once both owners confirmed, the seller's agent issues the cart the buyer pays against.
   if (e.phase === "agreed" && !e.payment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
@@ -441,6 +441,8 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
  * is asked to confirm. Both confirming makes it agreed, with a receipt, like a negotiated deal.
  */
 export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null, said = text ?? "") {
+  // A shop with no listing used to seal its shop name as the item. Seal the actual offer shown for confirmation.
+  if (!e.offer.factId && said.trim()) e.offer.title = said.trim().slice(0, 160);
   e.seller = sellerFrom(said, s) ?? e.seller ?? "provider";
   const p = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);

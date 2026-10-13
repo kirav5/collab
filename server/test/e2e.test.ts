@@ -154,3 +154,60 @@ test("private facts store with the account, list only for the owner, never surfa
   const pub = await as("quinn", "/api/people/pat");
   assert.ok(!pub.facts.some((f: any) => f.text.includes("4321")));
 });
+
+test('shop QR destination → ask → follow-up → offer → confirm → pay → pickup → one collection', async () => {
+  await as('retail-shop', '/api/me', { handle: 'retail-shop', name: 'Retail Shop', areaName: 'Bengaluru' });
+  await as('retail-buyer', '/api/me', { handle: 'retail-buyer', name: 'Retail Buyer', areaName: 'Bengaluru' });
+  const shop = await as('retail-buyer', '/api/people/retail-shop');
+  assert.equal(shop.profile.handle, 'retail-shop');
+  let e = await as('retail-buyer', '/api/people/retail-shop/ask', { text: 'Do you have a steel bottle?' });
+  e = await as('retail-buyer', `/api/engagements/${e.id}/run`, {});
+  const question = (await as('retail-shop', '/api/inbox')).find((i: any) => i.engagementId === e.id && i.kind === 'answer');
+  assert.ok(question); await as('retail-shop', `/api/inbox/${question.id}`, { text: 'Yes, a steel bottle is available.' });
+  e = await as('retail-shop', `/api/engagements/${e.id}/ask`, { text: 'Which colour do you want?' });
+  const followup = (await as('retail-buyer', '/api/inbox')).find((i: any) => i.engagementId === e.id && i.kind === 'answer');
+  assert.ok(followup); await as('retail-buyer', `/api/inbox/${followup.id}`, { text: 'Blue please.' });
+  e = await as('retail-shop', `/api/engagements/${e.id}/ask`, { text: "I'll sell the steel bottle for ₹100" });
+  const confirmation = (await as('retail-buyer', '/api/inbox')).find((i: any) => i.engagementId === e.id && i.kind === 'confirm');
+  assert.ok(confirmation); await as('retail-buyer', `/api/inbox/${confirmation.id}`, { confirm: true });
+  e = await as('retail-buyer', `/api/engagements/${e.id}/pay`, {});
+  assert.equal(e.payment.status, 'paid');
+  const pass = await as('retail-buyer', `/api/engagements/${e.id}/pickup`);
+  const code = pass.path.split('.html#')[1].split('.')[1];
+  const publicPath = `/public/pickup/${e.id}?code=${code}`;
+  let checked = await (await fetch(B + publicPath)).json();
+  assert.equal(checked.collectedAt, null); assert.equal(checked.buyer, 'Retail Buyer');
+  assert.equal((await fetch(B + `/public/pickup/${e.id}?code=wrong`)).status, 404);
+  const collect = (uid: string) => fetch(B + `/api/pickup/${e.id}/collect`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer dev:${uid}` }, body: JSON.stringify({ code }) });
+  assert.equal((await collect('retail-buyer')).status, 403);
+  assert.equal((await collect('cat')).status, 404);
+  const simultaneous = await Promise.all([collect('retail-shop'), collect('retail-shop')]);
+  assert.deepEqual(simultaneous.map(r => r.status).sort(), [200, 409]);
+  checked = await (await fetch(B + publicPath)).json(); assert.ok(checked.collectedAt);
+  assert.equal((await collect('retail-shop')).status, 409);
+  const r = await as('retail-buyer', `/api/engagements/${e.id}/receipt`);
+  const receiptCode = r.verifyPath.split('.html#')[1].split('.')[1];
+  const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${receiptCode}`)).json();
+  // @ts-ignore standalone browser module also works with Node WebCrypto.
+  const { verifyReceiptBundle } = await import('../../web/js/verify-receipt.js');
+  assert.deepEqual(await verifyReceiptBundle(bundle), { receipt: true, cart: true, payment: true });
+  bundle.terms.price = 1; assert.equal((await verifyReceiptBundle(bundle)).receipt, false);
+  assert.equal((await fetch(B + `/public/receipts/${e.id}?code=${code}`)).status, 404, 'pickup and receipt capabilities are separate');
+});
+
+test('a listing-origin agreement can be paid and issued a pickup pass', async () => {
+  const e = await as('amy', `/api/engagements/${agreedId}/pay`, {});
+  assert.equal(e.payment.status, 'paid');
+  assert.ok((await as('amy', `/api/engagements/${agreedId}/pickup`)).path);
+});
+
+test('chat sync is owner-only, stale devices cannot overwrite newer history, clear is owner-only', async () => {
+  const chat = { id: 'sync-test', updatedAt: 200, messages: [{ role: 'user', text: 'newest' }] };
+  await as('amy', '/api/chats', { chat });
+  assert.deepEqual(await as('amy', '/api/chats'), [chat]);
+  assert.deepEqual(await as('bob', '/api/chats'), []);
+  assert.equal((await as('amy', '/api/chats', { chat: { ...chat, updatedAt: 100, messages: [] } })).stale, true);
+  assert.deepEqual(await as('amy', '/api/chats'), [chat]);
+  await as('bob', '/api/chats/clear', {}); assert.deepEqual(await as('amy', '/api/chats'), [chat]);
+  await as('amy', '/api/chats/clear', {}); assert.deepEqual(await as('amy', '/api/chats'), []);
+});
