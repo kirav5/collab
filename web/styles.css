@@ -203,3 +203,4 @@ details.more[open] { display: grid; gap: 10px; }
 /* Follow-up box on a resting conversation card. */
 .row.reply { gap: 6px; flex-wrap: nowrap; }
 .row.reply .field { flex: 1; min-width: 0; }
+.linkish.small { font-size: 12px; color: var(--text3); text-decoration: underline; }
