@@ -13,6 +13,18 @@ export const DEALS = "deals";
 export interface Deal {
   id: string; engagementId: string; category: string; area: string | null; unit: string | null;
   listPrice: number; dealPrice: number; discountPct: number; rounds: number; hours: number; questions: number; at: number; demo?: boolean;
+  /** What changed hands (the offering's title), so broad categories compare like with like. */
+  item?: string;
+}
+
+/** Categories too broad to compare by category alone ("goods" holds both phones and water bottles). */
+const BROAD = new Set(["goods", "other", "tasks", "events", "vehicles"]);
+const STOP = new Set(["for", "sale", "the", "and", "with", "new", "used", "items", "item", "near", "online", "home", "your", "from"]);
+const words = (s: string) => new Set((s.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter(w => !STOP.has(w)).map(w => w.replace(/(es|s)$/, "")));
+/** Two item descriptions name the same kind of thing (a word in common, ignoring filler). */
+export function sameItem(a: string, b: string): boolean {
+  const x = words(a), y = words(b);
+  return [...x].some(w => y.has(w));
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -23,7 +35,7 @@ export function dealOf(e: Engagement, now: number): Deal | null {
   return { id: `deal-${e.id}`, engagementId: e.id, category: e.offer.category, area: e.brief.area ?? null, unit: e.offer.unit,
     listPrice: list, dealPrice: deal, discountPct: round1(((list - deal) / list) * 100),
     rounds: e.negotiation.requester.length + e.negotiation.provider.length, hours: round1((now - e.createdAt) / 3600),
-    questions: e.qa.length, at: e.agreedAt ?? now,
+    questions: e.qa.length, at: e.agreedAt ?? now, item: e.offer.title.slice(0, 120),
     ...(e.requester.uid?.startsWith("demo-") || e.provider.uid.startsWith("demo-") ? { demo: true } : {}) };
 }
 
@@ -43,8 +55,10 @@ const pct = (s: number[], q: number) => { const p = (s.length - 1) * q, lo = Mat
 
 /** Closing-price stats for a category (or the area inside it), once at least 3 deals exist. Prices only compare
  *  within one unit: a per-visit median with per-day outliers is noise, so deals pool by `unit` (given or majority). */
-export async function insights(db: Docs, q: { category: string; area?: string | null; unit?: string | null }): Promise<Insights | null> {
+export async function insights(db: Docs, q: { category: string; area?: string | null; unit?: string | null; item?: string | null }): Promise<Insights | null> {
   let all = (await db.find(DEALS, [["category", "==", q.category]], 500)) as Deal[];
+  // In a broad category only deals for the same kind of item count; without an item, nothing comparable is known.
+  if (BROAD.has(q.category)) all = q.item ? all.filter(d => d.item && sameItem(d.item, q.item!)) : [];
   if (q.unit !== undefined) all = all.filter(d => d.unit === q.unit);
   else {
     const byUnit = new Map<string | null, number>();

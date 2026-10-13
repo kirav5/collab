@@ -173,7 +173,7 @@ app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? 
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
 app.get("/api/insights", route(async req => {
-  const i = await insights(db, { category: text(req.query.category, 40), area: text(req.query.area, 120) || null,
+  const i = await insights(db, { category: text(req.query.category, 40), area: text(req.query.area, 120) || null, item: text(req.query.item, 120) || null,
     unit: req.query.unit === undefined ? undefined : text(req.query.unit, 20) || null });
   if (!i) return { insights: null, lines: [] };
   const price = num(Number(req.query.price), 1, 1e12), limit = num(Number(req.query.limit), 1, 1e12);

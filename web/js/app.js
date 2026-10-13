@@ -3,7 +3,7 @@
 // screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
 // agents are doing (Requests) and what was shared (Activity).
 import { api, insightsLines, session, signIn } from "./api.js";
-import { chat, detectNano, engine, startDevice, drafts } from "./agent.js";
+import { chat, detectNano, engine, itemOf, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
 import { engagementCard, messageHTML } from "./cards.js";
@@ -211,7 +211,7 @@ function onEdit(e) {
       const n = Number(v);
       f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: 5 } : null;
       f.c.draft.need.maxPrice = n > 0 ? n : null;
-      if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null, unit: f.c.draft.need.unit })
+      if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null, unit: f.c.draft.need.unit, item: itemOf(f.c.draft) })
         .then(ls => { f.c.insights = ls; saveSession(f.s); paintContent(true); });
     }
   }
@@ -237,7 +237,7 @@ async function onClick(e) {
       busy(el, true);
       const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
       const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
-      const market = await insightsLines({ side: el.dataset.side, category: el.dataset.cat, area: el.dataset.area, price: el.dataset.price || null, unit: el.dataset.unit });
+      const market = await insightsLines({ side: el.dataset.side, category: el.dataset.cat, area: el.dataset.area, price: el.dataset.price || null, unit: el.dataset.unit, item: el.dataset.item || null });
       const confirmedBy = s => r.confirmedBy[s] === "mandate" ? "standing mandate" : "owner";
       const sig = s => (r.signatures[s] ? `${r.signatures[s].slice(0, 16)}…` : "—");
       box.innerHTML = `<div class="stack" style="gap:6px">
@@ -266,7 +266,7 @@ async function cardAction(a, el, { s, m, c }) {
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
     if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
-      c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit }); }
+      c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit, item: itemOf(r.draft) }); }
   }
   if (a === "brief-send") {
     busy(el, true, "Searching");

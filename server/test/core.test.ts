@@ -100,3 +100,15 @@ test("a general question is answered (never the canned fallback); finding seller
   assert.equal(RouteTask.validate({ intent: "request", tier: null, reply: "x", find: "Find more" }, input)!.find, null, "only questions offer a search");
   assert.equal(RouteTask.validate({ intent: "ask", tier: null, reply: "Sure.", find: "Call 98450 12345" }, input)!.find, null, "no contact details in a suggestion");
 });
+
+test("past deals in a broad category count only for the same kind of item", async () => {
+  const { DEALS, insights, sameItem } = await import("../src/core/deals.ts");
+  const db = memoryDocs();
+  const deal = (id: string, item: string, price: number) => db.set(DEALS, id, { id, engagementId: id, category: "goods", area: "Indiranagar, Bengaluru", unit: null, listPrice: price, dealPrice: price, discountPct: 0, rounds: 2, hours: 1, questions: 1, at: now, item });
+  for (const [i, p] of [[1, 4300], [2, 4100], [3, 4800]]) await deal(`p${i}`, "Used iPhone 11, 64 GB", p);
+  assert.ok(sameItem("Milton steel water bottle", "water bottle"));
+  assert.ok(!sameItem("Used iPhone 11", "water bottle"));
+  assert.equal(await insights(db, { category: "goods", item: "water bottle" }), null, "phone deals say nothing about bottles");
+  assert.equal(await insights(db, { category: "goods" }), null, "no item, nothing comparable");
+  assert.equal((await insights(db, { category: "goods", item: "iPhone 11" }))?.n, 3);
+});

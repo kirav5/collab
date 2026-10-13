@@ -57,7 +57,7 @@ test("a deal record carries no person and no limit", () => {
   e.phase = "agreed"; e.agreedAt = now();
   e.negotiation.deal = { id: "p1", price: 36_000, terms: {}, round: 2 }; // provider's delegated limit was 34,500
   const d = dealOf(e, now())!;
-  assert.deepEqual(Object.keys(d).sort(), ["area", "at", "category", "dealPrice", "discountPct", "engagementId", "hours", "id", "listPrice", "questions", "rounds", "unit"].sort());
+  assert.deepEqual(Object.keys(d).sort(), ["area", "at", "category", "dealPrice", "discountPct", "engagementId", "hours", "id", "item", "listPrice", "questions", "rounds", "unit"].sort());
   const s = JSON.stringify(d);
   assert.ok(!s.includes("amy") && !s.includes("bob") && !s.includes("Amy") && !s.includes("Bob") && !s.includes("34500"));
   const demo = dealOf({ ...e, provider: { ...e.provider, uid: "demo-bob" } }, now())!;

@@ -43,6 +43,9 @@ export async function think(question, notes, side = "self") {
   return r.action === "answer" ? { text: r.text ?? r.answer, evidence: r.evidence, on: "gemini" } : null;
 }
 
+/** What a request is for, for comparing with past deals ("water bottle", else the brief's title). */
+export const itemOf = draft => draft.need.attributes?.item ?? draft.shared.requirements.find(r => /^item$/i.test(r.label))?.value ?? draft.shared.title;
+
 // MARK: - Your chat
 
 export async function chat(text, recent, area) {
@@ -62,12 +65,12 @@ export async function chat(text, recent, area) {
     case "request": {
       const d = await api("/api/briefs/draft", { text, here: area });
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
-      const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit });
+      const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
       return { text: "Here's what your agent will ask for. Adjust it, then send.", cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
     }
     case "offer": {
       const d = await api("/api/offers/draft", { text, here: area });
-      const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period }) : [];
+      const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }) : [];
       return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, floor: d.floor ?? null, insights, step: "review" }] };
     }
     case "ask": {
