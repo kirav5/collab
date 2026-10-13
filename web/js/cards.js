@@ -21,8 +21,24 @@ export function renderCard(card, m, i) {
     case "sources": return sourcesCard(card);
     case "suggest": return `<div class="row">${card.options.map(o => `<button class="chip" data-act="send-text" data-text="${esc(o.text)}">↗ ${esc(o.label)}</button>`).join("")}<span class="small faint">Saved to your private context.</span></div>`;
     case "engagement": return engagementCard(live.engagements.get(card.id), card.id);
+    case "store": return storeCard(card);
     default: return "";
   }
+}
+
+// MARK: - A person's or shop's agent, opened from a QR code
+
+function storeCard(c) {
+  const p = c.profile, offers = c.facts.filter(f => f.offer), notes = c.facts.filter(f => !f.offer);
+  const quick = ["Is it in stock?", "What's the price?", "Can I order now and pick it up?"];
+  return `<div class="card">
+    <div class="row eng-head"><span class="avatar" aria-hidden="true">${esc(p.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(p.name)}</b><span class="small faint">@${esc(p.handle)}${p.bio ? ` · ${esc(p.bio)}` : ""}</span></div>
+      <button class="btn secondary compact end" data-act="add-contact-direct" data-handle="${esc(p.handle)}">Add to people</button></div>
+    ${offers.length ? `<div class="stack" style="gap:4px">${offers.slice(0, 5).map(f => `<div class="row small"><span>${esc(f.offer.title)}</span><b class="end">${money(f.offer.price.amount, f.offer.price.period)}</b></div>`).join("")}</div>` : ""}
+    ${!offers.length && notes.length ? `<span class="small muted">${esc(notes[0].text.slice(0, 160))}</span>` : ""}
+    <span class="small faint">Type below to ask their agent — it answers from what ${esc(p.name.split(" ")[0])} shares, and asks them anything else. No queue.</span>
+    <div class="row">${quick.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+  </div>`;
 }
 
 // MARK: - A request, shaped with Gemini
@@ -62,7 +78,9 @@ const autonomyPick = (c) => `<select class="field" data-edit="autonomy">
 function matchesCard(c, at) {
   const found = c.found ?? [];
   const real = found.filter(f => !f.over).length;
-  if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Your request is kept; try a wider area or fewer requirements.</p></div>`;
+  const watch = c.watching ? `<span class="small" style="color:var(--fresh)">● Your agent is watching — checks every hour for 14 days and tells you when someone new fits.</span>`
+    : `<button class="btn secondary compact" data-act="watch" ${at}>Keep watching</button>`;
+  if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Try a wider area or fewer requirements — or let your agent keep looking.</p><div class="row">${watch}</div></div>`;
   return `<div class="card" ${at}>
     <div class="row">${label(real ? `${real} ${real === 1 ? "match" : "matches"}` : "No exact match", "sq ink")}${c.rankedByModel && real ? `<span class="small faint">ranked by Gemini</span>` : ""}${found.length > real ? `<span class="small faint">· ${found.length - real} above your budget</span>` : ""}</div>
     ${found.map((f, j) => `<label class="match-row">
@@ -74,7 +92,7 @@ function matchesCard(c, at) {
         ${f.over ? `<span class="small" style="color:var(--stale)">Above your budget — ticking it lets your agent try to bring the price down.</span>` : ""}
         <span class="small faint">${[f.distanceKm ? `${f.distanceKm} km` : null, ...f.met.slice(0, 2).map(x => `✓ ${x}`), f.unknown.length ? `${f.unknown.length} to ask` : null].filter(Boolean).map(esc).join(" · ")}</span></span>
     </label>`).join("")}
-    <div class="row"><button class="btn accent" data-act="brief-engage" ${at}>Ask their agents</button><span class="small faint">Your limit and private notes are never shared.</span></div>
+    <div class="row"><button class="btn accent" data-act="brief-engage" ${at}>Ask their agents</button>${watch}<span class="small faint">Your limit and private notes are never shared.</span></div>
   </div>`;
 }
 

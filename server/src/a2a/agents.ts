@@ -19,6 +19,7 @@ import { FACTS, PROFILES } from "../core/policy.ts";
 import { byHandle } from "../core/directory.ts";
 import { type Turn, fresh, load, providerTurn, requesterTurn, save } from "../core/engage.ts";
 import { take, withLease } from "../core/limits.ts";
+import { pushTo } from "../core/push.ts";
 
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
@@ -162,6 +163,7 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
             ? { factId: offerFact.id, title: offerFact.offer.title, price: offerFact.offer.price.amount, unit: offerFact.offer.price.period ?? null, category: offerFact.offer.category }
             : { factId: offerFact?.owner === provider.uid ? offerFact.id : null, title: t.brief.title, price: null, unit: null, category: t.brief.category || null } });
         e.events.push({ at: Math.floor(Date.now() / 1000), who: "system", text: `${e.requester.name}'s agent sent a request over A2A.` });
+        void pushTo(provider.uid, `New request · ${e.title}`, `${e.requester.name}'s agent contacted yours.`, `/?engagement=${e.id}`);
       }
       e.taskId = ctx.taskId;
       e.contextId = ctx.contextId;

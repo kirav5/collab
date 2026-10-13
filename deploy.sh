@@ -36,7 +36,7 @@ for group in rate leases; do
 done
 
 # A new service account takes a few seconds to be usable in policies: retry until it is.
-for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer; do
+for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin; do
   for try in 1 2 3 4 5 6; do
     gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null 2>&1 && break
     [ "$try" = 6 ] && { echo "Couldn't grant $role to $SA"; exit 1; }
@@ -57,7 +57,16 @@ gcloud run deploy "$SERVICE" --quiet \
   --set-secrets "AGENT_SECRET=agent-secret:latest" \
   --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK"
 
-firebase deploy --project "$PROJECT" --only hosting,firestore
+firebase deploy --project "$PROJECT" --only hosting,firestore --non-interactive
+
+# Scheduled agents: Cloud Scheduler runs the due watches every 15 minutes (the token is derived from the agent secret).
+RUN_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)')"
+CRON_TOKEN="$(gcloud secrets versions access latest --secret=agent-secret | tr -d '\n' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(require("crypto").createHmac("sha256",s).update("collab-cron").digest("base64url")))')"
+if gcloud scheduler jobs describe collab-watches --location "$REGION" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http collab-watches --location "$REGION" --schedule "*/15 * * * *" --uri "$RUN_URL/cron/run" --http-method POST --update-headers "x-collab-cron=$CRON_TOKEN" --quiet >/dev/null
+else
+  gcloud scheduler jobs create http collab-watches --location "$REGION" --schedule "*/15 * * * *" --uri "$RUN_URL/cron/run" --http-method POST --headers "x-collab-cron=$CRON_TOKEN" --quiet >/dev/null
+fi
 
 echo
 echo "Web app:     $SITE"

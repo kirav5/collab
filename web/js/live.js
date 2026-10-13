@@ -4,8 +4,8 @@
 import { api, session } from "./api.js";
 import { toast } from "./ui.js";
 
-export const live = { engagements: new Map(), inbox: [], listeners: new Set(), started: false };
-const seen = { engagements: new Set(), inbox: new Set() };
+export const live = { engagements: new Map(), inbox: [], alerts: [], watches: [], listeners: new Set(), started: false };
+const seen = { engagements: new Set(), inbox: new Set(), alerts: new Set() };
 let first = true;
 
 export const onChange = fn => { live.listeners.add(fn); return () => live.listeners.delete(fn); };
@@ -38,10 +38,23 @@ function setInbox(items, openChat) {
   emit();
 }
 
+/** What scheduled agents found: someone new who fits a watched request. */
+function setAlerts(alerts, watches, openChat) {
+  live.alerts = alerts;
+  live.watches = watches;
+  for (const a of alerts) {
+    if (!first && !seen.alerts.has(a.id)) notify(`New match · ${a.title}`, a.text, () => openChat("requests"));
+    seen.alerts.add(a.id);
+  }
+  emit();
+}
+
 export async function refresh(openChat) {
-  const [es, inbox] = await Promise.all([api("/api/engagements").catch(() => null), api("/api/inbox").catch(() => null)]);
+  const [es, inbox, alerts, watches] = await Promise.all([api("/api/engagements").catch(() => null), api("/api/inbox").catch(() => null),
+    api("/api/alerts").catch(() => null), api("/api/watches").catch(() => null)]);
   if (es) setEngagements(es, openChat);
   if (inbox) setInbox(inbox, openChat);
+  if (alerts && watches) setAlerts(alerts, watches, openChat);
   first = false;
 }
 
@@ -64,4 +77,4 @@ export function start(openChat) {
   }
 }
 
-export const needsYou = () => live.inbox.filter(i => i.kind !== "move" || i.question);
+export const needsYou = () => [...live.inbox.filter(i => i.kind !== "move" || i.question), ...live.alerts];

@@ -18,6 +18,7 @@ import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem
 import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
+import { pushTo } from "./push.ts";
 import { clean } from "./wall.ts";
 
 export const ENGAGEMENTS = "engagements", INBOX = "inbox", LIMITS = "limits", AUDIT = "audit", CONTACTS = "contacts", ANSWERS = "answers";
@@ -77,6 +78,11 @@ const hasOwner = (e: Engagement, s: Side) => !!uidOf(e, s);
 async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" | "owner" | "engagementId" | "side" | "status" | "createdAt" | "title">): Promise<string> {
   const id = newId();
   await db.set(INBOX, id, { ...item, id, owner: uidOf(e, s)!, engagementId: e.id, side: s, status: "open", title: e.title, createdAt: now() } satisfies InboxItem);
+  // A move the device makes on its own needs no one's attention; everything else notifies the owner.
+  if (!(item.kind === "move" && !item.question)) {
+    const what = item.kind === "confirm" ? "Confirm the deal" : item.kind === "move" ? "No deal inside your limit yet" : item.kind === "approve" ? "Check an answer before it's shared" : "A question only you can answer";
+    void pushTo(uidOf(e, s)!, `Your agent needs you · ${e.title}`, what, `/?engagement=${e.id}`);
+  }
   e.waiting[s] = { kind: item.kind, inbox: [...(e.waiting[s]?.inbox ?? []), id], text: item.question ?? (item.kind === "move" ? "A negotiating move with your private limit" : "Confirm the deal") };
   return id;
 }

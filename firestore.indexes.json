@@ -16,6 +16,20 @@
           }
         }
       ]
+    },
+    {
+      "collectionGroup": "watches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nextRun",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

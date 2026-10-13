@@ -1,7 +1,10 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
 const FB = "https://www.gstatic.com/firebasejs/12.4.0";
-export const session = { uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null };
+export const session = { uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
+
+// The app works offline and installs as an app (PWA); the same service worker receives push notifications.
+export const worker = "serviceWorker" in navigator ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
 
 export async function signIn() {
   const hosted = await fetch("/__/firebase/init.json").then(r => (r.ok ? r.json() : null)).catch(() => null);
@@ -14,6 +17,19 @@ export async function signIn() {
     // two people — for trying both sides of a conversation.
     const as = new URLSearchParams(location.search).get("as")?.replace(/[^\w-]/g, "").slice(0, 24);
     const app = as ? initializeApp(config, `as-${as}`) : initializeApp(config);
+    session.app = app;
+    // Push: asks the browser once (on a tap), then registers this device's token with the server.
+    session.push = async () => {
+      const reg = await worker;
+      if (!reg || !("Notification" in window)) throw new Error("This browser can't show notifications.");
+      if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications are blocked for this site.");
+      const { getMessaging, getToken, onMessage } = await import(`${FB}/firebase-messaging.js`);
+      const messaging = getMessaging(app);
+      const token = await getToken(messaging, { serviceWorkerRegistration: reg });
+      await api("/api/push/token", { token });
+      onMessage(messaging, m => window.dispatchEvent(new CustomEvent("collab-push", { detail: m.notification ?? {} })));
+      return true;
+    };
     // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API.
     if (session.config.appCheckSiteKey) {
       try {

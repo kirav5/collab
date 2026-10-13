@@ -6,7 +6,7 @@ import { engine } from "./agent.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
-import { busy, esc, label, tag, tierTag, time } from "./ui.js";
+import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
 
@@ -58,7 +58,18 @@ export const screens = {
     async html(S) {
       const contacts = await api("/api/contacts").catch(() => []);
       const card = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
+      const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
+      let qr = "";
+      try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
       return frame("People", "Who you know", `
+        <div class="card qr-card">
+          <div class="qr" aria-label="Your QR code">${qr}</div>
+          <div class="stack" style="gap:6px">${label("Your QR code", "sq ink")}
+            <span class="small muted">Anyone who scans it with their phone camera talks to your agent — no app to install. Put it on your shop counter: customers ask about stock, prices and orders without waiting in the queue.</span>
+            <div class="row"><a class="btn secondary compact" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Download</a>
+              <button class="btn secondary compact" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
+              <button class="btn accent compact" data-act="scan">Scan a QR</button></div></div></div>
+        <div id="scanner"></div>
         <div class="card">${label("Your agent", "sq ink")}<b>${esc(S.profile.name)} <span class="faint">@${esc(S.profile.handle)}</span></b>
           <span class="small muted">Other people's agents — in this app or any A2A agent — reach yours at:</span>
           <code class="small" style="overflow-wrap:anywhere">${esc(card)}</code></div>
@@ -69,6 +80,8 @@ export const screens = {
           <div id="person-${esc(c.handle)}"></div></div>`).join("") || `<p class="muted">No contacts yet.</p>`}</div>`);
     },
     async act(a, el, S, h) {
+      if (a === "copy-link") { await navigator.clipboard.writeText(el.dataset.link).catch(() => {}); h.toast("Link copied."); return true; }
+      if (a === "scan") { await scan(h); return true; }
       if (a === "add-contact") { const handle = new FormData(el.closest("form")).get("handle"); busy(el, true); await api("/api/contacts", { handle: String(handle).replace(/^@/, "") }); h.paint(); return true; }
       if (a === "remove-contact") { await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
       if (a === "view-person") {
@@ -113,13 +126,36 @@ export const screens = {
   },
 
   requests: {
+    async act(a, el, S, h) {
+      if (a === "alert-ask") {
+        const al = live.alerts.find(x => x.id === el.dataset.id);
+        if (!al) return true;
+        busy(el, true, "Contacting");
+        const es = await api(`/api/briefs/${al.briefId}/engage`, { providers: [{ factId: al.factId }] });
+        await api(`/api/alerts/${al.id}/done`, {});
+        live.alerts = live.alerts.filter(x => x.id !== al.id);
+        for (const e of es) live.engagements.set(e.id, e);
+        h.toast(`Your agent is contacting ${al.name}'s agent.`);
+        h.paint(); return true;
+      }
+      if (a === "alert-done") { await api(`/api/alerts/${el.dataset.id}/done`, {}); live.alerts = live.alerts.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
+      if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
+    },
     async html() {
       const list = [...live.engagements.values()].sort((a, b) => {
         const need = e => (live.inbox.some(i => i.engagementId === e.id) ? 1 : 0);
         return need(b) - need(a) || b.updatedAt - a.updatedAt;
       });
       const incoming = list.filter(e => e.provider.uid === session.uid), outgoing = list.filter(e => e.provider.uid !== session.uid);
+      const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
       return frame("Requests", "What your agents are doing", `
+        ${live.alerts.length ? `${label(`New matches · ${live.alerts.length}`, "sq accent")}${live.alerts.map(a => `<div class="card slim needs-card">
+          <div class="row"><span class="avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(a.name)}</b><span class="small faint">fits “${esc(a.title)}” · found by your scheduled agent</span></div>${a.price ? `<span class="end"><b>${money(a.price, a.unit)}</b></span>` : ""}</div>
+          <span class="small muted">${esc(a.text)}</span>
+          <div class="row"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Dismiss</button></div></div>`).join("")}` : ""}
+        ${live.watches.length ? `${label(`Watching · ${live.watches.length}`, "sq")}${live.watches.map(w => `<div class="card slim"><div class="row"><span class="dot pulse" style="color:var(--fresh)"></span><b class="small">${esc(w.title)}</b>
+          <button class="btn quiet compact end" data-act="watch-stop" data-id="${esc(w.id)}">Stop</button></div>
+          <span class="small faint">Checks every ${w.every >= 60 ? `${w.every / 60} h` : `${w.every} min`} · ${w.runs ? `last ${when(w.lastRun)} · ` : ""}next ${when(w.nextRun)} · until ${new Date(w.expires * 1000).toLocaleDateString()}</span></div>`).join("")}` : ""}
         ${label(`Asked you · ${incoming.length}`, "sq")}${incoming.map(e => engagementCard(e, e.id)).join("") || `<p class="small muted">When someone's agent contacts yours, it shows up here — and notifies you when you're needed.</p>`}
         ${label(`You asked · ${outgoing.length}`, "sq")}${outgoing.map(e => engagementCard(e, e.id)).join("") || `<p class="small muted">Ask for something in chat: “Need a tabla teacher online”.</p>`}`);
     },
@@ -146,12 +182,19 @@ export const screens = {
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card">${label("Engine", "sq")}<dl class="kv"><dt>Your notes</dt><dd>${engine.nano ? "Gemini Nano, on this device (Chrome built-in AI)" : "Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
+        <div class="card">${label("Notifications", "sq")}<span class="small muted">When your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
+          ${"Notification" in window && Notification.permission === "granted" ? `<span class="small" style="color:var(--fresh)">● On for this device</span>` : `<button class="btn secondary compact" data-act="push-on">Turn on notifications</button>`}</div>
         <div class="card">${label("Account", "sq")}
           ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and context on other devices.</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
           <div class="row"><button class="btn danger compact" data-act="clear-device">Erase this device's chats</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
     },
     async act(a, el, S, h) {
       if (a === "save-profile") { const f = new FormData(el.closest("form")); busy(el, true); S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), bio: f.get("bio"), areaName: f.get("area") }); h.toast("Saved."); h.paint(); return true; }
+      if (a === "push-on") {
+        busy(el, true);
+        try { await session.push(); h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
       if (a === "google") { await session.google(); h.paint(); return true; }
       if (a === "clear-device") { if (confirm("Erase the chat history kept on this device? Your context and facts stay in your account.")) { await local.clear(); location.reload(); } return true; }
       if (a === "sign-out") { await session.signOut(); return true; }
@@ -160,4 +203,33 @@ export const screens = {
 };
 
 document.addEventListener("submit", e => { if (e.target.dataset.form) e.preventDefault(); });
+
+/** Scans a Collab QR code with the camera (where the browser can read codes); the phone camera works everywhere. */
+async function scan(h) {
+  const box = document.getElementById("scanner");
+  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+    h.toast("Use your phone's camera app to scan a Collab QR code — it opens the chat here.");
+    return;
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).catch(() => null);
+  if (!stream) return h.toast("Camera not available.");
+  box.innerHTML = `<div class="card"><video autoplay playsinline muted style="width:100%;max-height:320px;background:#000"></video><button class="btn quiet compact" id="scan-stop">Close</button></div>`;
+  const video = box.querySelector("video");
+  video.srcObject = stream;
+  const stop = () => { stream.getTracks().forEach(t => t.stop()); box.innerHTML = ""; };
+  box.querySelector("#scan-stop").onclick = stop;
+  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  for (let i = 0; i < 600 && box.contains(video); i++) {
+    const codes = await detector.detect(video).catch(() => []);
+    const raw = codes[0]?.rawValue;
+    if (raw) {
+      const to = (() => { try { return new URL(raw).searchParams.get("to"); } catch { return null; } })();
+      stop();
+      if (to) return h.openDirect(to);
+      return h.toast("That isn't a Collab QR code.");
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  stop();
+}
 export { time };

@@ -101,6 +101,7 @@ function paintTop() {
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
+  $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
   $("#composer-note").innerHTML = label(engine.nano ? "Private notes are read on this device (Gemini Nano)" : "Private notes are never shared · Gemini sees only what a request needs");
 }
 
@@ -151,6 +152,38 @@ function emptyChat() {
       <p class="small muted">Requests go agent-to-agent over A2A. Your agent never reveals your limit, and anything it can't answer from what you shared comes to you.</p></div>`;
 }
 
+// MARK: - Direct chats (QR codes and links)
+
+/** A chat with one person's or shop's agent, opened by scanning their QR code (or a /?to=handle link). */
+async function openDirect(handle) {
+  handle = String(handle).replace(/^@/, "").toLowerCase();
+  const p = await api(`/api/people/${encodeURIComponent(handle)}`).catch(() => null);
+  if (!p) return toast(`No one is called @${handle}.`);
+  if (p.profile.uid === session.uid) return toast("That's your own QR code.");
+  let cur = S.sessions.find(x => x.to === handle);
+  if (!cur) {
+    cur = { id: id(), title: `${p.profile.name} (@${handle})`, to: handle, toName: p.profile.name, updatedAt: now(),
+      messages: [{ id: id(), role: "agent", text: "", at: now(), cards: [{ type: "store", profile: p.profile, facts: p.facts }] }] };
+    await saveSession(cur);
+  }
+  S.current = cur.id;
+  openScreen("chat");
+}
+
+/** In a direct chat, what you type goes to their agent (the first message opens the conversation). */
+async function sendDirect(cur, text) {
+  const open = cur.engagementId ? live.engagements.get(cur.engagementId) : null;
+  const e = open && !["agreed", "closed", "declined"].includes(open.phase)
+    ? await api(`/api/engagements/${open.id}/ask`, { text })
+    : await api(`/api/people/${encodeURIComponent(cur.to)}/ask`, { text });
+  cur.engagementId = e.id;
+  live.engagements.set(e.id, e);
+  // One live card per conversation: it moves to the latest message.
+  for (const m of cur.messages) m.cards = (m.cards ?? []).filter(c => !(c.type === "engagement" && c.id === e.id));
+  run(e.id);
+  return { text: `Asked ${cur.toName ?? "their"}'s agent.`, cards: [{ type: "engagement", id: e.id }] };
+}
+
 // MARK: - Sessions
 
 async function saveSession(s) { s.updatedAt = now(); await local.put("sessions", s); S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)]; }
@@ -172,7 +205,7 @@ async function send(text) {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
     // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
     const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
-    const r = await chat(text, recent, S.profile.area, open);
+    const r = cur.to ? await sendDirect(cur, text) : await chat(text, recent, S.profile.area, open);
     Object.assign(reply, r, { pending: null, engine: r.cards?.some(c => c.on === "device") ? "Gemini Nano · on device" : "Gemini" });
   } catch (e) {
     Object.assign(reply, { pending: null, text: e.status === 429 ? e.message : `Something went wrong: ${e.message}` });
@@ -232,6 +265,7 @@ async function onClick(e) {
     if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text);
+    if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
     if (a.startsWith("inbox-")) return inboxAction(a, el);
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
     if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
@@ -250,7 +284,7 @@ async function onClick(e) {
           <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details></div>`;
       return;
     }
-    if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen })) return;
+    if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect })) return;
     const f = findCard(el);
     if (!f) return;
     await cardAction(a, el, f);
@@ -276,6 +310,14 @@ async function cardAction(a, el, { s, m, c }) {
     const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: c.autonomy ?? "ask", days: c.days ?? 7 } : null });
     // Real matches first (only the best one pre-ticked); sellers that fit but cost more than the limit come last, unticked.
     Object.assign(c, { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] });
+  }
+  if (a === "watch") {
+    // A scheduled agent for this request: it searches again every hour and alerts the owner (push, if allowed).
+    busy(el, true, "Starting");
+    await api("/api/watches", { briefId: c.briefId, seen: (c.found ?? []).map(f => f.fact.id), every: 60, days: 14 });
+    c.watching = true;
+    if (session.push && "Notification" in window && Notification.permission === "default") session.push().then(() => toast("Notifications on — you'll hear when someone new fits.")).catch(() => {});
+    await refresh(openScreen);
   }
   if (a === "brief-engage") {
     const picks = (c.picked ?? []).map(j => c.found[j]).filter(Boolean);
@@ -365,5 +407,12 @@ setOwner(session.uid);
 S.profile = await api("/api/me").catch(() => null);
 if (!S.profile) await setup();
 await boot();
+// Links from notifications, the installed app's shortcuts and QR codes open the right place.
+{
+  const qp = new URLSearchParams(location.search);
+  if (qp.get("to")) openDirect(qp.get("to"));
+  else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
+  else if (qp.get("alerts") || qp.get("screen") === "requests") openScreen("requests");
+}
 
 export { S, engagementCard };

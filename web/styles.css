@@ -183,3 +183,10 @@ details.more[open] { display: grid; gap: 10px; }
 .match-row:first-of-type { border-top: 0; }
 .match-main { display: grid; gap: 2px; min-width: 0; }
 .chart { display: grid; gap: 4px; }
+
+/* QR code */
+.qr-card { grid-template-columns: 132px 1fr; align-items: start; }
+.qr { width: 132px; height: 132px; background: #fff; padding: 4px; border-radius: 4px; }
+.qr svg { width: 100%; height: 100%; display: block; }
+@media (max-width: 520px) { .qr-card { grid-template-columns: 1fr; } }
+@media print { .sidebar, .topbar, .composer { display: none !important; } }

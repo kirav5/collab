@@ -4,7 +4,7 @@
 // (/api/think, /api/route) use it for one model call and keep nothing.
 //
 // STORE=memory and DEV_AUTH=1 run it with no Google project (tests, local development).
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { type Docs, firestoreDocs, memoryDocs } from "./docs.ts";
@@ -23,7 +23,7 @@ import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, resolve as resolveItem, save as saveEngagement } from "./core/engage.ts";
-import { forProvider, forRequester, insights, receipt, registerReceipt, stats, verifyReceipt } from "./core/deals.ts";
+import { forProvider, forRequester, insights, receipt, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
@@ -31,6 +31,8 @@ import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
 import { seedDemo } from "./demo.ts";
 import { log } from "./log.ts";
+import { initPush, pushTo, saveToken } from "./core/push.ts";
+import { ALERTS, type Alert, WATCHES, type Watch, runDue, startWatch } from "./core/watch.ts";
 
 // Local development reads server/.env (GEMINI_API_KEY=…); Cloud Run sets its environment itself.
 const envFile = new URL("../.env", import.meta.url);
@@ -58,8 +60,9 @@ async function verifyIdToken(token: string): Promise<string> {
   return verifier(token);
 }
 
-const cfg = { db, model, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: env.AGENT_SECRET ?? randomBytes(32).toString("hex"), verifyIdToken };
+const cfg = { db, model, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
+initPush(db, env.STORE !== "memory");
 
 // MARK: - Plumbing
 
@@ -202,6 +205,40 @@ app.get("/api/people/:handle", route(async req => {
   const facts = ((await db.find(FACTS, [["owner", "==", p.uid]], 200)) as Fact[]).filter(f => f.tier === "public").map(publicFact);
   return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: await stats(db, p.uid), facts, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
 }));
+// Direct: a QR code (or a link) opens a conversation with one person's or shop's agent — no search. Questions go over
+// A2A like any engagement; their agent answers from what they share and can quote, negotiate and close.
+app.post("/api/people/:handle/ask", route(async req => {
+  const me_ = await me(req.uid);
+  const p = await byHandle(db, String(req.params.handle));
+  if (!p) throw new HttpError(404, "no one by that handle");
+  if (p.uid === req.uid) throw new HttpError(400, "that's you");
+  await spend(req.uid, 2);
+  const t = text(req.body?.text, 600).trim();
+  if (t.length < 2) throw new HttpError(400, "Ask something.");
+  const facts = ((await db.find(FACTS, [["owner", "==", p.uid]], 100)) as Fact[]).filter(f => f.tier === "public");
+  const offers = facts.filter(f => f.offer);
+  const f = offers.find(o => sameItem(`${o.offer!.title} ${o.text}`, t)) ?? offers[0] ?? facts[0] ?? null;
+  const questions = (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
+  const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length ? questions : [t.slice(0, 160)] };
+  const e = fresh({ briefId: null, brief, requester: { uid: me_.uid, handle: me_.handle, name: me_.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
+    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: f?.id ?? null, title: f?.text.slice(0, 80) ?? p.name, price: null, unit: null, category: null } });
+  e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
+  e.events.push({ at: now(), who: "system", text: `You asked ${p.name}'s agent directly.` });
+  e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };
+  await saveEngagement(db, e);
+  return e;
+}));
+app.post("/api/engagements/:id/ask", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e.requester.uid !== req.uid) throw new HttpError(403, "only the person who asked can ask more");
+  if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended — start a new one.");
+  await spend(req.uid, 2);
+  const q = text(req.body?.text, 300).trim();
+  if (q.length < 2) throw new HttpError(400, "Ask something.");
+  await sendTurn(cfg, e.id, { kind: TURN, from: "requester", engagementId: e.id, questions: [{ id: Math.random().toString(36).slice(2, 12), question: q }] });
+  return load(db, e.id);
+}));
+
 app.get("/api/contacts", route(async req => db.find(CONTACTS, [["owner", "==", req.uid]], 300)));
 app.post("/api/contacts", route(async req => {
   const p = await byHandle(db, text(req.body?.handle, 40));
@@ -390,6 +427,29 @@ app.post("/api/briefs/:id/engage", route(async req => {
   return out;
 }));
 
+app.post("/api/push/token", route(async req => { const t = text(req.body?.token, 4096); if (t.length > 20) await saveToken(req.uid, t); return { ok: true }; }));
+
+// Scheduled agents: watch a request and alert the owner when someone new fits.
+app.post("/api/watches", route(async req => {
+  const b = req.body ?? {};
+  try { return await startWatch(db, req.uid, text(b.briefId, 40), Array.isArray(b.seen) ? b.seen.map((x: unknown) => text(x, 60)) : [], num(b.every, 15, 1440) ?? 60, num(b.days, 1, 60) ?? 14); }
+  catch (e) { throw new HttpError(404, (e as Error).message); }
+}));
+app.get("/api/watches", route(async req => ((await db.find(WATCHES, [["owner", "==", req.uid]], 100)) as Watch[]).filter(w => w.active).sort((a, b) => b.createdAt - a.createdAt)));
+app.post("/api/watches/:id/stop", route(async req => {
+  const w = (await db.get(WATCHES, String(req.params.id))) as Watch | null;
+  if (!w || w.owner !== req.uid) throw new HttpError(404, "not found");
+  await db.merge(WATCHES, w.id, { active: false });
+  return { ok: true };
+}));
+app.get("/api/alerts", route(async req => ((await db.find(ALERTS, [["owner", "==", req.uid]], 100)) as Alert[]).filter(a => a.status === "new").sort((a, b) => b.at - a.at)));
+app.post("/api/alerts/:id/done", route(async req => {
+  const a = (await db.get(ALERTS, String(req.params.id))) as Alert | null;
+  if (!a || a.owner !== req.uid) throw new HttpError(404, "not found");
+  await db.merge(ALERTS, a.id, { status: "done" });
+  return { ok: true };
+}));
+
 app.get("/api/engagements", route(async req => ((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 200)) as Engagement[]).sort((a, b) => b.updatedAt - a.updatedAt)));
 async function participant(uid: string, id: string): Promise<Engagement> {
   const e = await load(db, id).catch(() => null);
@@ -469,6 +529,22 @@ app.post("/api/inbox/:id", route(async req => {
   }
   return load(db, e.id);
 }));
+
+// Cloud Scheduler runs the due watches every 15 minutes. Outside /api (no App Check — it's not the web app);
+// it must carry the cron token derived from the agent secret.
+export const cronToken = (secret: string) => createHmac("sha256", secret).update("collab-cron").digest("base64url");
+app.post("/cron/run", async (req, res, next) => {
+  try {
+    const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
+    if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
+    const r = await runDue(db, model, async a => { await notifyAlert(a); });
+    log.info("cron", r);
+    res.json(r);
+  } catch (e) { next(e); }
+});
+
+/** Push for a new alert (Firebase Cloud Messaging); the app also shows alerts when opened. */
+async function notifyAlert(a: Alert) { await pushTo(a.owner, `New match: ${a.title}`, a.text, "/?alerts=1"); }
 
 // MARK: - Web app (local development and the Cloud Run URL itself; Firebase Hosting serves it in production)
 
