@@ -5,6 +5,7 @@
 import type { Model } from "./ai/gemini.ts";
 import type { Docs } from "./docs.ts";
 import { HANDLES } from "./core/directory.ts";
+import { DEALS, type Deal } from "./core/deals.ts";
 import { LIMITS } from "./core/engage.ts";
 import type { DelegatedLimit, Fact, Profile, Rule } from "./core/model.ts";
 import { FACTS, PROFILES, RULES } from "./core/policy.ts";
@@ -52,7 +53,19 @@ const PEOPLE: Person[] = [
       attributes: { skill: "spoken English", experience_years: "6", language: "English, Hindi", mode: "either" } } },
 ];
 
-const SEEDED = "demo-v1";
+// Anonymised past deals, so "what similar deals closed at" has data before anyone's real deal closes.
+// [category, area, unit, list price, deal price, days ago]
+const DEAL_SEED: [string, string, string, number, number, number][] = [
+  ["lessons", "Jayanagar", "hour", 800, 650, 2], ["lessons", "Jayanagar", "hour", 850, 700, 9], ["lessons", "Indiranagar", "hour", 900, 750, 16],
+  ["lessons", "Jayanagar", "hour", 800, 700, 23], ["lessons", "Indiranagar", "hour", 900, 800, 30], ["lessons", "Jayanagar", "hour", 850, 720, 41],
+  ["property-rent", "Indiranagar", "month", 36_000, 33_500, 5], ["property-rent", "Indiranagar", "month", 40_000, 37_000, 12],
+  ["property-rent", "Indiranagar", "month", 38_000, 36_000, 20], ["property-rent", "Indiranagar", "month", 36_500, 35_000, 33],
+  ["rides", "Koramangala", "ride", 1_100, 950, 4], ["rides", "Koramangala", "ride", 1_200, 1_050, 11], ["rides", "Koramangala", "ride", 1_150, 1_000, 19], ["rides", "Koramangala", "ride", 1_100, 1_100, 28],
+  ["food", "Whitefield", "order", 140, 120, 7], ["food", "Whitefield", "order", 140, 130, 15],
+  ["tasks", "HSR Layout", "assignment", 1_500, 1_200, 10], ["tasks", "HSR Layout", "visit", 500, 450, 22],
+];
+
+const SEEDED = "demo-v2";
 
 export async function seedDemo(db: Docs, model: Model | null, now: number) {
   if ((await db.get("meta", "demo"))?.version === SEEDED) return;
@@ -76,6 +89,12 @@ export async function seedDemo(db: Docs, model: Model | null, now: number) {
       await db.set(FACTS, `${uid}-p${i}`, { id: `${uid}-p${i}`, owner: uid, text: x.text, tier: "protected", topics: x.topics, offer: null, createdAt: now, updatedAt: now } satisfies Fact);
       await db.set(RULES, `${uid}-r${i}`, { id: `${uid}-r${i}`, owner: uid, audience: "anyone", audienceName: "Anyone who contacts my agent", topics: x.topics, shape: x.shape, approval: x.approval, expires: null, createdAt: now } satisfies Rule);
     }
+  }
+  for (const [i, [category, area, unit, listPrice, dealPrice, days]] of DEAL_SEED.entries()) {
+    const d: Deal = { id: `demo-deal-${i}`, engagementId: "demo", category, area, unit, listPrice, dealPrice,
+      discountPct: Math.round(((listPrice - dealPrice) / listPrice) * 1000) / 10, rounds: 2 + (i % 5), hours: Math.round((1 + ((i * 13) % 72)) * 10) / 10,
+      questions: 2 + (i % 4), at: now - days * 86_400, demo: true };
+    await db.set(DEALS, d.id, d);
   }
   await db.set("meta", "demo", { version: embeddingOk(model) ? SEEDED : "partial" });
   log.info("demo people seeded", { count: PEOPLE.length });

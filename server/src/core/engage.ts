@@ -12,9 +12,10 @@ import { decide } from "../ai/decide.ts";
 import { type Docs, docId } from "../docs.ts";
 import { AnswerTask, type Fact as AnswerFact, JudgeTask, offerFacts, savedKey } from "../market/answer.ts";
 import { catalog, domain as domainOf } from "../market/domains.ts";
-import { type Context, NegotiateTask, describe } from "../market/negotiate.ts";
+import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
 import { type Mandate, type Proposal, moneyText, newId } from "../market/types.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
+import { forProvider, forRequester, insights, recordDeal } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { clean } from "./wall.ts";
@@ -54,6 +55,7 @@ export async function load(db: Docs, id: string): Promise<Engagement> {
 
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
+  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); }
   await db.set(ENGAGEMENTS, e.id, e);
 }
 
@@ -62,10 +64,10 @@ const agentOf = (s: Side): Event["who"] => (s === "requester" ? "requester_agent
 const by = (m: boolean): Event["by"] => (m ? "gemini" : "rules");
 const uidOf = (e: Engagement, s: Side) => (s === "requester" ? e.requester.uid : e.provider.uid);
 
-async function limitFor(db: Docs, e: Engagement, s: Side): Promise<Mandate | null> {
+async function limitFor(db: Docs, e: Engagement, s: Side): Promise<DelegatedLimit | null> {
   const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
   const l = (await db.get(LIMITS, key)) as DelegatedLimit | null;
-  return l && l.owner === uidOf(e, s) ? l.mandate : null;
+  return l && l.owner === uidOf(e, s) && !(l.expires && l.expires < now()) ? l : null;
 }
 
 /** Whether a side has a device that can be asked (our users and demo people do; an outside A2A agent doesn't). */
@@ -195,13 +197,18 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
 }
 
 async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
-  const mandate = await limitFor(db, e, s);
-  if (mandate) {
-    const r = await move(model, e, s, mandate, out);
-    if (r?.escalate && hasOwner(e, s)) { await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined }); say(e, "system", s === "provider" ? "The provider's agent is checking with the provider." : "Your agent needs you: no deal inside your limit yet."); }
+  // What similar deals closed at, shown to the owner whenever they're asked for a move.
+  const hint = async () => {
+    const i = await insights(db, { category: e.offer.category ?? "", area: e.brief.area });
+    return i ? (s === "requester" ? forRequester(i, null, e.offer.price) : forProvider(i, e.offer.price)).join(" ") : undefined;
+  };
+  const l = await limitFor(db, e, s);
+  if (l) {
+    const r = await move(model, e, s, l.mandate, out);
+    if (r?.escalate && hasOwner(e, s)) { await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined, hint: await hint() }); say(e, "system", s === "provider" ? "The provider's agent is checking with the provider." : "Your agent needs you: no deal inside your limit yet."); }
     return;
   }
-  if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", listPrice: e.offer.price ?? undefined });
+  if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", listPrice: e.offer.price ?? undefined, hint: await hint() });
 }
 
 const myTurnToMove = (e: Engagement, s: Side) => {
@@ -270,9 +277,19 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
   if (pendingFor(e, s) || e.offer.price === null) return;
   if (e.phase === "deal") {
     if (!e.negotiation.confirmed[s]) {
-      const demo = s === "provider" && (await db.get(PROFILES, e.provider.uid))?.demo;
-      if (demo) { e.negotiation.confirmed.provider = true; out.confirm = true; say(e, "provider", "Confirmed.", "owner"); }
-      else if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" });
+      // A "close" mandate is the owner's confirmation given in advance, while the deal is inside its limit.
+      const l = await limitFor(db, e, s);
+      const deal = e.negotiation.deal;
+      if (l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate))) {
+        e.negotiation.confirmed[s] = true;
+        (e.negotiation.confirmedBy ??= {})[s] = "mandate";
+        out.confirm = true;
+        say(e, s, "Confirmed by a standing mandate (the owner pre-authorised deals inside their limit).", "rules");
+      } else {
+        const demo = s === "provider" && (await db.get(PROFILES, e.provider.uid))?.demo;
+        if (demo) { e.negotiation.confirmed.provider = true; out.confirm = true; say(e, "provider", "Confirmed.", "owner"); }
+        else if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" });
+      }
     }
     settle(e);
     return;
@@ -287,6 +304,7 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
 function settle(e: Engagement) {
   if (e.phase === "deal" && e.negotiation.confirmed.requester && e.negotiation.confirmed.provider) {
     e.phase = "agreed";
+    e.agreedAt = now();
     e.waiting = { requester: null, provider: null };
     say(e, "system", "Deal agreed by both owners.");
   }

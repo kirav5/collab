@@ -22,11 +22,12 @@ import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, resolve as resolveItem, save as saveEngagement } from "./core/engage.ts";
+import { forProvider, forRequester, insights, receipt, stats } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
-import { TURN, a2aRouter, deliverProviderTurn, sendTurn } from "./a2a/agents.ts";
+import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
 import { seedDemo } from "./demo.ts";
 import { log } from "./log.ts";
 
@@ -171,6 +172,14 @@ app.get("/health", route(async () => ({ ok: true, model: model?.status() ?? null
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
+app.get("/api/insights", route(async req => {
+  const i = await insights(db, { category: text(req.query.category, 40), area: text(req.query.area, 120) || null });
+  if (!i) return { insights: null, lines: [] };
+  const price = num(Number(req.query.price), 1, 1e12), limit = num(Number(req.query.limit), 1, 1e12);
+  const lines = req.query.side === "provider" ? forProvider(i, price) : forRequester(i, limit, price);
+  return { insights: i, lines };
+}));
+
 app.get("/api/places", route(async req => {
   const near = placeFrom({ lat: Number(req.query.lat), lon: Number(req.query.lon) });
   if (typeof req.query.q === "string") return suggest(text(req.query.q, 60), near);
@@ -189,7 +198,7 @@ app.get("/api/people/:handle", route(async req => {
   const p = await byHandle(db, String(req.params.handle));
   if (!p) throw new HttpError(404, "no one by that handle");
   const facts = ((await db.find(FACTS, [["owner", "==", p.uid]], 200)) as Fact[]).filter(f => f.tier === "public").map(publicFact);
-  return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, facts, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
+  return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: await stats(db, p.uid), facts, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
 }));
 app.get("/api/contacts", route(async req => db.find(CONTACTS, [["owner", "==", req.uid]], 300)));
 app.post("/api/contacts", route(async req => {
@@ -222,11 +231,14 @@ app.post("/api/facts/:id/limit", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
   if (!f || f.owner !== req.uid || !f.offer) throw new HttpError(404, "not found");
   const m = mandateFrom(req.body?.mandate);
-  if (m) await db.set(LIMITS, `fact:${f.id}`, { key: `fact:${f.id}`, owner: req.uid, mandate: { ...m, price: { opening: f.offer.price.amount, limit: Math.min(m.price.limit, f.offer.price.amount) } } });
-  else await db.delete(LIMITS, `fact:${f.id}`);
+  if (m) {
+    const days = num(req.body?.days, 1, 365);
+    await db.set(LIMITS, `fact:${f.id}`, { key: `fact:${f.id}`, owner: req.uid, mandate: { ...m, price: { opening: f.offer.price.amount, limit: Math.min(m.price.limit, f.offer.price.amount) } },
+      autonomy: req.body?.autonomy === "close" ? "close" : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() });
+  } else await db.delete(LIMITS, `fact:${f.id}`);
   return { delegated: !!m };
 }));
-app.get("/api/limits", route(async req => (await db.find(LIMITS, [["owner", "==", req.uid]], 200)).map((l: any) => ({ key: l.key, limit: l.mandate.price.limit }))));
+app.get("/api/limits", route(async req => (await db.find(LIMITS, [["owner", "==", req.uid]], 200)).map((l: any) => ({ key: l.key, limit: l.mandate.price.limit, autonomy: l.autonomy ?? "negotiate", expires: l.expires ?? null }))));
 app.post("/api/topics", route(async req => {
   await spend(req.uid);
   const existing = [...new Set(((await db.find(FACTS, [["owner", "==", req.uid]], 300)) as Fact[]).flatMap(f => f.topics))];
@@ -319,8 +331,10 @@ app.post("/api/briefs", route(async req => {
   await spend(req.uid, 2);
   const need = needFrom(req.body?.need);
   const b = await saveBrief(db, req.uid, need, sharedFrom(req.body?.shared, need), now());
-  const m = mandateFrom(req.body?.delegate);
-  if (m) await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m });
+  const del = req.body?.delegate;
+  const m = mandateFrom(del?.mandate ?? del);
+  if (m) { const days = num(del?.days, 1, 365);
+    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: del?.autonomy === "close" ? "close" : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() }); }
   return { brief: b, ...(await search(db, model, b, req.uid)) };
 }));
 app.post("/api/briefs/:id/engage", route(async req => {
@@ -355,6 +369,20 @@ app.post("/api/engagements/:id/run", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (e.requester.uid === req.uid && e.outbox) { await spend(req.uid, 2); await sendTurn(cfg, e.id, null); }
   return load(db, e.id);
+}));
+app.get("/api/engagements/:id/receipt", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const r = receipt(e, (uid, hash) => signReceipt(cfg.secret, uid, hash));
+  if (!r) throw new HttpError(404, "no deal yet");
+  return r;
+}));
+app.post("/api/engagements/:id/outcome", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e.phase !== "agreed") throw new HttpError(400, "no deal yet");
+  const side = e.requester.uid === req.uid ? "requester" : "provider";
+  (e.outcome ??= {})[side] = req.body?.happened ? "happened" : "fell_through";
+  await saveEngagement(db, e);
+  return e;
 }));
 app.post("/api/engagements/:id/close", route(async req => {
   const e = await participant(req.uid, String(req.params.id));

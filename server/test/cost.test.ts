@@ -35,7 +35,7 @@ test("the meter counts calls, failures, tokens and cost per task and model", () 
   assert.equal(s.byTask.x.calls, 2);
   assert.equal(s.byTask.y.calls, 1);
   assert.deepEqual(s.byModel, { "gemini-3.5-flash-lite": 2, "gemini-3.6-flash": 1 });
-  assert.ok(Math.abs(s.costUSD - (2000 * 0.10 + 300 * 0.40 + 2000 * 0.30 + 200 * 2.50) / 1e6) < 1e-9);
+  assert.ok(Math.abs(s.costUSD - (2000 * 0.30 + 300 * 2.50 + 2000 * 0.75 + 200 * 3.75) / 1e6) < 1e-9);
   const p = new Meter("lite=1/2");
   p.record({ task: "x", model: "gemini-3.5-flash-lite", ms: 1, usage: { input: 1000, output: 100, thinking: 50 }, ok: true });
   assert.ok(Math.abs(p.status().costUSD - (1000 + 300) / 1e6) < 1e-9);

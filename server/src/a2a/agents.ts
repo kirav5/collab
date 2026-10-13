@@ -31,6 +31,9 @@ export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; s
  *  token; anything else is an unnamed outside agent. */
 export const agentToken = (secret: string, uid: string) => `agent:${uid}.${createHmac("sha256", secret).update(uid).digest("base64url")}`;
 
+/** An owner's signature over a deal receipt's hash. */
+export const signReceipt = (secret: string, uid: string, hash: string) => createHmac("sha256", secret).update(`${uid}:${hash}`).digest("base64url");
+
 function agentUid(secret: string, token: string): string | null {
   const m = token.match(/^agent:([^.]+)\.(.+)$/);
   if (!m) return null;
@@ -77,7 +80,10 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     version: "1.0.0",
     supportedInterfaces: [{ url: `${cfg.publicUrl}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
     provider: { organization: "Collab Market", url: cfg.publicUrl },
-    capabilities: { streaming: false, pushNotifications: false },
+    capabilities: { streaming: false, pushNotifications: false,
+      extensions: [{ uri: "https://github.com/google-agentic-commerce/AP2/tree/v0.1",
+        description: "Agentic Payments Protocol roles: merchant (this agent's Public offerings) and shopper (requests it sends). Mandates are negotiated here; payment happens between the owners for now.",
+        required: false, params: { roles: ["merchant", "shopper"] } }] },
     securitySchemes: { firebase: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Firebase ID token", description: "Optional. Without it you're a stranger: Public facts only." } } },
     defaultInputModes: ["text/plain", "application/json"],
     defaultOutputModes: ["text/plain", "application/json"],

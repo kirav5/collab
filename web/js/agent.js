@@ -5,7 +5,7 @@
 //
 // Model calls over private notes use Gemini Nano in the browser when Chrome has it; otherwise Gemini through the
 // server for that one call, which stores and logs nothing.
-import { api, session } from "./api.js";
+import { api, insightsLines, session } from "./api.js";
 import { local, relevant } from "./local.js";
 import { live, onChange, poke } from "./live.js";
 import { id, now } from "./ui.js";
@@ -64,11 +64,13 @@ export async function chat(text, recent, area) {
     case "request": {
       const d = await api("/api/briefs/draft", { text, here: area });
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
-      return { text: "Here's what your agent will ask for. Adjust it, then send.", cards: [{ type: "brief", text, draft: d.draft, step: "review" }] };
+      const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name });
+      return { text: "Here's what your agent will ask for. Adjust it, then send.", cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
     }
     case "offer": {
       const d = await api("/api/offers/draft", { text, here: area });
-      return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, floor: d.floor ?? null, step: "review" }] };
+      const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount }) : [];
+      return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, floor: d.floor ?? null, insights, step: "review" }] };
     }
     default:
       return { text: route.reply ?? "I can remember things for you, answer from your notes, find people for anything you need, or publish what you offer.", cards: [] };

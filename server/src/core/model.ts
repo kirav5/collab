@@ -113,8 +113,17 @@ export interface Engagement {
   qa: QA[];
   /** The provider asked its questions already (requirement gathering happens once). */
   gathered: boolean;
-  negotiation: { requester: Proposal[]; provider: Proposal[]; deal: Proposal | null; dealBy: Side | null; confirmed: { requester: boolean; provider: boolean } };
+  negotiation: { requester: Proposal[]; provider: Proposal[]; deal: Proposal | null; dealBy: Side | null;
+    confirmed: { requester: boolean; provider: boolean };
+    /** Who confirmed: the owner on their device, or their standing mandate inside its limit. */
+    confirmedBy?: Partial<Record<Side, "owner" | "mandate">> };
   events: Event[];
+  /** When both owners confirmed (for the receipt). */
+  agreedAt?: number;
+  /** The anonymised deal record is written (once) to `deals`. */
+  dealRecorded?: boolean;
+  /** What each side later said became of the deal. */
+  outcome?: Partial<Record<Side, "happened" | "fell_through">>;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
   createdAt: number;
@@ -135,6 +144,8 @@ export interface InboxItem {
   draft?: string;
   /** move: the listed price the negotiation is about. */
   listPrice?: number;
+  /** move: what similar deals closed at (market data, shown to the owner). */
+  hint?: string;
   title: string;
   /** "working": claimed by one device while it's being resolved. */
   status: "open" | "working" | "done";
@@ -142,7 +153,13 @@ export interface InboxItem {
 }
 
 /** A limit the owner chose to hand to their always-on agent, so it can negotiate while they're away. */
-export interface DelegatedLimit { key: string; owner: string; mandate: Mandate }
+export interface DelegatedLimit {
+  key: string; owner: string; mandate: Mandate;
+  /** "negotiate" (default): agent moves inside the limit, owner confirms. "close": the delegation is the confirmation. */
+  autonomy?: "negotiate" | "close";
+  expires?: number | null;
+  createdAt?: number;
+}
 
 export interface Audit { id: string; owner: string; at: number; to: string; question: string; answer: string; tier: "public" | "protected"; rule: string | null }
 

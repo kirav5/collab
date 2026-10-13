@@ -10,7 +10,8 @@ export function priceFor(model: string, prices?: string): [number, number] {
     const m = part.match(/^\s*([^=]+?)\s*=\s*([\d.]+)\s*\/\s*([\d.]+)\s*$/);
     if (m && model.includes(m[1])) return [Number(m[2]), Number(m[3])];
   }
-  return model.includes("lite") ? [0.10, 0.40] : [0.30, 2.50];
+  // ai.google.dev/gemini-api/docs/pricing: Flash-Lite 3.5 $0.30/$2.50; Flash 3.6/3.8 $0.75/$3.75 (promo to end of 2026).
+  return model.includes("lite") ? [0.30, 2.50] : [0.75, 3.75];
 }
 
 export class Meter {

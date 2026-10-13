@@ -3,8 +3,7 @@
 Read [PRD.md](PRD.md) first for what and why. This file is what exists, how it works, how to run/test/deploy it, what
 is known to be wrong, and what to do next.
 
-**Nothing is committed yet** (git repo initialised, all files untracked). The hackathon needs a **public GitHub repo**;
-`gh` is logged in as `feynon` on this Mac. CI (`.github/workflows/ci.yml`) starts running on the first push.
+Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflows/ci.yml` (`npm run check`).
 
 ---
 
@@ -21,7 +20,7 @@ is known to be wrong, and what to do next.
 | Secret | Secret Manager `agent-secret` (HMAC key our agents sign A2A calls with); local copy `.deploy/agent-secret` (git-ignored) |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 23/23 pass (`npm run check` = `tsc --strict` + `node --test`) |
+| Tests | 30/30 pass (`npm run check` = `tsc --strict` + `node --test`) |
 | Size | ~5.7k lines: server ~3.3k TS, web ~1.2k JS/CSS |
 
 ## 2. What was done (chronologically)
@@ -49,6 +48,11 @@ is known to be wrong, and what to do next.
    strict TypeScript + CI; Secret Manager; structured logs + Error Reporting; uptime alert; App Check (enforced) and
    A2A per-IP / new-conversation limits.
 8. **Cost**: token metering, a cheap model tier, cached listing answers and settled moves that skip the model — §7.
+9. **Market data + marketplace practices** (after a landscape review of Facebook Marketplace AI, OLX, Faktorist,
+   Arcoa/Chowdr/Haggle, Google AP2): anonymised deal records → "what similar deals closed at" for both sides (no
+   model call); mandates with an autonomy level (negotiate / negotiate-and-close) and expiry; signed deal receipts;
+   outcomes → a public track record; AP2 roles declared on the agent card. Meter prices corrected to the published
+   Gemini rates.
 
 ## 3. Architecture
 
@@ -76,6 +80,8 @@ server/src/
   core/engage.ts       THE ENGINE. Turn type; providerTurn / requesterTurn; answerOpen (policy → AnswerTask → shape →
                        wall → audit, else inbox); GatherTask once; judge; moveOrAsk/move (NegotiateTask); confirm/settle;
                        resolve() for device inbox items; fresh() builds an engagement
+  core/deals.ts        Deal records (anonymised, written once on "agreed"), insights() medians per category/area,
+                       forRequester/forProvider lines, receipt() (sha256 + per-owner HMAC), stats() track record
   core/policy.ts       allowedFor(owner, asker): Public + Protected via active rules (deny by default); shapeAnswer
   core/directory.ts    saveProfile/handles, saveFact (topics, offer reading, embedding), search()
   core/briefs.ts       draft() (read + SharedBriefTask + ClarifyTask), share(), saveBrief() (band only, no raw text)
@@ -97,7 +103,9 @@ server/src/
   log.ts               JSON logs (severity), Error Reporting shape
 server/test/           core.test.ts (policy, wall, brief), market.test.ts (guards, grounding, matching),
                        cost.test.ts (meter, tiers, settled moves, answer cache, fact reuse),
-                       e2e.test.ts (spawns the server: two people over A2A, outside stranger agent, hostile listing)
+                       deals.test.ts (insights thresholds, deal record has no uid/name/limit, receipt hash stable,
+                       expired mandate, close mandate confirms), e2e.test.ts (spawns the server: two people over A2A,
+                       outside stranger agent, hostile listing, AP2 card + receipt + insights + outcome)
 web/
   index.html, styles.css   Collab theme (near-black, hairlines, mono labels, square controls, #2D5BFF, periwinkle = on device)
   js/app.js            Boot (sign-in → setup → layout), sidebar, chat sessions, paint loop (diff-skips), card actions,
@@ -127,12 +135,13 @@ firebase.json, firestore.rules, firestore.indexes.json, Dockerfile, .github/work
 | `briefs/{id}` | owner, shared brief, banded need (no raw text, no exact limit) | server |
 | `engagements/{id}` | both parties, brief, offer, phase, waiting{requester,provider}, qa, negotiation, events, outbox | **participants (rules)** |
 | `inbox/{id}` | owner, engagementId, side, kind, question/draft, status open/working/done | **owner (rules)** |
-| `limits/{fact:<id> \| brief:<id>}` | delegated mandates only | server |
+| `limits/{fact:<id> \| brief:<id>}` | delegated mandates only, with `autonomy` (negotiate/close) and `expires` | server |
+| `deals/{deal-<engagementId>}` | anonymised agreed deal: category, area, unit, list/deal price, discount %, rounds, hours, questions, demo? — no uid, name or limit | server |
 | `a2a_tasks/{taskId}` | caller, task JSON | server |
 | `audit/{id}` | what the cloud agent shared, to whom, tier | server |
 | `answers/{factId:question}` | answers a provider's agent gave from an offering, reused for the same question | server |
 | `rate/*`, `leases/*` | TTL `expireAt` | server |
-| `meta/demo` | `{version:"demo-v1"}` — bump `SEEDED` in demo.ts to re-seed | server |
+| `meta/demo` | `{version:"demo-v2"}` — bump `SEEDED` in demo.ts to re-seed (v2 adds 18 labelled demo deals) | server |
 
 Private facts and non-delegated limits exist **only** in the browser (IndexedDB `collab` → stores `facts`, `sessions`,
 `limits`, keyed `<uid>:<id>`).
@@ -175,7 +184,26 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
   arithmetic and skip the model; listing answers cached per (offering, question) in `answers`, served only while
   the offering is Public and the owner isn't paused, cleared on edit/tier change/delete; re-drafts after a
   clarifying answer pass the category and skip classification; re-saving an unchanged Public fact skips the
-  reader and the embedding.
+  reader and the embedding. Default meter prices follow ai.google.dev/gemini-api/docs/pricing (Flash-Lite 3.5
+  $0.30/$2.50, Flash 3.6/3.8 $0.75/$3.75 promo to end-2026); `minimal` thinking errors on 3.8 Flash and is retried
+  without it per model.
+- **No free server-side model**: Gemma on the Gemini API is evaluation-only (free-tier limits, no paid tier); self-hosted
+  Gemma on Cloud Run GPU only beats the token API at steady high volume. The structural saving is device-side
+  (Gemini Nano / Gemma in the browser, PRD R1), which is also the privacy story.
+- **Market insights are deterministic** (`core/deals.ts`): medians/quartiles over ≥3 anonymised deals, area scope
+  when ≥3 in the area, else category; shown while drafting a request (next to the private limit, re-fetched when
+  it changes), while drafting an offering (vs. the asking price), on "no deal inside your limit" items (`hint`),
+  and on the agreed card. Zero Gemini calls. Demo deals are labelled "(from demo deals)" until real ones exist.
+- **Mandate autonomy** (Faktorist-style): `negotiate` = agent moves inside the limit, owner confirms (default);
+  `close` = the delegation is the owner's confirmation given in advance — `afterAnswers` confirms when the deal is
+  `acceptable()` under the mandate and records `confirmedBy[side]="mandate"`. Mandates expire (1/7/30 days;
+  `limitFor` ignores expired ones).
+- **Deal receipt**: sha256 over `{engagementId, taskId, terms, parties, at}` + per-owner HMAC (`signReceipt`, same
+  secret as agent tokens); computed on request (`GET /api/engagements/:id/receipt`), nothing extra stored. Carries
+  handles and the agreed price only — never a limit.
+- **Track record**: each side can mark an agreed deal "went ahead" / "fell through"; `stats()` counts what the
+  *other* side said; shown on matches and public profiles.
+- **AP2**: the agent card declares the AP2 extension (roles merchant/shopper, `required:false`) — no payment flow yet.
 
 ## 8. Verification evidence
 
@@ -205,15 +233,18 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 7. **First vector/embedding call after a cold start** can take several seconds.
 8. **Agent turns run inside requests** (bounded, with outbox) — move to Cloud Tasks (PRD R7).
 9. **Firestore reads per question**: `allowedFor` loads up to 500 facts of the owner; `inboxFor` scans the user's
-   engagements for demo items (N+1). Fine for a pilot.
+   engagements for demo items (N+1); `search()` runs `stats()` per found provider (N+1). Fine for a pilot.
+13. **Receipt signatures** are HMACs with the server secret, so they prove "Collab recorded this", not independent
+    owner keys; `deals.ts` ↔ `engage.ts` is an ESM import cycle (safe: all uses are inside functions).
+14. `GET /api/insights` has no spend charge (no model call) but is unthrottled beyond App Check.
 10. Local IndexedDB is unencrypted; a browser = a device (no sync of Private data).
 11. The deployed site's old tabs (pre-App-Check JS) get 401s until reloaded.
 12. `firebase deploy` used to prompt about TTL field overrides; now declared in `firestore.indexes.json`.
 
 ## 10. Next tasks (in order)
 
-1. **Commit and publish the repo** (public, e.g. `feynon/collab-market`): `git add -A && git commit` (check `.env`
-   and `.deploy/` are ignored), `gh repo create … --public --source . --push`; confirm CI goes green.
+1. **Deploy** (`APPCHECK=enforce ./deploy.sh`) — the demo re-seeds (`demo-v2`); check `/health → model.byModel`
+   shows Flash-Lite answering the cheap tasks, and that `/api/insights?category=lessons` returns demo lines.
 2. **Hackathon deliverables** (deadline 18 Oct): deck on the organisers' template (dashboard), < 3 min video (script:
    setup → request with Gemini questions → matches → live A2A card → needs-you → automatic negotiation → deal; the
    provider's side in a second browser; the hostile listing; the agent card URL), submission text from

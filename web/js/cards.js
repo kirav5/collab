@@ -47,11 +47,18 @@ function briefCard(c, at) {
       ${label("Most you'll pay · private, stays on this device", "peri")}
       <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-edit="limit" value="${d.mandate?.price.limit ?? ""}" placeholder="optional">
       <span class="small muted">${s.budget ? `Providers see only “${esc(s.budget)}”.` : "Providers see no budget."}</span></div>
-      <label class="small muted"><input type="checkbox" data-edit="delegate" ${c.delegate ? "checked" : ""}> Let my always-on agent negotiate while I'm away (hands it this limit)</label>
+      ${autonomyPick(c)}
     </div>
+    ${c.insights?.length ? `<div class="card peri slim">${label("What similar deals closed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}
     <div class="row"><button class="btn accent" data-act="brief-send" ${at}>Find people</button><span class="small faint">Nothing is sent until you choose who.</span></div>
   </div>`;
 }
+
+const autonomyPick = (c) => `<select class="field" data-edit="autonomy">
+    <option value="" ${!c.autonomy ? "selected" : ""}>Ask me for every move (limit stays on this device)</option>
+    <option value="negotiate" ${c.autonomy === "negotiate" ? "selected" : ""}>My always-on agent negotiates inside my limit; I confirm the deal</option>
+    <option value="close" ${c.autonomy === "close" ? "selected" : ""}>My always-on agent negotiates and closes inside my limit</option></select>
+  ${c.autonomy ? `<select class="field" data-edit="days" style="max-width:110px">${[1, 7, 30].map(n => `<option value="${n}" ${(c.days ?? 7) === n ? "selected" : ""}>${n} days</option>`).join("")}</select>` : ""}`;
 
 function matchesCard(c, at) {
   const found = c.found ?? [];
@@ -60,7 +67,7 @@ function matchesCard(c, at) {
     <div class="row">${label(`${found.length} ${found.length === 1 ? "person" : "people"} whose public offering fits`, "sq ink")}${c.rankedByModel ? tag("✦ Ranked by Gemini", "accent") : ""}</div>
     ${found.map((f, j) => `<label class="card slim" style="cursor:pointer">
       <div class="row"><input type="checkbox" data-pick="${j}" ${c.picked?.includes(j) ? "checked" : ""} ${at}>
-        <b>${esc(f.profile.name)}</b><span class="faint small">@${esc(f.profile.handle)}</span>${f.profile.demo ? tag("demo") : ""}
+        <b>${esc(f.profile.name)}</b><span class="faint small">@${esc(f.profile.handle)}</span>${f.profile.demo ? tag("demo") : ""}${f.profile.stats?.deals ? tag(`${f.profile.stats.deals} deal${f.profile.stats.deals === 1 ? "" : "s"} · ${f.profile.stats.kept} went ahead`, "fresh") : ""}
         <span class="end">${f.fact.offer ? `<b>${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</b>` : ""}</span></div>
       <span class="small">${esc(f.fact.offer?.title ?? f.fact.text.slice(0, 120))}</span>
       ${f.why ? `<span class="small" style="color:var(--accent)">✦ ${esc(f.why)}</span>` : ""}
@@ -73,7 +80,7 @@ function matchesCard(c, at) {
 // MARK: - An offering
 
 function offerCard(c, at) {
-  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Anyone's agent can find this now. Your agent answers from it and from what your rules share; your floor${c.floor ? ` (${money(c.floor)})` : ""} stays ${c.delegate ? "with your always-on agent" : "on this device"}.</p></div>`;
+  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Anyone's agent can find this now. Your agent answers from it and from what your rules share; your floor${c.floor ? ` (${money(c.floor)})` : ""} stays ${c.autonomy === "close" ? `with your always-on agent (negotiates and closes, ${c.days ?? 7} days)` : c.autonomy ? "with your always-on agent (negotiates; you confirm)" : "on this device"}.</p></div>`;
   const o = c.offer;
   return `<div class="card" ${at}>
     <div class="row">${label("Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
@@ -83,7 +90,8 @@ function offerCard(c, at) {
     <textarea class="field" data-edit="publicText" rows="3">${esc(c.publicText ?? c.text)}</textarea>
     ${o ? `${label("Lowest you'll accept · private, stays on this device", "peri")}
       <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-edit="floor" value="${c.floor ?? o.price.amount}"></div>
-      <label class="small muted"><input type="checkbox" data-edit="delegate" ${c.delegate ? "checked" : ""}> Let my always-on agent negotiate while I'm away (hands it this floor)</label>` : ""}
+      ${autonomyPick(c)}
+      ${c.insights?.length ? `<div class="card peri slim">${label("What similar listings agreed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}` : ""}
     <div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><span class="small faint">Public: discoverable by anyone's agent.</span></div>
   </div>`;
 }
@@ -140,7 +148,10 @@ export function engagementCard(e, id) {
     ${talking ? `<span class="thinking small"><span class="spinner"></span><span class="faint">agents are talking…</span></span>` : ""}
     ${items.map(inboxBlock).join("")}
     ${!items.length && waitingOther ? `<p class="small faint">Waiting for ${esc(them.name)}${waitingOther.kind === "confirm" ? " to confirm" : ""}…</p>` : ""}
-    ${e.phase === "agreed" && e.negotiation.deal ? `<div class="card slim" style="border-color:var(--fresh)">${label("Deal agreed", "fresh")}<b>${money(e.negotiation.deal.price, e.offer.unit)}</b><span class="small muted">Both owners confirmed. Arrange the details directly — nothing private was shared by the agents.</span></div>` : ""}
+    ${e.phase === "agreed" && e.negotiation.deal ? `<div class="card slim" style="border-color:var(--fresh)">${label("Deal agreed", "fresh")}<b>${money(e.negotiation.deal.price, e.offer.unit)}</b><span class="small muted">Both owners confirmed. Arrange the details directly — nothing private was shared by the agents.</span>
+      ${e.outcome?.[mine] ? `<span class="small faint">You marked: ${e.outcome[mine] === "happened" ? "went ahead" : "fell through"}.</span>` : `<div class="row"><button class="btn compact" data-act="eng-outcome" data-id="${esc(e.id)}" data-happened="1">It went ahead</button><button class="btn quiet compact" data-act="eng-outcome" data-id="${esc(e.id)}" data-happened="0">It fell through</button></div>`}
+      <details><summary class="label" style="cursor:pointer">Deal receipt · signed by both agents</summary>
+        <div class="stack" style="margin-top:8px" data-receipt="${esc(e.id)}"><button class="btn quiet compact" data-act="eng-receipt" data-id="${esc(e.id)}" data-side="${mine}" data-cat="${esc(e.offer.category ?? "")}" data-area="${esc(e.brief.area ?? "")}" data-price="${e.offer.price ?? ""}">Show receipt</button></div></details></div>` : ""}
     ${["asking", "negotiating", "deal"].includes(e.phase) ? `<div class="row"><button class="btn quiet compact end" data-act="eng-close" data-id="${esc(e.id)}">End conversation</button></div>` : ""}
   </div>`;
 }
@@ -170,6 +181,7 @@ function inboxBlock(i) {
     <div class="row"><button class="btn accent compact" data-act="inbox-approve" data-id="${esc(i.id)}">Share</button><button class="btn secondary compact" data-act="inbox-decline" data-id="${esc(i.id)}">Don't share</button></div>`);
   if (i.kind === "move" && !i.question && !demo && !needsLimit.has(i.id)) return `<span class="thinking small"><span class="spinner"></span><span class="faint">Your agent is making a move with your private limit (on this device)…</span></span>`;
   if (i.kind === "move") return box(i.question ? "No deal inside your limit yet" : "Your agent needs your limit", `${i.question ? `<span class="small">${esc(i.question)}</span>` : `<span class="small">Set the most you'll pay (or least you'll take). It stays on this device; your agent uses it for each move.</span>`}
+    ${i.hint ? `<span class="small faint">${esc(i.hint)}</span>` : ""}
     <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-limit="${esc(i.id)}" placeholder="${i.listPrice ? money(i.listPrice) : "amount"}">
     <button class="btn accent compact" data-act="inbox-move" data-id="${esc(i.id)}">Keep negotiating</button><button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`);
   if (i.kind === "confirm") {

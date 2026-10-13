@@ -1,0 +1,118 @@
+// What the market learns from agreed deals. A Deal is anonymised — no uid, name, or private limit ever enters it —
+// so the medians can be shown to anyone asking for the same category and area. Receipts give both sides a signed
+// record of what their agents agreed; the hash covers the engagement, the terms and the parties' handles, nothing else.
+import { createHash } from "node:crypto";
+import type { Docs } from "../docs.ts";
+import { moneyText } from "../market/types.ts";
+import type { Engagement, Side } from "./model.ts";
+import { ENGAGEMENTS } from "./engage.ts";
+
+export const DEALS = "deals";
+
+/** Anonymised record of one agreed deal: what the market can learn from it. No people, no limits. */
+export interface Deal {
+  id: string; engagementId: string; category: string; area: string | null; unit: string | null;
+  listPrice: number; dealPrice: number; discountPct: number; rounds: number; hours: number; questions: number; at: number; demo?: boolean;
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+export function dealOf(e: Engagement, now: number): Deal | null {
+  if (e.phase !== "agreed" || !e.negotiation.deal || !e.offer.price || !e.offer.category) return null;
+  const list = e.offer.price, deal = e.negotiation.deal.price;
+  return { id: `deal-${e.id}`, engagementId: e.id, category: e.offer.category, area: e.brief.area ?? null, unit: e.offer.unit,
+    listPrice: list, dealPrice: deal, discountPct: round1(((list - deal) / list) * 100),
+    rounds: e.negotiation.requester.length + e.negotiation.provider.length, hours: round1((now - e.createdAt) / 3600),
+    questions: e.qa.length, at: e.agreedAt ?? now,
+    ...(e.requester.uid?.startsWith("demo-") || e.provider.uid.startsWith("demo-") ? { demo: true } : {}) };
+}
+
+/** Writes the deal record once an engagement is agreed (called from save, guarded by dealRecorded). */
+export async function recordDeal(db: Docs, e: Engagement, now: number) {
+  const d = dealOf(e, now);
+  if (d) await db.set(DEALS, d.id, d);
+}
+
+export interface Insights {
+  n: number; scope: "area" | "category"; category: string; area: string | null; unit: string | null;
+  median: number; p25: number; p75: number; discountPct: number; rounds: number; demo: boolean;
+}
+
+/** Linear-interpolation percentile over a sorted list. */
+const pct = (s: number[], q: number) => { const p = (s.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return s[lo] + (s[hi] - s[lo]) * (p - lo); };
+
+/** Closing-price stats for a category (or the area inside it), once at least 3 deals exist. */
+export async function insights(db: Docs, q: { category: string; area?: string | null }): Promise<Insights | null> {
+  const all = (await db.find(DEALS, [["category", "==", q.category]], 500)) as Deal[];
+  const inArea = q.area ? all.filter(d => d.area === q.area) : [];
+  const scope = inArea.length >= 3 ? "area" : all.length >= 3 ? "category" : null;
+  if (!scope) return null;
+  const ds = scope === "area" ? inArea : all;
+  const prices = ds.map(d => d.dealPrice).sort((a, b) => a - b);
+  const discounts = ds.map(d => d.discountPct).sort((a, b) => a - b);
+  const rounds = ds.map(d => d.rounds).sort((a, b) => a - b);
+  const units = new Map<string, number>();
+  for (const d of ds) if (d.unit) units.set(d.unit, (units.get(d.unit) ?? 0) + 1);
+  return { n: ds.length, scope, category: q.category, area: scope === "area" ? q.area! : null,
+    unit: [...units.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
+    median: Math.round(pct(prices, 0.5)), p25: Math.round(pct(prices, 0.25)), p75: Math.round(pct(prices, 0.75)),
+    discountPct: round1(pct(discounts, 0.5)), rounds: Math.round(pct(rounds, 0.5)), demo: ds.every(d => d.demo) };
+}
+
+const inr = (n: number, unit: string | null) => moneyText({ amount: n, currency: "INR", period: unit });
+const where = (i: Insights) => `${i.n} deal${i.n === 1 ? "" : "s"}${i.scope === "area" ? ` in ${i.area}` : ""}`;
+/** People quote ₹37,600, not ₹37,619: three significant figures. */
+const round3 = (p: number) => { const step = 10 ** Math.max(0, Math.floor(Math.log10(Math.max(p, 1))) - 2); return Math.round(p / step) * step; };
+const expect = (i: Insights, asking: number) => `At ${inr(asking, i.unit)} asking, expect around ${inr(round3(asking * (1 - i.discountPct / 100)), i.unit)}.`;
+
+export function forRequester(i: Insights, limit?: number | null, listPrice?: number | null): string[] {
+  const lines = [`Similar deals closed at ${inr(i.p25, i.unit)}–${inr(i.p75, i.unit)} (median ${inr(i.median, i.unit)}, ${where(i)}).`,
+    `Typically ~${i.discountPct}% under asking, in about ${i.rounds} rounds.`];
+  if (listPrice) lines.push(expect(i, listPrice));
+  if (limit) {
+    if (limit < i.p25) lines.push("Your limit is below where most similar deals closed — expect a longer negotiation.");
+    else if (limit > i.p75) lines.push("Your limit is above where most similar deals closed — you can likely close under it.");
+  }
+  if (i.demo) lines.push("(from demo deals)");
+  return lines;
+}
+
+export function forProvider(i: Insights, asking?: number | null): string[] {
+  const lines = [`Similar listings agreed at median ${inr(i.median, i.unit)} (${where(i)}), ~${i.discountPct}% under asking.`,
+    `Deals usually close in about ${i.rounds} rounds.`];
+  if (asking) {
+    lines.push(expect(i, asking));
+    if (asking > i.p75 * 1.15) lines.push("Your asking price is above the range similar deals closed in.");
+    else if (asking < i.p25) lines.push("Your asking price is already below where similar deals closed — little room needed.");
+  }
+  if (i.demo) lines.push("(from demo deals)");
+  return lines;
+}
+
+export interface Receipt {
+  engagementId: string; taskId: string | null;
+  terms: { title: string; price: number; unit: string | null; category: string | null; terms: Record<string, number> };
+  parties: { requester: { handle: string; name: string }; provider: { handle: string; name: string } };
+  confirmedBy: { requester: "owner" | "mandate"; provider: "owner" | "mandate" };
+  at: number; hash: string; signatures: { requester: string | null; provider: string | null };
+}
+
+/** The deal both sides confirmed, hashed and signed per owner — a receipt either can keep or show. */
+export function receipt(e: Engagement, sign: (uid: string, hash: string) => string): Receipt | null {
+  if (e.phase !== "agreed" || !e.negotiation.deal) return null;
+  const terms = { title: e.offer.title, price: e.negotiation.deal.price, unit: e.offer.unit, category: e.offer.category, terms: e.negotiation.deal.terms };
+  const parties = { requester: { handle: e.requester.handle, name: e.requester.name }, provider: { handle: e.provider.handle, name: e.provider.name } };
+  const at = e.agreedAt ?? e.events.find(ev => ev.who === "system" && ev.text.startsWith("Deal agreed"))?.at ?? e.createdAt;
+  const hash = createHash("sha256").update(JSON.stringify({ engagementId: e.id, taskId: e.taskId, terms, parties, at })).digest("hex");
+  return { engagementId: e.id, taskId: e.taskId, terms, parties,
+    confirmedBy: { requester: e.negotiation.confirmedBy?.requester ?? "owner", provider: e.negotiation.confirmedBy?.provider ?? "owner" },
+    at, hash, signatures: { requester: e.requester.uid ? sign(e.requester.uid, hash) : null, provider: e.provider.uid ? sign(e.provider.uid, hash) : null } };
+}
+
+/** A person's track record: deals agreed, and what the other side said afterwards. */
+export async function stats(db: Docs, uid: string) {
+  const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
+  const agreed = es.filter(e => e.phase === "agreed");
+  const said = (e: Engagement) => (e.requester.uid === uid ? e.outcome?.provider : e.outcome?.requester);
+  return { deals: agreed.length, kept: agreed.filter(e => said(e) === "happened").length, fellThrough: agreed.filter(e => said(e) === "fell_through").length };
+}

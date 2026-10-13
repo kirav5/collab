@@ -6,6 +6,7 @@ import type { Model } from "../ai/gemini.ts";
 import { decide } from "../ai/decide.ts";
 import { type Docs, docId } from "../docs.ts";
 import { ANSWERS } from "./engage.ts";
+import { stats } from "./deals.ts";
 import { savedKey } from "../market/answer.ts";
 import { RankTask, rank } from "../market/match.ts";
 import { read } from "../market/read.ts";
@@ -78,7 +79,7 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
 }
 
 export interface Found {
-  profile: Pick<Profile, "uid" | "handle" | "name" | "bio" | "demo">;
+  profile: Pick<Profile, "uid" | "handle" | "name" | "bio" | "demo"> & { stats: { deals: number; kept: number; fellThrough: number } };
   fact: { id: string; text: string; offer: Fact["offer"] };
   why: string | null;
   distanceKm: number | null;
@@ -117,7 +118,7 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
       distanceKm = m.distanceKm || null; met = m.met; unknown = m.unknown;
       score += m.score * 0.5;
     }
-    candidates.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}) },
+    candidates.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: await stats(db, uid) },
       fact, why: null, distanceKm, met, unknown, score });
   }
   candidates.sort((a, b) => b.score - a.score);

@@ -9,6 +9,7 @@ import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
 const PORT = 8800 + Math.floor(Math.random() * 100);
 const B = `http://localhost:${PORT}`;
 let server: ChildProcess;
+let agreedId = "";
 
 before(async () => {
   server = spawn(process.execPath, ["src/server.ts"], { cwd: new URL("..", import.meta.url).pathname, stdio: "pipe",
@@ -62,6 +63,7 @@ test("two people: the offer's floor stays out of the directory, the agents negot
     if (!moved) break;
   }
   assert.equal(e.phase, "agreed", JSON.stringify(e.events.slice(-4)));
+  agreedId = e.id;
   const deal = e.negotiation.deal.price;
   assert.ok(deal >= 600 && deal <= 650, `deal ${deal} inside both limits`);
   const said = e.events.map((x: any) => x.text).join(" ");
@@ -88,6 +90,23 @@ test("an outside A2A agent that doesn't sign in is a stranger: Public answers on
   assert.notEqual(task.status.state, TaskState.TASK_STATE_COMPLETED);
   // Cat's device is asked instead.
   assert.ok((await as("cat", "/api/inbox")).some((i: any) => /PIN/.test(i.question)));
+});
+
+test("AP2 on the agent card, a signed deal receipt, deal insights, and outcome stats", async () => {
+  const card = await (await fetch(`${B}/a2a/riya/.well-known/agent-card.json`)).json();
+  assert.ok(card.capabilities.extensions[0].uri.includes("AP2"), "the agent card declares AP2 roles");
+  const r = await as("amy", `/api/engagements/${agreedId}/receipt`);
+  assert.equal(r.hash.length, 64);
+  assert.ok(r.signatures.requester && r.signatures.provider);
+  const stranger = await fetch(`${B}/api/engagements/${agreedId}/receipt`, { headers: { authorization: "Bearer dev:cat" } });
+  assert.equal(stranger.status, 404, "only participants get the receipt");
+  const ins = await as("amy", "/api/insights?category=property-rent&side=requester");
+  assert.ok(ins.insights?.n >= 3 && ins.insights.demo === true, "seeded demo deals feed insights");
+  assert.equal(ins.lines.at(-1), "(from demo deals)");
+  await as("amy", `/api/engagements/${agreedId}/outcome`, { happened: true });
+  const bob = await as("amy", "/api/people/bob");
+  assert.equal(bob.stats.deals, 1);
+  assert.equal(bob.stats.kept, 1);
 });
 
 test("a hostile listing changes nothing: the requester's agent never offers above its limit", async () => {

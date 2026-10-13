@@ -62,3 +62,14 @@ export async function api(path, body) {
   if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; throw e; }
   return data;
 }
+
+/** "What similar deals closed at" lines; empty when fewer than 3 comparable deals exist. */
+export async function insightsLines({ side, category, area, price, limit }) {
+  try {
+    const q = new URLSearchParams({ category: category ?? "", side });
+    if (area) q.set("area", area);
+    if (price) q.set("price", String(price));
+    if (limit) q.set("limit", String(limit));
+    return (await api(`/api/insights?${q}`)).lines ?? [];
+  } catch { return []; }
+}

@@ -2,13 +2,13 @@
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
 // screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
 // agents are doing (Requests) and what was shared (Activity).
-import { api, session, signIn } from "./api.js";
+import { api, insightsLines, session, signIn } from "./api.js";
 import { chat, detectNano, engine, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
 import { engagementCard, messageHTML } from "./cards.js";
 import { screens } from "./screens.js";
-import { $, busy, esc, id, label, now, tag, toast } from "./ui.js";
+import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
 const root = $("#root");
@@ -203,17 +203,20 @@ function onEdit(e) {
   if (!el.dataset.edit || !ref || e.type === "input" && el.type === "checkbox") return;
   const f = findCard(ref); if (!f) return;
   const k = el.dataset.edit, v = el.type === "checkbox" ? el.checked : el.value;
+  if (k === "autonomy") { f.c.autonomy = v; f.c.delegate = !!v; }
+  if (k === "days") f.c.days = Number(v);
   if (f.c.type === "brief") {
     if (k === "title" || k === "summary") f.c.draft.shared[k] = v;
     if (k === "limit") {
       const n = Number(v);
       f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: 5 } : null;
       f.c.draft.need.maxPrice = n > 0 ? n : null;
+      if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null })
+        .then(ls => { f.c.insights = ls; saveSession(f.s); paintContent(true); });
     }
-    if (k === "delegate") f.c.delegate = v;
   }
-  if (f.c.type === "offer") { if (k === "floor") f.c.floor = Number(v) || null; else f.c[k] = v; }
-  if (e.type === "change") saveSession(f.s);
+  if (f.c.type === "offer") { if (k === "floor") f.c.floor = Number(v) || null; else if (k !== "autonomy" && k !== "days") f.c[k] = v; }
+  if (e.type === "change") { saveSession(f.s); if (k === "autonomy") paintContent(true); }
 }
 
 async function onClick(e) {
@@ -228,6 +231,21 @@ async function onClick(e) {
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a.startsWith("inbox-")) return inboxAction(a, el);
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
+    if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
+    if (a === "eng-receipt") {
+      busy(el, true);
+      const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
+      const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
+      const market = await insightsLines({ side: el.dataset.side, category: el.dataset.cat, area: el.dataset.area, price: el.dataset.price || null });
+      const confirmedBy = s => r.confirmedBy[s] === "mandate" ? "standing mandate" : "owner";
+      const sig = s => (r.signatures[s] ? `${r.signatures[s].slice(0, 16)}…` : "—");
+      box.innerHTML = `<div class="stack" style="gap:6px">
+        ${market.length ? `<span class="small faint">${esc(market[0])}</span>` : ""}
+        <span class="small">“${esc(r.terms.title)}” — <b>${money(r.terms.price, r.terms.unit)}</b></span>
+        <span class="small faint">hash ${esc(r.hash.slice(0, 16))}… · requester signed (${confirmedBy("requester")}): ${esc(sig("requester"))} · provider signed (${confirmedBy("provider")}): ${esc(sig("provider"))}</span>
+        <span class="small faint">Anyone with this engagement id can ask Collab to verify the hash.</span></div>`;
+      return;
+    }
     if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen })) return;
     const f = findCard(el);
     if (!f) return;
@@ -246,11 +264,12 @@ async function cardAction(a, el, { s, m, c }) {
     busy(el, true, "Updating");
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
-    if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; }
+    if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
+      c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit }); }
   }
   if (a === "brief-send") {
     busy(el, true, "Searching");
-    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: c.delegate ? d.mandate : null });
+    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: c.autonomy ? { mandate: d.mandate, autonomy: c.autonomy, days: c.days ?? 7 } : null });
     if (d.mandate) await local.put("limits", { id: `brief:${r.brief.id}`, mandate: d.mandate });
     Object.assign(c, { step: "matches", briefId: r.brief.id, found: r.found, rankedByModel: r.rankedByModel, picked: r.found.slice(0, 2).map((_, j) => j) });
   }
@@ -272,7 +291,7 @@ async function cardAction(a, el, { s, m, c }) {
     if (c.offer && c.floor) {
       const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: 5 };
       await local.put("limits", { id: `fact:${fact.id}`, mandate });
-      if (c.delegate) await api(`/api/facts/${fact.id}/limit`, { mandate });
+      if (c.autonomy) await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: c.autonomy, days: c.days ?? 7 });
     }
     c.step = "published"; c.publicText = fact.text;
   }

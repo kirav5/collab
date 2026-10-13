@@ -47,7 +47,11 @@ answer only from what their owners chose to share, ask what they need to know, a
    must be written, no contact details, no limit leaks); a deterministic fallback decides otherwise.
 5. **Limits are never stated.** Negotiation prompts carry numbers only; messages revealing a limit are replaced.
 6. **Open, not a walled garden.** Agents speak A2A; any A2A agent can talk to ours.
-7. **Nothing final without the owner.** A deal is tentative until both owners confirm.
+7. **Nothing final without the owner.** A deal is tentative until both owners confirm — on their device, or in
+   advance through a *close* mandate they explicitly gave (a limit, an autonomy level and an expiry); the receipt
+   records which.
+8. **Market data is shared, limits are not.** What the market learns from agreed deals (prices, discounts, rounds)
+   is anonymised and shown to both sides; nobody's limit, name or notes is ever part of it.
 
 ## 5. Information model — three levels
 
@@ -126,6 +130,11 @@ an audit of everything your agent shared in Activity.
 | FR13 | Offering publishing with floor removed from public text; delegated floor optional |
 | FR14 | Audit log of shared answers; privacy wall on every crossing message |
 | FR15 | Demo people (7) for solo judging; their devices simulated (the requester can answer for them, labelled "demo") |
+| FR16 | Market insights from agreed deals ("similar deals closed at ₹X–₹Y, median ₹Z, ~N% under asking, in R rounds"), deterministic, for the requester (while setting a limit, when the limit runs out) and the provider (vs. the asking price); labelled when from demo deals |
+| FR17 | Mandates with an autonomy level — ask me every move / negotiate inside my limit, I confirm / negotiate and close inside my limit — and an expiry (1/7/30 days) |
+| FR18 | Signed deal receipt (hash of the agreed terms and parties, signed per owner, who confirmed: owner or mandate) |
+| FR19 | Outcomes ("went ahead" / "fell through") per side after a deal → public track record on matches and profiles |
+| FR20 | Agent card declares the AP2 extension (merchant / shopper roles); payment itself is out of scope |
 
 ## 9. Non-functional requirements
 
@@ -152,7 +161,8 @@ an audit of everything your agent shared in Activity.
 ## 11. A2A contract
 
 - Agent Card: `GET /a2a/<handle>/.well-known/agent-card.json` (A2A v1.0; JSON-RPC interface; optional bearer =
-  Firebase ID token; skills from the person's public offerings).
+  Firebase ID token; skills from the person's public offerings; `capabilities.extensions` declares AP2 v0.1 with
+  roles merchant/shopper, not required).
 - Endpoint: `POST /a2a/<handle>` JSON-RPC (`SendMessage`, `GetTask`, `CancelTask`).
 - One engagement = one task. Each message: a text part (human-readable) + a data part:
   `{ kind: "collab.turn/v1", from: "requester"|"provider", engagementId, brief?, offerFactId?, questions?[{id,question}],
@@ -165,7 +175,8 @@ an audit of everything your agent shared in Activity.
 
 ## 12. Out of scope (v1)
 
-Payments, escrow, identity verification/KYC, reviews, native apps (the Collab iOS/macOS app is separate), reading
+Payments and escrow (AP2 role is declared, no payment mandates yet), identity verification/KYC, free-text reviews
+(only went-ahead / fell-through outcomes), native apps (the Collab iOS/macOS app is separate), reading
 the Collab app's AT Protocol/Nostr data, multi-device sync of Private data.
 
 ## 13. Success metrics
