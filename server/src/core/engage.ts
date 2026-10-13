@@ -426,8 +426,14 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   if (text) say(e, s, text, "owner");
   say(e, "system", `Deal offered at ${moneyText({ amount: price, currency: "INR", period: e.offer.unit })}. Nothing is final until both confirm.`);
   const o = other(s);
-  for (const id of e.waiting[o]?.inbox ?? []) await db.update(INBOX, id, (i: InboxItem | null) => (i && i.kind === "confirm" ? { ...i, status: "done" } : i));
-  e.waiting[o] = null;
+  // An earlier offer still waiting on them is replaced by this one; questions they haven't answered stay.
+  const stale: string[] = [];
+  for (const id of e.waiting[o]?.inbox ?? []) {
+    const i = (await db.get(INBOX, id)) as InboxItem | null;
+    if (i?.kind === "confirm") { stale.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
+  }
+  const keep = (e.waiting[o]?.inbox ?? []).filter(id => !stale.includes(id));
+  e.waiting[o] = keep.length ? { ...e.waiting[o]!, inbox: keep } : null;
   await ask(db, e, o, { kind: "confirm" });
   await save(db, e);
 }
