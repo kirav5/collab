@@ -22,8 +22,10 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setSigner, type Turn } from "./core/engage.ts";
+import { buyerOf, checkPayment, pay, sellerOf } from "./core/pay.ts";
 import { offeredPrice } from "./core/direct.ts";
+import { moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
@@ -63,6 +65,7 @@ async function verifyIdToken(token: string): Promise<string> {
 
 const cfg = { db, model, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
+setSigner((uid, hash) => signReceipt(cfg.secret, uid, hash));
 initPush(db, env.STORE !== "memory");
 
 // MARK: - Plumbing
@@ -484,13 +487,49 @@ app.get("/api/engagements/:id/receipt", route(async req => {
   const r = receipt(e, (uid, hash) => signReceipt(cfg.secret, uid, hash));
   if (!r) throw new HttpError(404, "no deal yet");
   await registerReceipt(db, e, now()); // deals agreed before receipts were registered get theirs now
-  return { ...r, ...(await verifyReceipt(db, e)) };
+  const payment = e.payment ? { ...e.payment, buyer: buyerOf(e), seller: sellerOf(e),
+    check: checkPayment(e, (uid, hash, sig) => signReceipt(cfg.secret, uid, hash) === sig) } : null;
+  return { ...r, ...(await verifyReceipt(db, e)), payment };
 }));
 /** Anyone signed in who has the engagement id can check a deal against its registered receipt (yes/no, nothing else). */
 app.get("/api/engagements/:id/verify", route(async req => {
   const e = (await db.get(ENGAGEMENTS, String(req.params.id))) as Engagement | null;
   if (!e) return { registered: false, matches: false, registeredAt: null };
   return verifyReceipt(db, e);
+}));
+// AP2, test mode: the buyer pays against the seller agent's Cart Mandate; their agent signs the Payment Mandate and
+// sends it to the seller's agent over A2A. No money moves.
+app.post("/api/engagements/:id/pay", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const side = e.requester.uid === req.uid ? "requester" : "provider";
+  await spend(req.uid, 1);
+  let mandate;
+  try { mandate = pay(e, side, (uid, hash) => signReceipt(cfg.secret, uid, hash), now()); } catch (err) { throw new HttpError(400, (err as Error).message); }
+  e.events.push({ at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" });
+  await saveEngagement(db, e);
+  const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate };
+  if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
+  else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
+  const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
+  if (seller.uid) void pushTo(seller.uid, `Payment received · ${e.title}`, `${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} (test mode)`, `/?engagement=${e.id}`);
+  return load(db, e.id);
+}));
+// Deals agreed before AP2 carts existed get theirs when a participant opens them (saving issues it).
+app.post("/api/engagements/:id/cart", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e.phase === "agreed" && !e.payment) await saveEngagement(db, e);
+  return load(db, e.id);
+}));
+// Paid some other way (cash, UPI outside the app): either side can say so; it counts as the deal having gone ahead.
+app.post("/api/engagements/:id/paid-outside", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e.phase !== "agreed" || !e.payment || e.payment.status === "paid") throw new HttpError(400, "Nothing to settle.");
+  const side = e.requester.uid === req.uid ? "requester" : "provider";
+  e.payment = { ...e.payment, status: "outside", by: side, paidAt: now() };
+  (e.outcome ??= {})[side] = "happened";
+  e.events.push({ at: now(), who: side, text: "Settled outside the app (cash or UPI).", by: "owner" });
+  await saveEngagement(db, e);
+  return e;
 }));
 app.post("/api/engagements/:id/outcome", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
@@ -548,7 +587,7 @@ app.post("/api/inbox/:id", route(async req => {
   const named = item.kind === "answer" && typeof b.text === "string" ? offeredPrice(b.text) : null;
   if (named) {
     const now_ = await load(db, e.id);
-    if (now_.offer.price == null && ["asking", "negotiating"].includes(now_.phase)) await offerDeal(db, now_, item.side, named, null);
+    if (now_.offer.price == null && ["asking", "negotiating"].includes(now_.phase)) await offerDeal(db, now_, item.side, named, null, b.text);
   }
   return load(db, e.id);
 }));

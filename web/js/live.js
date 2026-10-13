@@ -18,12 +18,16 @@ function notify(title, body, open) {
   } catch { /* not available */ }
 }
 
+// Deals agreed before AP2 carts existed: ask once for the seller's agent to issue one.
+const carts = new Set();
 function setEngagements(list, openChat, quiet = false) {
   for (const e of list) {
+    if (e.phase === "agreed" && !e.payment && !carts.has(e.id)) { carts.add(e.id); api(`/api/engagements/${e.id}/cart`, {}).then(x => { live.engagements.set(x.id, x); emit(); }).catch(() => {}); }
     const prev = live.engagements.get(e.id);
     live.engagements.set(e.id, e);
     if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify("New request", `${e.requester.name}'s agent: ${e.title}`, () => openChat("requests", e.id));
     if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("requests", e.id));
+    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", `${e.title} (test mode)`, () => openChat("requests", e.id));
     seen.engagements.add(e.id);
   }
   if (!quiet) emit();

@@ -83,7 +83,7 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     provider: { organization: "Collab Market", url: cfg.publicUrl },
     capabilities: { streaming: false, pushNotifications: false,
       extensions: [{ uri: "https://github.com/google-agentic-commerce/AP2/tree/v0.1",
-        description: "Agentic Payments Protocol roles: merchant (this agent's Public offerings) and shopper (requests it sends). Mandates are negotiated here; payment happens between the owners for now.",
+        description: "Agentic Payments Protocol roles: merchant (this agent's Public offerings) and shopper (requests it sends). After a deal both owners confirmed, the seller's agent issues a signed Cart Mandate and the buyer's agent sends a signed Payment Mandate for it in a collab.turn/v1 data part (test mode: no money moves).",
         required: false, params: { roles: ["merchant", "shopper"] } }] },
     securitySchemes: { firebase: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Firebase ID token", description: "Optional. Without it you're a stranger: Public facts only." } } },
     defaultInputModes: ["text/plain", "application/json"],

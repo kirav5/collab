@@ -14,6 +14,7 @@ import { AnswerTask, type Fact as AnswerFact, JudgeTask, offerFacts, savedKey } 
 import { catalog, domain as domainOf } from "../market/domains.ts";
 import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
 import { type Mandate, type Proposal, moneyText, newId } from "../market/types.ts";
+import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
@@ -34,6 +35,8 @@ export interface Turn {
   offerFactId?: string | null;
   questions?: { id: string; question: string }[];
   answers?: { id: string; question: string; answer: string }[];
+  /** AP2: the buyer's signed payment mandate, delivered to the seller's agent. */
+  payment?: PaymentMandate;
   /** Questions the other side's owner is being asked (the conversation waits for them). */
   pending?: string[];
   declined?: string[];
@@ -54,10 +57,30 @@ export async function load(db: Docs, id: string): Promise<Engagement> {
   return e;
 }
 
+// The agents' signing key (set by the server at start): AP2 mandates are signed per agent, like deal receipts.
+let signer: ((uid: string, hash: string) => string) | null = null;
+export const setSigner = (fn: (uid: string, hash: string) => string) => { signer = fn; };
+
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
   if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now()); }
+  // AP2: once both owners confirmed, the seller's agent issues the cart the buyer pays against.
+  if (e.phase === "agreed" && !e.payment && signer) {
+    if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
+    const cart = cartFor(e, signer, now());
+    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; say(e, agentOf(sellerOf(e)), `Cart Mandate issued for ${moneyText({ amount: cart.total.value, currency: "INR", period: e.offer.unit })} (AP2, test mode).`, "rules"); }
+  }
   await db.set(ENGAGEMENTS, e.id, e);
+}
+
+/** Deals agreed in a chat before sellers were recorded: who said they'd sell, from the message that offered it. */
+function sellerInChat(e: Engagement): Side | null {
+  for (let i = e.events.length - 1; i > 0; i--) {
+    if (e.events[i].who !== "system" || !e.events[i].text.startsWith("Deal offered")) continue;
+    const said = e.events[i - 1];
+    return said.who === "requester" || said.who === "provider" ? sellerFrom(said.text, said.who) : null;
+  }
+  return null;
 }
 
 const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: text.slice(0, 600), ...(by ? { by } : {}) }); };
@@ -417,7 +440,8 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
  * A deal one person offers in a direct chat (no listed price): it counts as their confirmation, and the other person
  * is asked to confirm. Both confirming makes it agreed, with a receipt, like a negotiated deal.
  */
-export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null) {
+export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null, said = text ?? "") {
+  e.seller = sellerFrom(said, s) ?? e.seller ?? "provider";
   const p = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";

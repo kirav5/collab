@@ -324,6 +324,13 @@ async function onClick(e) {
     }
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
     if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
+    if (a === "eng-pay" || a === "eng-paid-outside") {
+      busy(el, true, a === "eng-pay" ? "Paying" : "Saving");
+      const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, {});
+      live.engagements.set(e.id, e);
+      toast(a === "eng-pay" ? "Paid — test mode, no money moved. Their agent has the payment." : "Marked as paid outside the app.");
+      return refresh(openScreen);
+    }
     if (a === "eng-receipt") {
       busy(el, true);
       const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
@@ -336,7 +343,14 @@ async function onClick(e) {
         <span class="small muted">“${esc(r.terms.title)}” · agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
         <details class="more"><summary>How this is checked</summary>
           <span class="small muted">When both sides confirmed, Collab hashed the terms, both parties and the time (SHA-256) and registered that hash. Verify recomputes it from the conversation: any change to price, terms or parties breaks the match. Confirmed by ${by("requester")} (requester) and ${by("provider")} (provider).</span>
-          <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details></div>`;
+          <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details>
+        ${r.payment ? `<details class="more"><summary>Payment (AP2) · ${r.payment.status === "paid" ? "paid" : r.payment.status === "outside" ? "settled outside the app" : "waiting"}</summary>
+          <dl class="kv small">
+            <dt>Cart Mandate</dt><dd>${money(r.payment.cart.total.value, r.terms.unit)} · issued by @${esc(r.payment.cart.merchant.handle)}'s agent · ${r.payment.check?.cartOk ? tag("✓ signature valid, matches the deal", "fresh") : tag("doesn't match", "danger")}</dd>
+            ${r.payment.mandate ? `<dt>Payment Mandate</dt><dd>signed by @${esc(r.payment.mandate.payer)}'s agent, for that cart · ${r.payment.check?.paymentOk ? tag("✓ signature valid", "fresh") : tag("doesn't match", "danger")}</dd>
+            <dt>Payment</dt><dd>${esc(r.payment.paymentId)} · test mode, no money moved</dd>` : ""}
+          </dl>
+          <span class="small muted">AP2 (Agent Payments Protocol): the seller's agent signs a cart for exactly the agreed terms; the buyer's agent signs a payment against that cart only after the buyer taps Pay. The payment goes to the seller's agent over A2A.</span></details>` : ""}</div>`;
       return;
     }
     if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect })) return;

@@ -121,7 +121,7 @@ export interface Receipt {
 export const RECEIPTS = "receipts";
 
 /** The agreed terms, both parties and the time, hashed (SHA-256): any later change to them changes the hash. */
-function sealed(e: Engagement) {
+export function sealed(e: Engagement) {
   const terms = { title: e.offer.title, price: e.negotiation.deal!.price, unit: e.offer.unit, category: e.offer.category, terms: e.negotiation.deal!.terms };
   const parties = { requester: { handle: e.requester.handle, name: e.requester.name }, provider: { handle: e.provider.handle, name: e.provider.name } };
   const at = e.agreedAt ?? e.events.find(ev => ev.who === "system" && ev.text.startsWith("Deal agreed"))?.at ?? e.createdAt;

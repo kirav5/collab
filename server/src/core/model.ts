@@ -124,8 +124,12 @@ export interface Engagement {
   agreedAt?: number;
   /** The anonymised deal record is written (once) to `deals`. */
   dealRecorded?: boolean;
-  /** What each side later said became of the deal. */
+  /** What each side later said became of the deal (a completed payment says "happened" for both). */
   outcome?: Partial<Record<Side, "happened" | "fell_through">>;
+  /** Which side sells. Listings: the provider. A deal offered in a direct chat: whoever said they'd sell. */
+  seller?: Side;
+  /** AP2: the cart the seller's agent signed, and the buyer's payment against it. */
+  payment?: import("./pay.ts").Payment;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
   createdAt: number;

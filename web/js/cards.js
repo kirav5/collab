@@ -239,12 +239,25 @@ export function engagementCard(e, id) {
 
 /** The agreed deal: the price, what to do next, and the receipt — plain words first, the cryptography on request. */
 function dealBlock(e, mine) {
-  const outcome = e.outcome?.[mine];
+  const p = e.payment, seller = e.seller ?? "provider", buyer = seller === "requester" ? "provider" : "requester";
+  const them = esc((mine === "requester" ? e.provider : e.requester).name.split(" ")[0]);
+  const amount = money(e.negotiation.deal.price, e.offer.unit);
+  const id = esc(e.id);
+  // AP2: the seller's agent signed a cart for the agreed terms; the buyer pays against it (test mode: no money moves).
+  // A payment settles whether it went ahead — nobody is asked separately.
+  let pay;
+  if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
+  else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span><span class="small faint">AP2 · test mode, no money moved</span>`;
+  else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
+  else if (mine === buyer) pay = `<div class="row"><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
+      <span class="small faint">AP2 test mode: your agent signs a payment against the cart ${them}'s agent signed. No money moves.</span>`;
+  else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
+  const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
+    : p?.status === "paid" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
-    <div class="row"><span class="deal-price">${money(e.negotiation.deal.price, e.offer.unit)}</span><span class="small muted">confirmed by both of you</span></div>
-    ${outcome ? `<span class="small faint">You marked it as ${outcome === "happened" ? "went ahead" : "fell through"}.</span>`
-      : `<div class="row"><span class="small muted">Did it go ahead?</span><button class="btn compact" data-act="eng-outcome" data-id="${esc(e.id)}" data-happened="1">Yes</button><button class="btn quiet compact" data-act="eng-outcome" data-id="${esc(e.id)}" data-happened="0">It fell through</button></div>`}
-    <div data-receipt="${esc(e.id)}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${esc(e.id)}">✓ Deal record · verify</button></div>
+    <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you sell" : "you buy"}</span></div>
+    ${pay}
+    <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
   </div>`;
 }
 
