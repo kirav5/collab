@@ -287,7 +287,7 @@ const hasContent = (t: Turn) => !!(t.answers?.length || t.questions?.length || t
 
 /** After answering: move if it's this side's turn and nothing is open; confirm a deal. */
 async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
-  if (pendingFor(e, s) || e.offer.price === null) return;
+  if (pendingFor(e, s) || e.offer.price == null) return;
   if (e.phase === "deal") {
     if (!e.negotiation.confirmed[s]) {
       // A "close" mandate is the owner's confirmation given in advance, while the deal is inside its limit.
@@ -394,7 +394,7 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       }
     }
   } else if (item.kind === "confirm") {
-    if (r.decline && e.offer.price === null) {
+    if (r.decline && e.offer.price == null) {
       // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
       say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: "INR", period: e.offer.unit })}.`, "owner");
       e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false };

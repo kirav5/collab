@@ -239,7 +239,7 @@ app.post("/api/engagements/:id/ask", route(async req => {
   if (q.length < 2) throw new HttpError(400, "Ask something.");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   // Naming a price in a chat with no listed price offers a deal: the other person confirms or says no.
-  const price = e.offer.price === null && e.phase !== "deal" ? offeredPrice(q) : null;
+  const price = e.offer.price == null && e.phase !== "deal" ? offeredPrice(q) : null;
   if (price) { await offerDeal(db, e, side, price, q); return load(db, e.id); }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });
   await saveEngagement(db, e);
@@ -548,7 +548,7 @@ app.post("/api/inbox/:id", route(async req => {
   const named = item.kind === "answer" && typeof b.text === "string" ? offeredPrice(b.text) : null;
   if (named) {
     const now_ = await load(db, e.id);
-    if (now_.offer.price === null && ["asking", "negotiating"].includes(now_.phase)) await offerDeal(db, now_, item.side, named, null);
+    if (now_.offer.price == null && ["asking", "negotiating"].includes(now_.phase)) await offerDeal(db, now_, item.side, named, null);
   }
   return load(db, e.id);
 }));
