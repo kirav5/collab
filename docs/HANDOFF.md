@@ -1,4 +1,4 @@
-# Collab (web) — handoff · 13 October 2026
+# Collab (web) — handoff · 14 October 2026
 
 Read [PRD.md](PRD.md) first for what and why. This file is what exists, how it works, how to run/test/deploy it, what
 is known to be wrong, and what to do next.
@@ -12,16 +12,19 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 | | |
 |---|---|
 | Live web app | https://collab-55.web.app (Firebase Hosting → Cloud Run rewrites for `/api/**`, `/a2a/**`, `/health`) |
-| Cloud Run | service `collab-market`, region `asia-south1`, revision `collab-market-00005-sfj`, max 2 instances, request-based billing, 1 GiB, timeout 60 s · https://collab-market-mj7d6nwxxq-el.a.run.app |
+| Cloud Run | service `collab-market`, region `asia-south1`, **min 1 / max 2 instances** (one kept warm: no ~3 s cold start; `MIN_INSTANCES=0 ./deploy.sh` turns it off), startup CPU boost, request-based billing, 1 GiB, timeout 60 s · https://collab-market-mj7d6nwxxq-el.a.run.app |
 | GCP project | `collab-55` (number 611701997508), free trial ₹28,797 until 12 Jan 2027 |
-| Service account | `collab-market@collab-55.iam.gserviceaccount.com` — `aiplatform.user`, `datastore.user`, `firebaseauth.viewer`, secret accessor on `agent-secret` |
+| Service account | `collab-market@collab-55.iam.gserviceaccount.com` — `aiplatform.user`, `datastore.user`, `firebaseauth.viewer`, `firebasecloudmessaging.admin`, secret accessor on `agent-secret` |
+| Scheduler | Cloud Scheduler job `collab-watches`, `*/15 * * * *` → `POST $RUN_URL/cron/run` with header `x-collab-cron` = HMAC-SHA256(agent secret, "collab-cron") base64url (created/updated by `deploy.sh`) |
+| Push | Firebase Cloud Messaging web push (default VAPID key); tokens in `push_tokens`; verified on iPhone (installed app) and Mac Chrome |
 | Firestore | `(default)`, Native, `asia-south1`; vector index on `facts(tier, embedding[768])`; TTL on `rate.expireAt`, `leases.expireAt` |
 | Firebase | web app `1:611701997508:web:149a27edf4e20d9dbd6e91`; Auth: Anonymous + Google enabled; App Check: reCAPTCHA Enterprise key `6LcWVO0tAAAAAGE87CLYa8anCDcS9mnidBl2geJN` (domains: collab-55.web.app, collab-55.firebaseapp.com, localhost) — **enforced** on `/api` |
 | Secret | Secret Manager `agent-secret` (HMAC key our agents sign A2A calls with); local copy `.deploy/agent-secret` (git-ignored) |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 39/39 pass (`npm run check` = `tsc --strict` + `node --test`); live 12-case run 12/12 (§8) |
-| Size | ~5.7k lines: server ~3.3k TS, web ~1.2k JS/CSS |
+| Tests | 49/49 pass (`npm run check` = `tsc --strict` + `node --test`); live 12-case run 12/12 (§8) |
+| Size | ~5.8k lines: server ~4.0k TS, web ~1.8k JS/CSS |
+| Live accounts used for testing | @atishaysrivastava10 (uid `NlVWMHzyk1MqGNrO0jWZQTa9hEC2`, Google), @anu-buyer (uid `GrqThVDukkVtN6yK2DkGvT5usvK2`), @bottle-store (`?as=seller` guest tab in a browser) |
 
 ## 2. What was done (chronologically)
 
@@ -54,11 +57,42 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
    outcomes → a public track record; AP2 roles declared on the agent card. Meter prices corrected to the published
    Gemini rates.
 
+10. **14 Oct session** (all deployed and live-tested unless noted):
+    - **Load time 3.5–4 s → ~0.6 s** for a returning visit (≈1 s fully loaded; first visit ≈1.5 s). Causes found by
+      resource timing: module waterfall, config fetched before sign-in, Auth waiting on the App Check token
+      (reCAPTCHA ≈1.5 s), duplicate first refresh, `/api/facts` fetched on every repaint, Cloud Run cold start.
+      Fixes: `modulepreload` + preconnect, config cached in localStorage and fetched in parallel, App Check on its own
+      Firebase app instance (`check-<as|main>`) so Auth doesn't wait, Firestore listeners attached after first paint,
+      one repaint per poll, saved-note facts cached 20 s, one warm instance.
+    - **Google sign-in on the first screen** ("Continue with Google" or guest): a guest upgrades in place
+      (`linkWithPopup`, same uid); a Google account that already has Collab signs back in (`credential-already-in-use`
+      → `signInWithCredential`); redirect fallback where pop-ups are blocked; prefilled name/handle; QR invite text
+      ("You're opening @x's agent"); guarded guest sign-out.
+    - **Push actually works**: devices were never registered (0 tokens). Now a tap registers, each visit
+      re-registers quietly, Settings › App & notifications has Install app (`beforeinstallprompt`; iPhone steps) and
+      **Send a test notification** (`POST /api/push/test`); pushes while open show in-app.
+    - **Direct chats (QR) don't stall**: a conversation with no listed price rests when every question is answered;
+      the card says who answered and offers a reply box + Done; **either side** can send follow-ups
+      (`POST /api/engagements/:id/ask` now accepts the provider — sent with `deliverProviderTurn`).
+    - **Direct chats can reach a deal**: a message or answer naming a price ("I'll sell for 100rs", "₹450", "2.5 lakh")
+      offers a deal (`core/direct.ts offeredPrice`, `engage.ts offerDeal`); the other owner gets Confirm/Walk away;
+      saying no reopens the chat. Seller = whoever said "sell" (`pay.ts sellerFrom`).
+    - **AP2 (test mode)** replaces "did it go ahead?": on agreement the seller's agent issues a signed **Cart
+      Mandate**; the buyer taps **Pay** → their agent signs a **Payment Mandate** for that cart, sent to the seller's
+      agent over A2A (`Turn.payment`), seller is notified; paying marks the deal as gone ahead for both. "Paid another
+      way" and a small "It fell through" remain. The receipt view verifies both signatures. Live: ₹100 deal paid,
+      `cartOk:true, paymentOk:true`.
+    - **Chat history follows the account** (`chats` collection, owner-only): synced on open, on resume and on save;
+      older on-device chats upload. "Delete chat history" clears everywhere.
+    - **Updates reach installed apps**: the service worker is network-first (3 s fallback to the device copy);
+      `deploy.sh` writes `web/version.txt`; an app coming back to the front reloads into a new version (unless typing).
+    - Sidebar: unexplained "Web"/"Gemini" tags → a "✦ Powered by Gemini" chip that opens Settings › AI engine.
+
 ## 3. Architecture
 
 ```
 Browser (device agent)                     Cloud Run: collab-market (Node 24, Express 5)            Firestore
-  IndexedDB: chat history only       /api   ├─ API (auth: Firebase ID token + App Check)            profiles, handles, facts(+vector)
+  IndexedDB: chat cache (synced)     /api   ├─ API (auth: Firebase ID token + App Check)            profiles, handles, facts(+vector)
   Gemini Nano (if Chrome has it)     ─────▶ ├─ directory: embeddings + vector search + ranking  ──▶ rules, contacts, briefs
   Firebase Auth / App Check / FS            ├─ engagement engine (core/engage.ts)                    engagements (live), inbox
   listeners (engagements, inbox)            ├─ A2A per person /a2a/<handle> (SDK)  ◀── other agents  a2a_tasks, limits, audit
@@ -85,6 +119,12 @@ server/src/
   core/engage.ts       THE ENGINE. Turn type; providerTurn / requesterTurn; answerOpen (policy → AnswerTask → shape →
                        wall → audit, else inbox); GatherTask once; judge; moveOrAsk/move (NegotiateTask); confirm/settle;
                        resolve() for device inbox items; fresh() builds an engagement
+  core/direct.ts       offeredPrice(): the rupee amount a chat message offers ("100rs", "₹450", "2.5 lakh"), ignoring
+                       counts/sizes ("2 bottles", "200 ml")
+  core/pay.ts          AP2 test mode: sellerOf/buyerOf/sellerFrom, cartFor (seller agent signs), pay (buyer agent signs,
+                       marks outcome), checkPayment (hashes + signatures + cart matches the sealed deal)
+  core/push.ts         FCM web push: saveToken, pushTo → {devices, sent}; dead tokens removed
+  core/watch.ts        Scheduled agents: startWatch, runDue (search again, alert on new matches) — run by /cron/run
   core/deals.ts        Deal records (anonymised, written once on "agreed"), insights() medians per category/area,
                        forRequester/forProvider lines, receipt() (sha256 + per-owner HMAC), stats() track record
   core/policy.ts       allowedFor(owner, asker): Public + Protected via active rules (deny by default); shapeAnswer
@@ -126,8 +166,11 @@ web/
   js/agent.js          Device agent: chat routing, think() (Nano or /api/think), auto moves with local limits,
                        private-note drafts for answer items
   js/live.js           Engagements/inbox state, Firestore listeners or polling, notifications, poke()
-  js/local.js          IndexedDB for chat sessions only (per-uid keys), relevant() note retrieval
-  js/api.js            Firebase Auth (anonymous, Google link), App Check token, Firestore listeners, api()
+  js/local.js          IndexedDB chat cache (per-uid keys; the account copy is in `chats`), relevant() note retrieval
+  js/api.js            Config (cached), Firebase Auth (guest / Google link-or-switch / redirect fallback), App Check on a
+                       separate app instance, push registration, install prompt, Firestore listeners (lazy), api()
+  sw.js                Service worker: network-first shell (3 s fallback), FCM background messages, notification clicks
+  manifest.webmanifest, icon*.png/svg   Installable app (PWA); version.txt is written by deploy.sh (git-ignored)
 deploy.sh              SA + IAM (retried), Secret Manager, TTL, Cloud Run deploy (--source), Firebase deploy
 monitoring.sh          One-time uptime check + alert (ALERT_EMAIL=…)
 firebase.json, firestore.rules, firestore.indexes.json, Dockerfile, .github/workflows/ci.yml
@@ -151,9 +194,14 @@ firebase.json, firestore.rules, firestore.indexes.json, Dockerfile, .github/work
 | `audit/{id}` | what the cloud agent shared, to whom, tier | server |
 | `answers/{factId:question}` | answers a provider's agent gave from an offering, reused for the same question | server |
 | `rate/*`, `leases/*` | TTL `expireAt` | server |
+| `receipts/{engagementId}` | sha256 of the sealed deal, registered once at agreement (append-only) | server |
+| `push_tokens/{sha256(token)[:40]}` | uid, token, at | server |
+| `watches/{id}`, `alerts/{id}` | scheduled re-searches of a request; new matches for the owner | server |
+| `chats/{uid}_{chatId}` | owner, updatedAt, json (the chat; last 200 messages, ≤600 KB) | server (owner only) |
 | `meta/demo` | `{version:"demo-v3"}` — bump `SEEDED` in demo.ts to re-seed (v2 added labelled demo deals, v3 @nikhil + goods/vehicles deals) | server |
 
-Only chat sessions stay in the browser (IndexedDB `collab` → store `sessions`, keyed `<uid>:<id>`). Facts of every
+Chat sessions are cached in the browser (IndexedDB `collab` → store `sessions`, keyed `<uid>:<id>`) and kept in the
+account (`chats`), newest copy wins. Engagements also carry `seller` (side) and `payment` (AP2 cart/mandate/status). Facts of every
 tier and all limits live server-side; `autonomy: "ask"` on a LIMITS row stores a non-delegated limit for the owner's
 devices without letting the agent act on it.
 
@@ -221,9 +269,16 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 - **Deal receipt**: sha256 over `{engagementId, taskId, terms, parties, at}` + per-owner HMAC (`signReceipt`, same
   secret as agent tokens); computed on request (`GET /api/engagements/:id/receipt`), nothing extra stored. Carries
   handles and the agreed price only — never a limit.
-- **Track record**: each side can mark an agreed deal "went ahead" / "fell through"; `stats()` counts what the
-  *other* side said; shown on matches and public profiles.
-- **AP2**: the agent card declares the AP2 extension (roles merchant/shopper, `required:false`) — no payment flow yet.
+- **Track record**: a completed AP2 payment marks the deal "went ahead" for both; otherwise either side can mark
+  "paid another way" or "fell through"; `stats()` counts what the *other* side said; shown on matches and profiles.
+- **AP2 in test mode only** (user's call: no real UPI for the hackathon — without a payment provider we can't
+  confirm a UPI payment happened, which breaks "payment proves the deal"). Cart Mandate signed by the seller's agent
+  at agreement (`engage.ts save()` → `pay.ts cartFor`), Payment Mandate signed by the buyer's agent on Pay and sent
+  over A2A. Signatures are still server HMACs (see next tasks: Ed25519).
+- **Direct chats**: no listing → no agent negotiation; owners talk through their agents, and a named price is an
+  offer (regex, not Gemini — deterministic and free). Deals agreed before `seller` existed infer it from the message
+  that offered the deal (`sellerInChat`).
+- **Service worker network-first** (not stale-while-revalidate): SWR left installed apps on old code for days.
 
 ## 8. Verification evidence
 
@@ -247,6 +302,12 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
   localities, negotiable sellers hidden by the budget filter, JudgeTask closing on a bare "Yes.", mixed units in
   insights.
 
+- **14 Oct live (two real phones/Macs + a guest tab):** FCM delivery to both devices (direct send and app path);
+  "New request" and "Your agent needs you" on real A2A questions; follow-up both ways; ₹100 deal offered by text,
+  confirmed on the phone, paid via AP2 (both signatures valid, receipt verified); carts back-filled for older deals
+  (₹410 Anu ↔ bottle-store awaiting payment); seller's 3 chats uploaded to the account. **Not yet confirmed:** the
+  two real accounts' chats syncing (their apps were still on cached old code — reopen twice).
+
 ## 9. Known issues / rough edges
 
 1. **Offers chart**: when one side has many points and the other one, the x-axis scale makes the lone side look wrong
@@ -266,23 +327,61 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 13. **Receipt signatures** are HMACs with the server secret, so they prove "Collab recorded this", not independent
     owner keys; `deals.ts` ↔ `engage.ts` is an ESM import cycle (safe: all uses are inside functions).
 14. `GET /api/insights` has no spend charge (no model call) but is unthrottled beyond App Check.
-10. Private facts sit in Firestore like everything else (plaintext at rest — GCP encrypted, but readable by anyone
-    with DB access); no per-user encryption. Chat history is still only in IndexedDB.
+10. Private facts and chat history sit in Firestore (plaintext at rest — GCP encrypted, but readable by anyone with
+    DB access); no per-user encryption.
+15. `offeredPrice` is a regex: "can you do 350?" is a question, not an offer (no selling word); unusual phrasings may
+    be missed — the owner can always restate with ₹.
+16. The pickup proof doesn't exist yet: a paid receipt can be shown twice (see next tasks).
+17. `SUBMISSION.md` is out of date (says Private stays on the device; misses AP2, QR chats, push, watches, PWA,
+    Google sign-in).
+18. Cloud Scheduler watches are deployed and the job is ENABLED, but a real alert end-to-end hasn't been observed.
 11. The deployed site's old tabs (pre-App-Check JS) get 401s until reloaded.
 12. `firebase deploy` used to prompt about TTL field overrides; now declared in `firestore.indexes.json`.
 
-## 10. Next tasks (in order)
+## 10. Next tasks — code scope to completion (in order)
 
-1. **Deploy** (`APPCHECK=enforce ./deploy.sh`) — the demo re-seeds (`demo-v3`); check `/health → model.byModel`
-   shows Flash-Lite answering the cheap tasks, and that `/api/insights?category=lessons` returns demo lines.
-2. **Hackathon deliverables** (deadline 18 Oct): deck on the organisers' template (dashboard), < 3 min video (script:
-   setup → request with Gemini questions → matches → live A2A card → needs-you → automatic negotiation → deal; the
-   provider's side in a second browser; the hostile listing; the agent card URL), submission text from
-   `SUBMISSION.md`, deployed link, repo link. Confirm the team (2–4 members) is registered.
-3. **PRD R1 local-first Gemma** (MediaPipe LLM Inference web, WebGPU): port the device-side tasks (route, ask notes,
-   draft brief, private drafts) to run in the browser with the same validators (move pure modules from `server/src/market`
-   + `core/tasks.ts` into a shared package bundled for the web); PWA service worker + send queue; setting
-   "private model: on device only".
-4. **R2 FCM web push** for inbox items and new requests (service worker; tokens per uid in Firestore; send from the
-   server on `ask()` and new engagements).
-5. **R3 exact location after a deal**; fix issues 1–2; R7 Cloud Tasks; R8 delete/export.
+Deadline 18 Oct 2026. Deck/video are out of this list. Keep `npm run check` green and deploy with
+`APPCHECK=enforce ./deploy.sh` (from the `collab-market` folder).
+
+**Must**
+
+1. **Pickup pass (skip the queue).** A paid deal shows the buyer a QR (`/?pickup=<engagementId>.<code>`; code = short
+   HMAC of the id so ids alone can't be guessed into passes). The seller scans (People › Scan a QR already uses
+   `BarcodeDetector`) or opens the link → a card with item, amount, buyer, "✓ Paid · not collected" and **Mark
+   collected** (seller only, one-time, transaction on the engagement: `payment.collectedAt`); a second scan shows
+   "Already collected at …". Server: `GET /api/pickup/:id?code=` (participants + seller), `POST /api/pickup/:id/collect`.
+   Push the buyer "Collected". Files: `server.ts`, `core/pay.ts`, `web/js/cards.js dealBlock`, `app.js` deep links.
+2. **Public-key signatures (make "verifiable" true).** Replace the HMAC receipt/mandate signatures with Ed25519
+   (`node:crypto` `generateKeyPairSync("ed25519")`, private key in Secret Manager `receipt-key`, loaded like
+   `AGENT_SECRET`). Publish the public key in every agent card (AP2 extension `params.publicKey` or a
+   `/.well-known/collab-keys.json`) and sign `{uid, hash}`. Add a **public verify page** (no login) at
+   `/verify/<engagementId>` showing yes/no, terms and both mandates, checkable offline with the published key.
+   Keep the append-only `receipts` hash. Files: `a2a/agents.ts signReceipt`, `core/pay.ts`, `core/deals.ts`,
+   `server.ts`, a small static page.
+3. **Fair-price check (Google Search grounding).** `POST /api/price-check {item, area}` → Gemini with
+   `tools: [{ googleSearch: {} }]` on Vertex (`ai/gemini.ts`: add a `grounded` option), JSON out
+   `{low, high, typical, sources:[{title,url}]}` validated (numbers must appear in the grounded text; drop otherwise).
+   Button "Check fair price" on the brief card and the deal-offer prompt; shown only to its owner, never sent to the
+   other agent. Cap 5/day per uid via `limits.ts take()`; meter it (`ai/meter.ts`).
+4. **End-to-end test of the retail path** in `test/e2e.test.ts`: shop QR (`/api/people/:handle/ask`) → follow-up both
+   ways → price offer → confirm → `/pay` → pickup → collect (and double-collect refused). Unit tests for chat sync
+   endpoints and `offeredPrice` edge cases you hit.
+5. **Benchmark script** `server/tools/bench.ts` (BASE=… against the live service, real Gemini), writing
+   `docs/bench/results.json` + a markdown table: privacy red-team (~100 attempts at Private notes/limits incl.
+   prompt injection and Hinglish → leaks, target 0), negotiation (~50 seeded pairs → deal rate, % inside both limits =
+   100%, rounds, surplus split), routing accuracy (~120 labelled messages), match precision@3, latency p50/p95 per
+   step, ₹ per request/deal (from `/health model.costUSD`), and a 50-concurrent-conversation load run.
+   `tools/live-cases.ts` is the starting point.
+6. **Verify live**: the real accounts' chat sync (reopen apps twice, then check `chats` for both uids); a watch alert
+   via Cloud Scheduler (create a watch, add a matching Public offering from another account, wait ≤15 min, expect the
+   alert + push); pay the ₹410 listing deal from @anu-buyer.
+7. **Docs**: update `SUBMISSION.md` (issue 17), README (features, run, deploy), PRD status.
+
+**Should (if time)**
+
+8. **Model Armor** on text from other agents and on outgoing answers (API already enabled): sanitize before
+   `AnswerTask`/`JudgeTask`, log verdicts, refuse on high-confidence injection.
+9. **Shop counter screen**: today's paid, not-collected orders for a seller, built on the pickup pass.
+
+**Out of scope for the hackathon**: real UPI / payment provider, passkey-signed mandates, voice, Wallet passes,
+calendar, on-device Gemma (PRD R1), Cloud Tasks (R7).
