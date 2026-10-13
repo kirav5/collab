@@ -29,3 +29,19 @@ export function offeredPrice(text: string): number | null {
   }
   return null;
 }
+
+/** What a chat deal is for, from the message that offered it: "I'll sell you the 200 ml bottle for ₹100" → "200 ml bottle". */
+export function dealItem(text: string): string | null {
+  const t = text
+    .replace(/(?:₹|\brs\.?\s*|\binr\s*)\s*[\d,]+(?:\.\d+)?\s*(?:k|thousand|lakhs?|cr|crore)?\b/gi, " ")
+    .replace(/\b[\d,]+(?:\.\d+)?\s*(?:k|thousand|lakhs?|cr|crore)?\s*(?:rs\b\.?|rupees?\b|\/-|inr\b)/gi, " ")
+    .replace(/^\s*(?:ok(?:ay)?|yes|sure|fine|great)?[,!.]?\s*/i, "")
+    .replace(/^(?:i'?ll|i will|i can|we can|we'?ll|can)\s+(?:sell|give|do|pay|offer|let you have|buy|take)\s*(?:you\s+)?(?:it\s+)?/i, "")
+    .replace(/\b(?:for|at|in)\s*(?:just|only)?\s*[.?!]*\s*$/i, "")
+    .replace(/\b(?:deal\s+)?(?:at|for)\s+[\d,]+(?:\.\d+)?\s*(?:k|thousand|lakhs?|cr|crore)\b/gi, " ")
+    .replace(/^\s*(?:deal|offer)\b\s*/i, "")
+    .replace(/^\s*for\s+/i, "")
+    .replace(/^(?:the|a|an|my|this|that|these|those)\s+/i, "")
+    .replace(/\s+/g, " ").replace(/[\s,.?!-]+$/, "").trim();
+  return t.length >= 3 ? t.slice(0, 80) : null;
+}

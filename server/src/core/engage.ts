@@ -15,6 +15,7 @@ import { catalog, domain as domainOf } from "../market/domains.ts";
 import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
 import { type Mandate, type Proposal, moneyText, newId } from "../market/types.ts";
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
+import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
@@ -444,6 +445,9 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   // A shop with no listing used to seal its shop name as the item. Seal the actual offer shown for confirmation.
   if (!e.offer.factId && said.trim()) e.offer.title = said.trim().slice(0, 160);
   e.seller = sellerFrom(said, s) ?? e.seller ?? "provider";
+  // A chat that didn't start from a listing names its item from the offer, so the cart, receipt and pickup pass say
+  // what is being handed over (not the person's name).
+  if (!e.offer.factId || e.offer.price == null) e.offer.title = dealItem(said) ?? e.offer.title;
   const p = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";

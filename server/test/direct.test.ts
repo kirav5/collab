@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { offeredPrice } from "../src/core/direct.ts";
+import { dealItem, offeredPrice } from "../src/core/direct.ts";
 
 test("a price named in a chat is read as an offer", () => {
   assert.equal(offeredPrice("ok i will sell for 100rs"), 100);
@@ -18,4 +18,12 @@ test("counts and sizes are not prices", () => {
   assert.equal(offeredPrice("Yes 200 ml"), null);
   assert.equal(offeredPrice("I'll pay for 3 days"), null);
   assert.equal(offeredPrice("Hi, do you need a steel water bottle?"), null);
+});
+
+test("a chat deal is named after what it's for", () => {
+  assert.equal(dealItem("I'll sell you the 200 ml bottle for ₹100"), "200 ml bottle");
+  assert.equal(dealItem("ok i will sell for 100rs"), null);
+  assert.equal(dealItem("I can pay ₹350 for the steel bottle"), "steel bottle");
+  assert.equal(dealItem("Deal at 2.5 lakh for the bike"), "bike");
+  assert.equal(dealItem("Milton 1 litre flask, ₹450"), "Milton 1 litre flask");
 });

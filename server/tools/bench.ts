@@ -14,15 +14,20 @@ const report: any = { runId, at: new Date().toISOString(), base, mode: full ? 'f
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const count = { privacy: full ? 100 : 3, negotiation: full ? 50 : 2, intent: full ? 120 : 8 };
 let pool: Actor[] = [];
-async function api(a: Actor, path: string, body?: unknown) {
-  const start = performance.now(), step = path.replace(/[a-f0-9-]{20,}/g, ':id');
-  try {
+// The service caps each account (token bucket, ~4 calls/min after a burst of 60). That cap is deliberate, so a 429
+// waits and retries (counted in report.throttled) instead of failing a functional case. Latency excludes the waits.
+let throttled = 0;
+async function api(a: Actor, path: string, body?: unknown): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    const start = performance.now(), step = path.replace(/[a-z0-9]{16,}/g, ':id').replace(/\/people\/[^/]+/, '/people/:handle');
     const response = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', signal: AbortSignal.timeout(60000),
       headers: { 'content-type': 'application/json', authorization: `Bearer ${a.token}`, ...(a.appCheck ? { 'x-firebase-appcheck': a.appCheck } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const r = await response.json();
+    const r = await response.json().catch(() => ({}));
+    if (response.status === 429 && attempt < 8) { throttled++; report.throttled = throttled; await sleep(20000); continue; }
+    (timings[step] ??= []).push(Math.round(performance.now() - start));
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${r.error ?? 'request failed'}`);
     return r;
-  } finally { (timings[step] ??= []).push(Math.round(performance.now() - start)); }
+  }
 }
 async function measured(suite: string, id: number, fn: () => Promise<any>) {
   const t = performance.now();
@@ -69,7 +74,7 @@ async function save() {
 try {
   report.healthBefore = await fetch(base + '/health').then(r => r.json());
   report.liveModel = !!report.healthBefore.model && report.healthBefore.model.backend !== 'fake' && !/fake|offline/i.test(report.healthBefore.model.model ?? '');
-  pool = await actors(base, full ? 10 : 2);
+  pool = await actors(base, Number(process.env.BENCH_ACCOUNTS) || (full ? 20 : 2));
   if (pool.length < 2) throw new Error('At least two dedicated test accounts required.');
   for (let i = 0; i < pool.length; i++) await api(pool[i], '/api/me', { handle: `bench-${runId}-${i}`.slice(0,24), name: `Benchmark ${i}`, areaName: 'Koramangala' });
   const seller = pool[0], buyer = pool[1], handle = (await api(seller, '/api/me')).handle;
@@ -131,7 +136,15 @@ try {
   else report.load='not run; use --load for 50 concurrent conversations';
   report.healthAfter=await fetch(base+'/health').then(r=>r.json());
   report.costs.observedCounterDeltaUSD=(report.healthAfter.model?.costUSD ?? 0)-(report.healthBefore.model?.costUSD ?? 0);
-  report.limitations=['Template-generated corpus; inspect scenario diversity before claiming general accuracy.','No billing attribution across Cloud Run replicas.','Load may exercise deliberate throttling; report 429s as errors, never successful conversations.','Private test facts/accounts persist for repeatable inspection.','Smoke mode is not a full benchmark.'];
+  report.limitations=['Template-generated corpus; inspect scenario diversity before claiming general accuracy.','No billing attribution across Cloud Run replicas.','Load may exercise deliberate throttling; report 429s as errors, never successful conversations.','Test accounts, conversations and private canaries persist for inspection; their public listings are deleted and profiles paused after the run (BENCH_KEEP=1 to keep).','Smoke mode is not a full benchmark.'];
 } catch(e) { report.blocked=(e as Error).message; console.error(report.blocked); }
+// Keep the live directory clean: benchmark listings come out of search and the test profiles are paused. Accounts,
+// conversations and private canaries stay for inspection.
+if (process.env.BENCH_KEEP !== '1') for (const a of pool) {
+  try {
+    for (const f of await api(a, '/api/facts')) if (f.tier !== 'private') await api(a, `/api/facts/${f.id}/delete`, {});
+    await api(a, '/api/me/pause', { paused: true });
+  } catch (e) { (report.cleanupErrors ??= []).push((e as Error).message.slice(0, 120)); }
+}
 await save();
 process.exitCode=report.blocked || rows.some(r=>r.status!=='pass')?1:0;
