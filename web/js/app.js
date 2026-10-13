@@ -237,14 +237,15 @@ async function onClick(e) {
       busy(el, true);
       const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
       const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
-      const market = await insightsLines({ side: el.dataset.side, category: el.dataset.cat, area: el.dataset.area, price: el.dataset.price || null, unit: el.dataset.unit, item: el.dataset.item || null });
-      const confirmedBy = s => r.confirmedBy[s] === "mandate" ? "standing mandate" : "owner";
-      const sig = s => (r.signatures[s] ? `${r.signatures[s].slice(0, 16)}…` : "—");
-      box.innerHTML = `<div class="stack" style="gap:6px">
-        ${market.length ? `<span class="small faint">${esc(market[0])}</span>` : ""}
-        <span class="small">“${esc(r.terms.title)}” — <b>${money(r.terms.price, r.terms.unit)}</b></span>
-        <span class="small faint">hash ${esc(r.hash.slice(0, 16))}… · requester signed (${confirmedBy("requester")}): ${esc(sig("requester"))} · provider signed (${confirmedBy("provider")}): ${esc(sig("provider"))}</span>
-        <span class="small faint">Anyone with this engagement id can ask Collab to verify the hash.</span></div>`;
+      const when = t => new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+      const by = s => (r.confirmedBy[s] === "mandate" ? "their standing instruction" : "the owner");
+      box.innerHTML = `<div class="receipt">
+        <div class="row">${r.matches ? tag("✓ Verified", "fresh") : tag(r.registered ? "Changed since agreed" : "Not registered", "danger")}
+          <span class="small">${esc(r.parties.requester.name)} ↔ ${esc(r.parties.provider.name)} · <b>${money(r.terms.price, r.terms.unit)}</b></span></div>
+        <span class="small muted">“${esc(r.terms.title)}” · agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
+        <details class="more"><summary>How this is checked</summary>
+          <span class="small muted">When both sides confirmed, Collab hashed the terms, both parties and the time (SHA-256) and registered that hash. Verify recomputes it from the conversation: any change to price, terms or parties breaks the match. Confirmed by ${by("requester")} (requester) and ${by("provider")} (provider).</span>
+          <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details></div>`;
       return;
     }
     if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen })) return;

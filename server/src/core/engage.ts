@@ -15,7 +15,7 @@ import { catalog, domain as domainOf } from "../market/domains.ts";
 import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
 import { type Mandate, type Proposal, moneyText, newId } from "../market/types.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
-import { forProvider, forRequester, insights, recordDeal } from "./deals.ts";
+import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { clean } from "./wall.ts";
@@ -55,7 +55,7 @@ export async function load(db: Docs, id: string): Promise<Engagement> {
 
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
-  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); }
+  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now()); }
   await db.set(ENGAGEMENTS, e.id, e);
 }
 

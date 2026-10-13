@@ -112,3 +112,19 @@ test("past deals in a broad category count only for the same kind of item", asyn
   assert.equal(await insights(db, { category: "goods" }), null, "no item, nothing comparable");
   assert.equal((await insights(db, { category: "goods", item: "iPhone 11" }))?.n, 3);
 });
+
+test("a deal's receipt is registered once at agreement; any later change to the terms fails verification", async () => {
+  const { registerReceipt, verifyReceipt } = await import("../src/core/deals.ts");
+  const db = memoryDocs();
+  const brief: SharedBrief = { title: "Water bottle", summary: "", category: "goods", mode: null, area: "Indiranagar", requirements: [], budget: null, questions: [] };
+  const e = fresh({ briefId: "b1", brief, requester: { uid: "amy", handle: "amy", name: "Amy" }, provider: { uid: "pat", handle: "pat", name: "Pat" },
+    offer: { factId: "f1", title: "Milton bottle", price: 450, unit: "each", category: "goods" } });
+  assert.deepEqual(await verifyReceipt(db, e), { registered: false, matches: false, registeredAt: null });
+  e.phase = "agreed"; e.agreedAt = now; e.negotiation.deal = { id: "p1", price: 410, terms: {}, round: 2 };
+  await registerReceipt(db, e, now);
+  assert.equal((await verifyReceipt(db, e)).matches, true);
+  await registerReceipt(db, { ...e, negotiation: { ...e.negotiation, deal: { ...e.negotiation.deal, price: 1 } } }, now + 5);
+  assert.equal((await verifyReceipt(db, e)).matches, true, "a second registration never overwrites the first");
+  e.negotiation.deal = { ...e.negotiation.deal, price: 300 };
+  assert.equal((await verifyReceipt(db, e)).matches, false, "a changed price no longer matches what was registered");
+});

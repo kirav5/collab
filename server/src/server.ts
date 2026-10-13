@@ -22,7 +22,7 @@ import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, resolve as resolveItem, save as saveEngagement } from "./core/engage.ts";
-import { forProvider, forRequester, insights, receipt, stats } from "./core/deals.ts";
+import { forProvider, forRequester, insights, receipt, registerReceipt, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RouteTask, TopicsTask } from "./core/tasks.ts";
@@ -380,7 +380,14 @@ app.get("/api/engagements/:id/receipt", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   const r = receipt(e, (uid, hash) => signReceipt(cfg.secret, uid, hash));
   if (!r) throw new HttpError(404, "no deal yet");
-  return r;
+  await registerReceipt(db, e, now()); // deals agreed before receipts were registered get theirs now
+  return { ...r, ...(await verifyReceipt(db, e)) };
+}));
+/** Anyone signed in who has the engagement id can check a deal against its registered receipt (yes/no, nothing else). */
+app.get("/api/engagements/:id/verify", route(async req => {
+  const e = (await db.get(ENGAGEMENTS, String(req.params.id))) as Engagement | null;
+  if (!e) return { registered: false, matches: false, registeredAt: null };
+  return verifyReceipt(db, e);
 }));
 app.post("/api/engagements/:id/outcome", route(async req => {
   const e = await participant(req.uid, String(req.params.id));

@@ -118,12 +118,34 @@ export interface Receipt {
 }
 
 /** The deal both sides confirmed, hashed and signed per owner — a receipt either can keep or show. */
-export function receipt(e: Engagement, sign: (uid: string, hash: string) => string): Receipt | null {
-  if (e.phase !== "agreed" || !e.negotiation.deal) return null;
-  const terms = { title: e.offer.title, price: e.negotiation.deal.price, unit: e.offer.unit, category: e.offer.category, terms: e.negotiation.deal.terms };
+export const RECEIPTS = "receipts";
+
+/** The agreed terms, both parties and the time, hashed (SHA-256): any later change to them changes the hash. */
+function sealed(e: Engagement) {
+  const terms = { title: e.offer.title, price: e.negotiation.deal!.price, unit: e.offer.unit, category: e.offer.category, terms: e.negotiation.deal!.terms };
   const parties = { requester: { handle: e.requester.handle, name: e.requester.name }, provider: { handle: e.provider.handle, name: e.provider.name } };
   const at = e.agreedAt ?? e.events.find(ev => ev.who === "system" && ev.text.startsWith("Deal agreed"))?.at ?? e.createdAt;
   const hash = createHash("sha256").update(JSON.stringify({ engagementId: e.id, taskId: e.taskId, terms, parties, at })).digest("hex");
+  return { terms, parties, at, hash };
+}
+
+/** Registers the deal's hash once, at agreement (append-only: a registered receipt is never rewritten). */
+export async function registerReceipt(db: Docs, e: Engagement, now: number) {
+  if (e.phase !== "agreed" || !e.negotiation.deal) return;
+  const { hash, at } = sealed(e);
+  await db.update(RECEIPTS, e.id, (cur: unknown) => (cur ? null : { engagementId: e.id, hash, agreedAt: at, registeredAt: now }));
+}
+
+/** Does the conversation still say what was registered when the deal was agreed? */
+export async function verifyReceipt(db: Docs, e: Engagement): Promise<{ registered: boolean; matches: boolean; registeredAt: number | null }> {
+  const r = (await db.get(RECEIPTS, e.id)) as { hash: string; registeredAt: number } | null;
+  if (!r || !e.negotiation.deal) return { registered: !!r, matches: false, registeredAt: r?.registeredAt ?? null };
+  return { registered: true, matches: sealed(e).hash === r.hash, registeredAt: r.registeredAt };
+}
+
+export function receipt(e: Engagement, sign: (uid: string, hash: string) => string): Receipt | null {
+  if (e.phase !== "agreed" || !e.negotiation.deal) return null;
+  const { terms, parties, at, hash } = sealed(e);
   return { engagementId: e.id, taskId: e.taskId, terms, parties,
     confirmedBy: { requester: e.negotiation.confirmedBy?.requester ?? "owner", provider: e.negotiation.confirmedBy?.provider ?? "owner" },
     at, hash, signatures: { requester: e.requester.uid ? sign(e.requester.uid, hash) : null, provider: e.provider.uid ? sign(e.provider.uid, hash) : null } };
