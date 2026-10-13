@@ -10,7 +10,10 @@ export async function signIn() {
   if (config) {
     const { initializeApp } = await import(`${FB}/firebase-app.js`);
     const { getAuth, onAuthStateChanged, signInAnonymously, GoogleAuthProvider, linkWithPopup, signInWithPopup, signOut } = await import(`${FB}/firebase-auth.js`);
-    const app = initializeApp(config);
+    // ?as=<name> gives this tab its own guest account (Firebase keeps sign-ins per app name), so one browser can be
+    // two people — for trying both sides of a conversation.
+    const as = new URLSearchParams(location.search).get("as")?.replace(/[^\w-]/g, "").slice(0, 24);
+    const app = as ? initializeApp(config, `as-${as}`) : initializeApp(config);
     // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API.
     if (session.config.appCheckSiteKey) {
       try {

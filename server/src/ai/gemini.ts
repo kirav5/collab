@@ -45,7 +45,7 @@ export const modelsFor = (tier: "cheap" | "standard" | undefined, standard: stri
 
 export function geminiFromEnv(env = process.env): (Model & { status(): ModelStatus }) | null {
   const models = list(env.GEMINI_MODELS || env.GEMINI_MODEL, "gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite");
-  const cheap = list(env.GEMINI_MODELS_CHEAP, "gemini-3.5-flash-lite");
+  const cheap = list(env.GEMINI_MODELS_CHEAP, "gemini-3.6-flash,gemini-3.5-flash-lite");
   const thinking = env.GEMINI_THINKING || "low";
   const thinkingCheap = env.GEMINI_THINKING_CHEAP || "minimal";
   const apiKey = env.GEMINI_API_KEY;
