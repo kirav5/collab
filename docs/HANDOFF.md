@@ -22,7 +22,7 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 | Secret | Secret Manager `agent-secret` (HMAC A2A authentication) and `receipt-key` (Ed25519 receipts and test mandates); local files under `.deploy/` are ignored by git and Docker |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 58/58 pass (`npm run check`, 15 Oct); full local real-Gemini benchmark: 100/100 privacy canaries, 38/50 agreements, 120/120 repeated intent templates, 50/50 load (see §8) |
+| Tests | 65/65 pass (`npm run check`, 15 Oct: App Check replay, AP2 v0.2, signed agent cards, webhook safety); full local real-Gemini benchmark: 100/100 privacy canaries, 38/50 agreements, 120/120 repeated intent templates, 50/50 load (see §8) |
 | Size | ~5.8k lines: server ~4.0k TS, web ~1.8k JS/CSS |
 | Live accounts used for testing | @atishaysrivastava10 (uid `NlVWMHzyk1MqGNrO0jWZQTa9hEC2`, Google), @anu-buyer (uid `GrqThVDukkVtN6yK2DkGvT5usvK2`), @bottle-store (`?as=seller` guest tab in a browser) |
 
@@ -119,6 +119,11 @@ server/src/
   core/engage.ts       THE ENGINE. Turn type; providerTurn / requesterTurn; answerOpen (policy → AnswerTask → shape →
                        wall → audit, else inbox); GatherTask once; judge; moveOrAsk/move (NegotiateTask); confirm/settle;
                        resolve() for device inbox items; fresh() builds an engagement
+  core/ap2.ts          AP2 v0.2 shapes at Pay: JCS, seller-authorised checkout, SD-JWT Checkout/Payment Mandates, verifyAp2
+  core/armor.ts        Model Armor client (incoming prompt-injection screen, outgoing sensitive-data check), stats
+  core/app-check.ts    Which POSTs need single-use App Check tokens; consume-and-check
+  core/nearby.ts       Grounding with Google Maps: real places near the request's area (5/day)
+  core/queue.ts        Cloud Tasks: enqueue a waiting turn; verify the OIDC caller of /tasks/turns
   core/direct.ts       offeredPrice(): the rupee amount a chat message offers ("100rs", "₹450", "2.5 lakh"), ignoring
                        counts/sizes ("2 bottles", "200 ml")
   core/pay.ts          AP2 test mode: sellerOf/buyerOf/sellerFrom, cartFor (seller agent signs), pay (buyer agent signs,
@@ -356,4 +361,35 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 
 **Remaining live checks:** the seller @bottle-store must sign in to redeem the ₹410 pass and show that a second scan reports the original collection time. Reopen both physical devices and confirm chat sync/version update and push delivery for a real watch; the automated sync/update tests and synthetic Scheduler alert are passing. A deployed benchmark needs dedicated Firebase ID and App Check tokens (`BENCH_AUTH_FILE`) or an administrator with `iam.serviceAccounts.signBlob`. Push to GitHub only after the user's explicit OK.
 
-**Optional:** Model Armor on outside-agent text; seller counter list of today's paid uncollected orders. **Out of scope:** real UPI/payment provider, passkeys, voice, Wallet passes, calendar, on-device Gemma, Cloud Tasks.
+**Deployed and live-checked (15 Oct, second pass):**
+- **Signed A2A agent cards** (`generateAgentCardSignature`, EdDSA, `jku` → `/public/keys`): an outside client fetched
+  Riya's card and verified it with the published key only.
+- **A2A streaming + push notifications**: SSE from Cloud Run delivers `working` at 0.4 s and the answer at 4.8 s.
+  Firebase Hosting buffers SSE, so cards list the Cloud Run URL first (`RUN_URL`). Push configs are stored in
+  `a2a_push`, public https webhooks only (`safeWebhook`), and sent when an owner answers later (`deliverProviderTurn`).
+  Not yet exercised with a real outside webhook.
+- **Model Armor** (`core/armor.ts`, templates `collab-incoming` / `collab-outgoing` in asia-south1; the malicious-URL
+  filter isn't offered there): two live prompt-injection attempts from an outside agent were flagged and not
+  answered; answers with sensitive data go to the owner as "check before sharing". Counts on `/health.modelArmor`.
+- **App Check replay protection** (Devin's change, finished here): limited-use tokens consumed on Pay, Collect and
+  price check; the service account now has `roles/firebaseappcheck.tokenVerifier`. If consuming fails for lack of
+  the role it falls back to the normal check and logs an error, rather than refusing every payment.
+- **AP2 v0.2 shapes at Pay** (`core/ap2.ts`): seller-agent-authorised 10-minute checkout (detached JWS over RFC 8785
+  JSON), Checkout + Payment Mandates as SD-JWTs bound to the checkout hash, idempotency key per tap, sent over A2A in
+  `Turn.ap2`; verified in the deal record. Signed by Collab's server for its agents (EdDSA), not by the user's device.
+- **Google Pay (TEST)** button (`web/js/gpay.js`): the real sheet with test cards; the token is hashed into the
+  Payment Mandate's instrument. **Not tried live yet** — the sheet needs a signed-in Google account in the browser.
+- **Grounding with Google Maps** (`core/nearby.ts`, "Look on Google Maps nearby" when no one fits): live returned five
+  real Indiranagar shops in ≈8 s. Needs `gemini-3.8-flash` (3.6 returned no places), low thinking and 4 k output tokens
+  (a cut-off answer loses its grounding); review snippets are filtered. 5/day per account.
+- **Cloud Tasks** (`core/queue.ts`, queue `collab-turns`, 5 attempts): a turn left waiting (35 s budget or another
+  instance holding the conversation) is re-run by `/tasks/turns`, which only accepts this service's OIDC token
+  (unauthenticated → 401, checked live). The enqueue path itself hasn't been triggered live.
+- **Firestore offline cache** (`persistentLocalCache`, multi-tab) and **Firebase AI Logic** `only_on_device` for answers
+  from private notes (falls back to `/api/think`). Neither checked on a real device with Gemini Nano yet.
+- **Benchmark**: `--autorater` sends privacy/legit replies to the **Vertex AI Gen AI evaluation service** (custom
+  pointwise metric, us-central1 — asia-south1/asia-southeast1 aren't supported); it scored a spelled-out canary as a
+  leak where the literal check passes it. New `legit` suite (questions the agent should answer). Not re-run yet.
+
+**Still to check on devices:** Google Pay TEST sheet, Firebase AI Logic on Chrome desktop with Nano, offline cache in
+the installed app, an outside agent's push webhook, a full `bench.ts --full --autorater` run.

@@ -51,7 +51,7 @@ Gemini proposes; code checks; deterministic rules decide when the model is down 
 |---|---|---|
 | Agreed | Both owners confirm; the deal's SHA-256 is registered once (write-once by the app, not an external ledger) | Recomputing the hash |
 | Cart | The seller's agent signs a Cart Mandate for exactly the agreed item and amount | Ed25519 signature, public key at `/public/keys` |
-| Pay | The buyer taps Pay; their agent signs a Payment Mandate for that cart and sends it to the seller's agent over A2A. **Test mode.** | Ed25519 signature |
+| Pay | The buyer taps Pay (optionally Google Pay TEST). AP2 v0.2 shapes: the seller's agent authorises a 10-minute checkout (detached JWS over its RFC 8785 canonical JSON); the buyer's agent issues a Checkout Mandate and a Payment Mandate (SD-JWT) bound to the checkout hash, with an idempotency key, sent to the seller's agent over A2A. **Test mode.** | EdDSA signatures, public key |
 | Collect | The seller scans the pickup pass and marks it collected — once, seller only, atomic | The pass shows the original collection time |
 | Verify | `/verify.html#…` (no sign-in) or `node server/tools/verify-receipt.ts` checks the record offline | Anyone with the public key |
 
@@ -63,17 +63,25 @@ the seller sees the buyer's name.
 
 | | Used for |
 |---|---|
-| **Gemini** (Vertex AI) | Routing, drafting, clarifying, ranking, answering, judging, negotiating, grounded price checks; `gemini-embedding-001` |
+| **Gemini** (Vertex AI) | Routing, drafting, clarifying, ranking, answering, judging, negotiating; `gemini-embedding-001` |
+| **Grounding with Google Search · Google Maps** | Fair-price evidence (every price traced to a source) · real nearby shops when no one on Collab fits |
+| **Model Armor** | Screens what other agents send for prompt injection / jailbreaks; checks answers for sensitive data before they're shared |
+| **Firebase AI Logic** | Gemini Nano on the device (`only_on_device`) for answers from private notes in Chrome |
 | **Cloud Run** | The server: one A2A agent per person (`/a2a/<handle>`), the API, the directory, the engine |
 | **Firestore** | Profiles, facts (vector index), rules, live conversations, inboxes, A2A tasks, receipts, pickups, chat history, audit |
-| **Firebase** | Hosting (installable web app), Auth (Google or guest), App Check (reCAPTCHA Enterprise), Cloud Messaging (push) |
+| **Firebase** | Hosting (installable web app), Auth (Google or guest), App Check (reCAPTCHA Enterprise; single-use tokens consumed on Pay, Collect and price checks), Cloud Messaging (push), Firestore offline cache |
+| **Cloud Tasks** | Re-runs a conversation's waiting agent turn on the server (OIDC-checked) |
+| **Google Pay (TEST environment)** | The Pay sheet with Google's test cards; its token is hashed into the AP2 Payment Mandate. No money moves. |
+| **Vertex AI Gen AI evaluation** | Autorater in the benchmark for paraphrased or spelled-out leaks |
 | **Cloud Scheduler** | Scheduled agents re-run watched requests every 15 minutes |
 | **Secret Manager · Cloud Monitoring** | Agent and receipt keys · uptime check and alert |
 
 ## A2A
 
 Every person's agent is an A2A v1.0 agent (official `@a2a-js/sdk`): `GET /a2a/<handle>/.well-known/agent-card.json`,
-JSON-RPC at `/a2a/<handle>`. One conversation is one A2A task; each turn carries a text part (for any A2A client)
+JSON-RPC at `/a2a/<handle>`. Agent cards are **signed** (JWS over the JCS-canonical card, `jku` → `/public/keys`) and
+advertise **streaming** (Cloud Run's URL first — Firebase Hosting buffers server-sent events) and **push
+notifications** (public https webhooks only). One conversation is one A2A task; each turn carries a text part (for any A2A client)
 and a `collab.turn/v1` data part (questions, answers, offers, confirmations, payment mandates). Any outside A2A
 agent can talk to ours — without signing in it is a stranger and gets Public facts only.
 
