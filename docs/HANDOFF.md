@@ -403,5 +403,13 @@ New modules: `config/policy.ts`, `core/{goals,plans,composed,resources,connector
 capabilities,app-check,armor,ap2}.ts`, `a2a/webhooks.ts`. New scheduler job `collab-recovery` (every minute).
 Deploy is now `./deploy.sh production` (manifests in `deploy/`).
 
+**15 Oct, review pass** ([REPORT-2026-10-15.md](REPORT-2026-10-15.md)): caps on price checks/Maps off by default
+(policy `0`); **key-id regression fixed** — the Cloud Run image's Node changed JWK property order between deploys,
+which changed the derived key id and failed every earlier receipt, cart, mandate and pickup pass; ids are now RFC 7638
+thumbprints with legacy aliases and `RECEIPT_KEYS_PREVIOUS` for real rotation (tests 102–104); `?screen=` deep links
+to every screen; Sharing wording; installed-app shortcuts. Submission deck on the organisers' template:
+`submission/Collab-AI-Builder-Cup.pptx` + `.pdf` (built by a script from live screenshots and the benchmark; the
+demo-video link is still blank). Devin's earlier deck files remain beside it.
+
 **Still to check on devices:** Google Pay TEST sheet, Firebase AI Logic on Chrome desktop with Nano, offline cache in
 the installed app, an outside agent's push webhook, a full `bench.ts --full --autorater` run.

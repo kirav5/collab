@@ -18,7 +18,8 @@ deal record with Collab's published public key.
 
 Built for the **AI Builder Cup 2026 — Retail & Commerce**. Live: https://collab-55.web.app (installable) ·
 Product requirements: [docs/PRD.md](docs/PRD.md) · Engineering handoff: [docs/HANDOFF.md](docs/HANDOFF.md) ·
-Assessment and claim wording: [docs/HACKATHON-INNOVATION.md](docs/HACKATHON-INNOVATION.md) · Benchmarks: [docs/bench](docs/bench)
+Assessment and claim wording: [docs/HACKATHON-INNOVATION.md](docs/HACKATHON-INNOVATION.md) · Benchmarks: [docs/bench](docs/bench) ·
+Full review (coverage, tests, UI, market): [docs/REPORT-2026-10-15.md](docs/REPORT-2026-10-15.md) · Deck: [submission/](submission/)
 
 **Provenance:** the reading, matching, answering and negotiation logic was ported to TypeScript from the authors'
 native Collab app (Swift). This web app, its server, A2A agents, data and everything listed below were built for
