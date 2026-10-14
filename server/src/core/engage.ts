@@ -186,11 +186,16 @@ function source(allowed: Allowed[], evidence: string[]): Allowed | null {
   return allowed.find(a => evidence.some(ev => norm(a.fact.text).includes(norm(ev)))) ?? null;
 }
 
+/** Questions about whether something is there now (stock, slots), which the ledger answers rather than the model. */
+export const isStockQuestion = (q: string) => /\b(in stock|available|availability|stock|left|any (more|left)|slots?|book(ing)?|free (on|at))\b/i.test(q)
+  || /\b(do|does|did|have|has|got|is|are)\b.*\b(have|got|stock|carry|sell)\b.*\b(today|now|right now|at the moment|currently)\b/i.test(q)
+  || /\b(have|got)\s+(it|any|one|some|them)\b/i.test(q);
+
 async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q: QA): Promise<{ text: string; src: QA["source"]; review: boolean; byModel: boolean } | null> {
   const owner = uidOf(e, s), asker = uidOf(e, other(s));
   // Stock and slot questions are answered from the ledger, never from a cached reply or the model: a count only
   // when it's confirmed, "needs to be confirmed" when it's stale, "isn't tracked" when there's no ledger.
-  if (s === "provider" && e.offer.factId && /\b(in stock|available|availability|stock|left|any (more|left)|have (it|any|one)|slots?|book(ing)?|free (on|at))\b/i.test(q.question)) {
+  if (s === "provider" && e.offer.factId && isStockQuestion(q.question)) {
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
   }

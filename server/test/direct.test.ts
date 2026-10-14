@@ -37,3 +37,9 @@ test("the currency of an offer is read, not assumed", () => {
   assert.deepEqual(offeredMoney("I can pay 400 for it", "USD"), { amount: 400, currency: "USD" }, "no currency written: the conversation's");
   assert.equal(offeredMoney("Do you have the 1 litre one?", "INR"), null);
 });
+
+test("questions about what's there now go to the ledger, not the model", async () => {
+  const { isStockQuestion } = await import("../src/core/engage.ts");
+  for (const q of ["Is it in stock?", "Do you have a 1 litre bottle today?", "Have you got any left?", "Any slots on Saturday?", "Do you still have it?", "How many are available?"]) assert.equal(isStockQuestion(q), true, q);
+  for (const q of ["What is the price?", "Do you deliver to Koramangala?", "Which brands do you sell?", "Can I pay by UPI?"]) assert.equal(isStockQuestion(q), false, q);
+});
