@@ -6,6 +6,7 @@ export const PRICE_CHECKS = "price_checks";
 export class PriceCheckError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export async function reserveCheck(db: Docs, uid: string, now: number) {
   const limit = policy().quotas.priceChecksPerDay;
+  if (!limit) return null; // no cap
   const day = new Date(now * 1000).toISOString().slice(0, 10);
   const row = await db.update("rate", `price-check:${uid}:${day}`, cur => {
     if ((cur?.used ?? 0) >= limit) return null;
@@ -17,6 +18,7 @@ export async function reserveCheck(db: Docs, uid: string, now: number) {
 
 /** Today's use of a per-day quota, for the app to show (the server enforces the same numbers). */
 export async function quotaStatus(db: Docs, key: string, uid: string, limit: number, now: number) {
+  if (!limit) return { limit: null, remaining: null, resetsAt: null };
   const day = new Date(now * 1000).toISOString().slice(0, 10);
   const used = ((await db.get("rate", `${key}:${uid}:${day}`)) as { used?: number } | null)?.used ?? 0;
   return { limit, remaining: Math.max(0, limit - used), resetsAt: Math.floor(Date.parse(`${day}T00:00:00Z`) / 1000) + 86_400 };

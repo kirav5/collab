@@ -20,7 +20,8 @@ export interface Policy {
 }
 
 export const DEFAULT_POLICY: Policy = {
-  quotas: { priceChecksPerDay: 5, nearbyPerDay: 5 },
+  // 0 = no daily cap (the owner's decision for now; set a number to cap search/Maps spend per account).
+  quotas: { priceChecksPerDay: 0, nearbyPerDay: 0 },
   negotiation: { maxRounds: 5 },
   timing: { checkoutValiditySec: 600, cartValidityDays: 7, paymentClaimStaleSec: 120, a2aTurnBudgetMs: 35_000,
     holdTtlSec: 900, decisionTtlSec: 86_400, anonymousTokenDays: 7 },
@@ -31,7 +32,7 @@ export const DEFAULT_POLICY: Policy = {
 
 // [min, max] for every number; currencies are ISO 4217 codes the money code can format and parse.
 const RANGES: Record<string, [number, number]> = {
-  "quotas.priceChecksPerDay": [0, 100], "quotas.nearbyPerDay": [0, 100], "negotiation.maxRounds": [1, 20],
+  "quotas.priceChecksPerDay": [0, 10_000], "quotas.nearbyPerDay": [0, 10_000], "negotiation.maxRounds": [1, 20],
   "timing.checkoutValiditySec": [60, 3600], "timing.cartValidityDays": [1, 60], "timing.paymentClaimStaleSec": [30, 900],
   "timing.a2aTurnBudgetMs": [5_000, 50_000], "timing.holdTtlSec": [60, 7 * 86_400], "timing.decisionTtlSec": [300, 30 * 86_400],
   "timing.anonymousTokenDays": [1, 30],

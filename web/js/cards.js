@@ -214,7 +214,7 @@ function priceItem(e) {
 /** "3 of 5 left today", from the server's policy (the numbers it enforces). */
 function quotaText(name) {
   const q = session.policy?.quotas?.[name];
-  return q ? `${q.remaining} of ${q.limit} left today` : "limited per day";
+  return q?.limit ? `${q.remaining} of ${q.limit} left today` : "private";
 }
 
 export function engagementCard(e, id) {

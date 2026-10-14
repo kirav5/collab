@@ -14,11 +14,15 @@ test('Ed25519 verification needs only the public key and binds owner, hash and k
 });
 
 test('daily price cap is atomic across concurrent calls, separate by owner and UTC day', async () => {
+  const { setPolicy, loadPolicy, DEFAULT_POLICY } = await import('../src/config/policy.ts');
+  setPolicy(loadPolicy({ POLICY_JSON: JSON.stringify({ quotas: { priceChecksPerDay: 5 } }) }));
   const db = memoryDocs(), t = Date.UTC(2026, 9, 14) / 1000;
   const results = await Promise.allSettled(Array.from({ length: 12 }, () => reserveCheck(db, 'one', t)));
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 5);
   assert.equal(await reserveCheck(db, 'two', t), 4);
   assert.equal(await reserveCheck(db, 'one', t + 86400), 4);
+  setPolicy(DEFAULT_POLICY);
+  assert.equal(await reserveCheck(db, 'one', t), null, 'no cap: nothing is counted');
 });
 
 test('price evidence rejects unsupported numbers, ungrounded links, incompatible units and stores privately', async () => {

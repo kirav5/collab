@@ -14,11 +14,11 @@ export async function nearby(db: Docs, model: Model | null, uid: string, item: s
   if (!policy().features.mapsNearby) throw new NearbyError(503, "Google Maps lookups are turned off.");
   const limit = policy().quotas.nearbyPerDay;
   const day = new Date(now * 1000).toISOString().slice(0, 10);
-  const row = await db.update("rate", `nearby:${uid}:${day}`, (cur: any) => ((cur?.used ?? 0) >= limit ? null : { used: (cur?.used ?? 0) + 1, expireAt: new Date((now + 172800) * 1000) }));
+  const row = limit ? await db.update("rate", `nearby:${uid}:${day}`, (cur: any) => ((cur?.used ?? 0) >= limit ? null : { used: (cur?.used ?? 0) + 1, expireAt: new Date((now + 172800) * 1000) })) : { used: 0 };
   if (!row) throw new NearbyError(429, `All ${limit} Google Maps lookups used today. Resets at 00:00 UTC.`);
   const place = area.trim() ? resolve(area) : null;
   const r = await model.nearby(item, area || "Bengaluru", place && place.lat ? { lat: place.lat, lon: place.lon } : null);
   if (!r) throw new NearbyError(503, "Google Maps didn't answer. Try again in a moment.");
-  return { places: r.places, summary: r.places.length ? r.text.slice(0, 800) : "", widgetToken: r.widgetToken, remaining: limit - row.used,
+  return { places: r.places, summary: r.places.length ? r.text.slice(0, 800) : "", widgetToken: r.widgetToken, remaining: limit ? limit - row.used : null,
     attribution: "Google Maps", note: "Places from Google Maps. They aren't on Collab, so their agents can't be asked yet." };
 }

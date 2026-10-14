@@ -182,7 +182,7 @@ export const screens = {
       return frame("Sharing", "Who sees what", `
         <div class="card ${S.profile.paused ? "accent" : ""}"><div class="row">${label(S.profile.paused ? "Sharing is paused" : "Sharing is on", "sq " + (S.profile.paused ? "stale" : "fresh"))}
           <button class="btn ${S.profile.paused ? "accent" : "secondary"} compact end" data-act="pause">${S.profile.paused ? "Resume" : "Pause everything"}</button></div>
-          <span class="small muted">Paused: your always-on agent answers nobody, Public included. Private facts are never shared either way.</span></div>
+          <span class="small muted">${S.profile.paused ? "While paused, your always-on agent answers nobody — not even from Public facts." : "Your always-on agent answers from your Public facts and from Protected facts a rule allows. Pause to stop it answering anyone."} Private facts are never shared either way.</span></div>
         <form class="card" data-form="rule">${label("New rule — Protected topics", "sq")}
           <div class="row"><span class="small">Who</span><select class="field" name="audience" style="max-width:280px"><option value="anyone">Anyone who contacts my agent</option>${contacts.map(c => `<option value="${esc(c.handle)}">${esc(c.name)} (@${esc(c.handle)})</option>`).join("")}</select></div>
           <div class="row"><span class="small">Topics</span><input class="field" name="topics" placeholder="availability, work" style="max-width:280px" value="${esc(topics.slice(0, 2).join(", "))}"></div>

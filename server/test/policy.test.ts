@@ -10,7 +10,7 @@ test("defaults load; overrides merge; the hash follows the content", () => {
   const d = loadPolicy({});
   assert.deepEqual(d, DEFAULT_POLICY);
   const o = loadPolicy({ POLICY_JSON: JSON.stringify({ quotas: { priceChecksPerDay: 9 }, timing: { checkoutValiditySec: 300 } }) });
-  assert.equal(o.quotas.priceChecksPerDay, 9); assert.equal(o.quotas.nearbyPerDay, 5); assert.equal(o.timing.checkoutValiditySec, 300);
+  assert.equal(o.quotas.priceChecksPerDay, 9); assert.equal(o.quotas.nearbyPerDay, 0, "no cap by default"); assert.equal(o.timing.checkoutValiditySec, 300);
   assert.notEqual(policyHash(o), policyHash(d));
   assert.equal(policyHash(loadPolicy({})), policyHash(d), "same content, same hash");
   assert.equal(loadPolicy({ GEMINI_GROUNDING_MODEL: "gemini-3.6-flash" }).models.grounding, "gemini-3.6-flash");
@@ -21,7 +21,7 @@ test("typos, wrong types, out-of-range values and unknown currencies stop the se
   const bad = (x: unknown) => assert.throws(() => loadPolicy({ POLICY_JSON: JSON.stringify(x) }), PolicyError, JSON.stringify(x));
   bad({ quotas: { priceCheckPerDay: 5 } });
   bad({ quotas: { priceChecksPerDay: "5" } });
-  bad({ quotas: { priceChecksPerDay: 1000 } });
+  bad({ quotas: { priceChecksPerDay: 100000 } });
   bad({ timing: { checkoutValiditySec: 5 } });
   bad({ money: { currencies: ["INR", "EUR"] } });
   bad({ money: { defaultCurrency: "USD", currencies: ["INR"] } });

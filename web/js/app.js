@@ -378,7 +378,7 @@ async function onClick(e) {
       try {
         const r = await api("/api/nearby", { item: el.dataset.item, area: el.dataset.area });
         box.innerHTML = r.places.length ? `<div class="stack" style="gap:6px">${r.places.map(p => `<a class="small" href="${esc(p.uri)}" target="_blank" rel="noopener noreferrer">📍 ${esc(p.title)}</a>`).join("")}
-          <span class="small faint">${esc(r.note)} · Source: Google Maps · ${r.remaining} left today</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
+          <span class="small faint">${esc(r.note)} · Source: Google Maps · ${r.remaining == null ? "" : `${r.remaining} left today`}</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
       } finally { busy(el, false); }
       loadPolicy();
       return;
@@ -615,7 +615,8 @@ await boot();
   const qp = new URLSearchParams(location.search);
   if (qp.get("to")) openDirect(qp.get("to"));
   else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
-  else if (qp.get("alerts") || qp.get("screen") === "requests") openScreen("requests");
+  else if (qp.get("alerts")) openScreen("requests");
+  else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
 }
 
 export { S, engagementCard };
