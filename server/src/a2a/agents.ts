@@ -27,6 +27,8 @@ export const TURN = "collab.turn/v1";
 export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; secret: string; receiptKey?: object; receiptSubject?: (uid: string) => string;
   /** Signs every agent card (A2A §8.4: JWS over the JCS-canonical card); the public key is published at /public/keys. */
   cardKey?: { privateKey: KeyObject; kid: string };
+  /** Cloud Run's own URL: Firebase Hosting buffers server-sent events, so streaming clients are pointed here first. */
+  directUrl?: string;
   /** Re-runs a conversation's waiting turn on the server (Cloud Tasks). */
   enqueue?: (engagementId: string, delaySeconds?: number) => Promise<void>;
   /** Screens text arriving from other agents before any model sees it (Model Armor). */
@@ -121,7 +123,8 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     name: `${p.name}'s agent (@${p.handle})`,
     description: `${p.bio ? p.bio + " " : ""}Ask about what ${p.name} offers or send a request. This agent answers only from what ${p.name} chose to share; anything else goes to ${p.name}.`,
     version: "1.0.0",
-    supportedInterfaces: [{ url: `${cfg.publicUrl}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
+    supportedInterfaces: [...(cfg.directUrl ? [{ url: `${cfg.directUrl.replace(/\/$/, "")}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }] : []),
+      { url: `${cfg.publicUrl}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
     provider: { organization: "Collab Market", url: cfg.publicUrl },
     // Streaming: SendStreamingMessage / SubscribeToTask over SSE. Push: an outside agent registers an https webhook and
     // hears when this agent's owner answers, which can be hours later.
