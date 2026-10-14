@@ -411,5 +411,12 @@ to every screen; Sharing wording; installed-app shortcuts. Submission deck on th
 `submission/Collab-AI-Builder-Cup.pptx` + `.pdf` (built by a script from live screenshots and the benchmark; the
 demo-video link is still blank). Devin's earlier deck files remain beside it.
 
+**15 Oct, scale and analytics pass** (REPORT §10–11): backstop polling 60 s and only while visible (listeners carry
+live updates); `stats()` cached 10 min in `stats/{uid}` and cleared by `clearStats` on agreement/outcome/fulfilment;
+`MAX_INSTANCES` in the manifest (production 20); Firestore PITR enabled by deploy (best effort); product events via
+`event()` in `log.ts` → log-based metrics `collab_*` → dashboard "Collab" and a 5xx alert (`monitoring.sh`, run once);
+Google Analytics for Firebase in the web app (`session.track`); goal cancel (`cancelGoal`) and deal lapse release held
+stock; first-run intro card; `web/js/processing.js` holds the device-only decision (tested). 107/107.
+
 **Still to check on devices:** Google Pay TEST sheet, Firebase AI Logic on Chrome desktop with Nano, offline cache in
 the installed app, an outside agent's push webhook, a full `bench.ts --full --autorater` run.
