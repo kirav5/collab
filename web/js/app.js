@@ -359,7 +359,7 @@ async function onClick(e) {
       // Google Pay (TEST) first, inside the tap; then the AP2 step. One idempotency key per tap: a retry of the same
       // request can't pay twice.
       let googlePay;
-      if (el.dataset.gpay) { googlePay = await payWithGoogle(Number(el.dataset.amount), el.dataset.label ?? "Collab"); if (!googlePay) return; }
+      if (el.dataset.gpay) { googlePay = await payWithGoogle(Number(el.dataset.amount), el.dataset.item ?? "Collab"); if (!googlePay) return; }
       busy(el, true, a === "eng-pay" ? "Paying" : "Saving");
       const body = a === "eng-pay" ? { idempotencyKey: el.dataset.key ??= crypto.randomUUID(), ...(googlePay ? { googlePay } : {}) } : {};
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);

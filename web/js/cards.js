@@ -203,6 +203,14 @@ function keyAnswer(e, mine) {
   return q ? `<p class="small muted keyline">“${esc(q.answer)}”</p>` : "";
 }
 
+/** What to price: the listing's own name when it's specific, plus what was asked for (a generic category title like
+ *  "Water Bottles · items for sale" alone finds nothing comparable). */
+function priceItem(e) {
+  const asked = (e.brief?.title ?? "").replace(/^(do you have|i want|looking for|need)\s+(a|an|the)?\s*/i, "").replace(/[?.!]+$/, "");
+  const listed = (e.offer.title ?? "").split(" · ")[0];
+  return [asked, listed].filter(Boolean).join(" — ").slice(0, 160) || e.title;
+}
+
 export function engagementCard(e, id) {
   if (!e) return `<div class="card slim"><span class="thinking"><span class="spinner"></span><span class="small faint">Connecting to their agent…</span></span></div>`;
   const mine = e.requester.uid === session.uid ? "requester" : "provider";
@@ -227,7 +235,7 @@ export function engagementCard(e, id) {
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(them.name.split(" ")[0])}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">Name a price — “I'll sell for ₹100” — to offer a deal; they confirm or say no.</span>` : ""}
-    ${["deal", "agreed", "negotiating"].includes(e.phase) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(e.offer.title)}" data-area="${esc(e.brief.area ?? "India")}">Check fair price</button><span class="small faint"> Private hint · 5/day · item sent to Google Search</span><div data-price-result></div></div>` : ""}
+    ${["deal", "agreed", "negotiating"].includes(e.phase) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}">Check fair price</button><span class="small faint"> Private hint · 5/day · item sent to Google Search</span><div data-price-result></div></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>
@@ -252,7 +260,7 @@ function dealBlock(e, mine) {
   if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
   else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span><span class="small faint">AP2 · test mode, no money moved</span>`;
   else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
-  else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.negotiation.deal.price}" data-label="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
+  else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.negotiation.deal.price}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
       <span class="small faint">AP2 test mode: your agent signs a payment against the cart ${them}'s agent signed. No money moves.</span>`;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
   const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
