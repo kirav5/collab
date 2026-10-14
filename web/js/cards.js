@@ -199,6 +199,7 @@ function statusLine(e, mine, them, items, talking) {
 
 /** The answer that matters most, shown without opening Details: the latest one to your own question. */
 function keyAnswer(e, mine) {
+  if (["closed", "declined"].includes(e.phase)) return "";
   const q = e.qa.filter(x => x.from === mine && x.answer && x.status === "answered").at(-1);
   return q ? `<p class="small muted keyline">“${esc(q.answer)}”</p>` : "";
 }
@@ -279,10 +280,10 @@ function dealBlock(e, mine) {
   // A payment settles whether it went ahead — nobody is asked separately.
   let pay;
   if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
-  else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span><span class="small faint">AP2 · test mode, no money moved</span>`;
+  else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span><span class="small faint">Test payment · no money moved</span>`;
   else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
   else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.payment?.cart?.total?.value ?? e.negotiation.deal.price}" data-currency="${esc(e.offer.currency ?? "INR")}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
-      <span class="small faint">AP2 test mode: your agent signs a payment against the cart ${them}'s agent signed. No money moves.</span>`;
+      <span class="small faint">Test payment: nothing is charged. Your agent records it so ${them} can hand over.</span>`;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
   // After payment: handover / delivery, then the buyer's acceptance — tracked apart from the payment.
   const f = e.fulfilment?.state ?? (p?.status === "paid" || p?.status === "outside" ? "not_started" : null);

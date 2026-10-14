@@ -83,20 +83,24 @@ BUILD_ID="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)$(git diff --qu
 RUN_URL_NOW=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)' 2>/dev/null || true)
 
 # Request-based billing (CPU only while a request runs); one instance kept warm so the app never waits ~3 s for a cold
-# start (MIN_INSTANCES=0 turns that off), startup CPU boost for when a second one starts, at most 2 instances caps cost.
+# start (MIN_INSTANCES=0 turns that off), startup CPU boost for when a second one starts, MAX_INSTANCES caps cost.
 gcloud run deploy "$SERVICE" --quiet \
   --source . \
   --region "$REGION" \
   --service-account "$SA" \
   --allow-unauthenticated \
   --memory 1Gi --cpu 1 --concurrency 40 \
-  --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
+  --min-instances "${MIN_INSTANCES:-1}" --max-instances "${MAX_INSTANCES:-2}" --cpu-boost \
   --timeout 60 \
   --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
   --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=$SEED_DEMO##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##MODEL_ARMOR_FAIL_MODE=${MODEL_ARMOR_FAIL_MODE:-open}##POLICY_JSON=${POLICY_JSON:-{\}}##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW##BUILD_ID=$BUILD_ID"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).
 echo "$BUILD_ID" > web/version.txt
+# Point-in-time recovery: the database can be restored to any moment in the last 7 days (best effort: needs the
+# Datastore owner role on the deploying account).
+gcloud firestore databases update --database='(default)' --enable-pitr --project "$PROJECT" >/dev/null 2>&1 || true
+
 firebase deploy --project "$PROJECT" --only hosting,firestore --non-interactive
 
 # Scheduled agents: Cloud Scheduler runs the due watches every 15 minutes (the token is derived from the agent secret).

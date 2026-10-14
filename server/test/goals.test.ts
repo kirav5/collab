@@ -90,3 +90,26 @@ test("a goal's budget holds across its deals, even confirmed at the same moment;
   assert.equal((await load(db, "e-d")).phase, "agreed");
   assert.equal((await db.get(GOALS, "g1")).allocations.reduce((n: number, x: any) => n + x.amount, 0), 500);
 });
+
+test("cancelling a goal ends its open conversations, releases held stock and returns budget; a paid deal keeps its obligations", async () => {
+  const { cancelGoal } = await import("../src/core/goals.ts");
+  const { RESOURCES, available, createResource, hold } = await import("../src/core/resources.ts");
+  const db = memoryDocs(), T = 1_800_000_000;
+  const stock = await createResource(db, "shop", { factId: "f", type: "quantity", title: "Mug", onHand: 2 }, T);
+  const h = await hold(db, stock.id, { holder: "me", ttlSec: 3600 }, T);
+  const open = conv(null); open.id = "open"; open.goalId = "g"; open.phase = "agreed"; open.payment = { status: "awaiting" } as any;
+  open.reservation = { resourceId: stock.id, holdId: h.id, qty: 1, state: "held", expiresAt: T + 3600 };
+  const paid = conv(null); paid.id = "paid"; paid.goalId = "g"; paid.phase = "agreed"; paid.payment = { status: "paid" } as any;
+  const theirs = conv(null); theirs.id = "theirs"; theirs.goalId = "g";
+  for (const e of [open, paid, theirs]) await save(db, e);
+  await db.set(GOALS, "g", { ...goal("purchase"), id: "g", taskIds: ["open", "paid", "theirs"], budget: { amount: 500, currency: "INR" }, allocations: [{ engagementId: "open", amount: 100, currency: "INR", at: T }] });
+  await assert.equal(await cancelGoal(db, "someone-else", "g", T + 1), null, "only the owner cancels");
+  const g = (await cancelGoal(db, "me", "g", T + 1))!;
+  assert.equal(g.closed, "cancelled");
+  assert.equal((await db.get(ENGAGEMENTS, "open")).phase, "closed");
+  assert.equal((await db.get(ENGAGEMENTS, "open")).reservation.state, "released");
+  assert.equal(available(await db.get(RESOURCES, stock.id), T + 1), 2, "the mug is back in stock");
+  assert.equal((await db.get(ENGAGEMENTS, "paid")).phase, "agreed", "a paid deal isn't cancelled");
+  assert.equal((await db.get(ENGAGEMENTS, "theirs")).phase, "closed");
+  assert.deepEqual(g.allocations, []);
+});

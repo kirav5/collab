@@ -58,3 +58,17 @@ test("at the deadline an unconfirmed deal lapses; an unanswered question is remi
   assert.deepEqual((await expireDecisions(db, later + 60, async () => {})), { lapsed: 0, reminded: 0 }, "one reminder only");
   assert.equal(confirm.deadline! - confirm.createdAt, DEFAULT_POLICY.timing.decisionTtlSec);
 });
+
+test("a lapsed deal gives its held stock back", async () => {
+  const { RESOURCES, available, createResource, hold } = await import("../src/core/resources.ts");
+  const { db, e } = await setup();
+  const stock = await createResource(db, "shop", { factId: "f", type: "quantity", title: "Mug", onHand: 1 }, 1_800_000_000);
+  await offerDeal(db, e, "requester", 100, "I'll sell the mug for ₹100");
+  const h = await hold(db, stock.id, { holder: "ana", engagementId: e.id, ttlSec: 7200 }, 1_800_000_000);
+  const cur = await load(db, e.id); cur.reservation = { resourceId: stock.id, holdId: h.id, qty: 1, state: "held", expiresAt: 1_800_000_000 + 7200 }; await save(db, cur);
+  const [confirm] = await openFor(db, "ana");
+  assert.equal(available(await db.get(RESOURCES, stock.id), 1_800_000_000), 0);
+  await expireDecisions(db, confirm.deadline! + 1, async () => {});
+  assert.equal(available(await db.get(RESOURCES, stock.id), confirm.deadline! + 1), 1, "released at the lapse, not only at the hold's own expiry");
+  assert.equal((await load(db, e.id)).reservation?.state, "released");
+});

@@ -7,6 +7,9 @@ function write(severity: "DEBUG" | "INFO" | "WARNING" | "ERROR", message: string
   (severity === "ERROR" ? process.stderr : process.stdout).write(JSON.stringify(entry) + "\n");
 }
 
+/** Product events for analytics: a name and small non-personal numbers only (never text, prices with names, or ids of people). */
+export const event = (name: string, data: Record<string, string | number | boolean> = {}) => log.info("event", { event: name, ...data });
+
 export const log = {
   info: (message: string, fields?: Fields) => write("INFO", message, fields),
   warn: (message: string, fields?: Fields) => write("WARNING", message, fields),

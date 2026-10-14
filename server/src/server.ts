@@ -30,7 +30,8 @@ import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, gra
 import { getSafe } from "./a2a/webhooks.ts";
 import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
-import { GOALS, type Goal, backfillGoals, createGoal, goalView, linkTask } from "./core/goals.ts";
+import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
+import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
 import { recoverOutbox } from "./core/recovery.ts";
@@ -45,7 +46,7 @@ import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pic
 import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
 import { offeredMoney } from "./core/direct.ts";
 import { moneyText } from "./market/types.ts";
-import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
+import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
@@ -292,12 +293,9 @@ app.post("/api/goals/:id/budget", route(async req => {
   return goalView(db, g);
 }));
 app.post("/api/goals/:id/cancel", route(async req => {
-  const r = await db.update(GOALS, String(req.params.id), (g: Goal | null) => (g && g.owner === req.uid ? { ...g, closed: "cancelled", revision: g.revision + 1, updatedAt: now() } : null));
+  const r = await cancelGoal(db, req.uid, String(req.params.id), now());
   if (!r) throw new HttpError(404, "goal not found");
-  // Its conversations that haven't reached a deal end too; agreed deals keep their obligations.
-  for (const id of r.taskIds) await db.update(ENGAGEMENTS, id, (e: Engagement | null) => (e && ["asking", "negotiating", "deal"].includes(e.phase)
-    ? { ...e, phase: e.requester.uid === req.uid ? "closed" : "declined", waiting: { requester: null, provider: null }, outbox: null, outboxPending: false,
-        events: [...e.events, { at: now(), who: e.requester.uid === req.uid ? "requester" : "provider", text: "Goal cancelled — conversation ended.", by: "owner" }], updatedAt: now() } : null));
+  event("goal_cancelled");
   return goalView(db, r);
 }));
 
@@ -329,7 +327,11 @@ app.get("/api/me", route(async req => (await db.get(PROFILES, req.uid)) ?? null)
 app.post("/api/me", route(async req => {
   const b = req.body ?? {};
   const areaPlace = placeFrom(b.area) ?? (typeof b.areaName === "string" ? resolve(b.areaName) : undefined);
-  return saveProfile(db, req.uid, { handle: b.handle, name: b.name, bio: b.bio, ...(areaPlace !== undefined ? { area: areaPlace } : {}) });
+  const existed = !!(await db.get(PROFILES, req.uid));
+  const saved = await saveProfile(db, req.uid, { handle: b.handle, name: b.name, bio: b.bio, ...(areaPlace !== undefined ? { area: areaPlace } : {}) });
+  if (!existed) event("signup");
+  return saved;
+
 }));
 app.post("/api/me/pause", route(async req => { const p = await me(req.uid); p.paused = !!req.body?.paused; await db.set(PROFILES, p.uid, p); return p; }));
 app.get("/api/people/:handle", route(async req => {
@@ -359,6 +361,7 @@ app.post("/api/people/:handle/ask", route(async req => {
   // A direct question is its own goal: information until a price is involved.
   const goal = await createGoal(db, req.uid, t, f?.offer ? "purchase" : "information", null, now());
   e.goalId = goal.id; await linkTask(db, goal.id, req.uid, e.id, now());
+  event("agents_contacted", { category: e.offer.category ?? "none", via: "qr" });
   e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };
   await saveEngagement(db, e);
   return e;
@@ -583,7 +586,9 @@ app.post("/api/briefs", route(async req => {
   const m = mandateFrom(del?.mandate ?? del);
   if (m) { const days = num(del?.days, 1, 365);
     await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() }); }
-  return { brief: b, goal, ...(await search(db, model, b, req.uid)) };
+  const found = await search(db, model, b, req.uid);
+  event("request_sent", { category: b.shared.category || "none", found: found.found.length });
+  return { brief: b, goal, ...found };
 }));
 app.post("/api/briefs/:id/engage", route(async req => {
   const owner = await me(req.uid);
@@ -602,6 +607,7 @@ app.post("/api/briefs/:id/engage", route(async req => {
     // The first turn waits in the outbox; the device starts it with /run (each run is one bounded request).
     e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief: brief.shared, offerFactId: f.id };
     await saveEngagement(db, e);
+    event("agents_contacted", { category: e.offer.category ?? "none", via: "search" });
     out.push(e);
   }
   return out;
@@ -709,7 +715,8 @@ app.post("/api/pickup/:id/collect", route(async req => {
   if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
   const result = await collect(db, e, req.uid, now());
   if (result.alreadyCollected) throw new HttpError(409, `Already collected at ${new Date(result.collectedAt * 1000).toISOString()}`);
-  await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass.");
+  await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass."); await clearStats(db, e);
+  event("collected");
   const buyer = e[buyerOf(e)];
   if (buyer.uid) void pushTo(buyer.uid, "Collected", e.offer.title, `/?engagement=${e.id}`);
   return { collectedAt: result.collectedAt };
@@ -782,7 +789,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
     e.payment!.ap2 = await ap2Pay({ key: signing.privateKey, kid: signing.kid, base: cfg.publicUrl, now: now(), dealHash: e.payment!.cart.dealHash, idempotencyKey: key,
       currency: e.payment!.cart.total.currency, lines: linesOf(e), merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
   } catch (err) { await release(); throw new HttpError(400, (err as Error).message); }
-  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" as const };
+  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} (test payment — no money moved).`, by: "owner" as const };
   // Commit only while this tap still holds the claim.
   const committed = await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.payment?.status === "paying" && cur.payment.claim?.key === key
     ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, ...(e.reservation ? { reservation: e.reservation } : {}), events: [...cur.events, paidEvent], updatedAt: now() } : null));
@@ -795,6 +802,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate, ap2: { checkout_mandate: e.payment!.ap2!.checkout_mandate, payment_mandate: e.payment!.ap2!.payment_mandate, checkout_hash: e.payment!.ap2!.checkout_hash } };
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
+  event("paid", { currency: mandate.amount.currency, amount: mandate.amount.value, instrument: e.payment!.ap2?.instrument.type ?? "test" });
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
   if (seller.uid) void pushTo(seller.uid, `Payment received · ${e.title}`, `${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} (test mode)`, `/?engagement=${e.id}`);
   return load(db, e.id);
@@ -889,7 +897,7 @@ app.post("/api/engagements/:id/delivered", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark this delivered.", "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
-  await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered.");
+  await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered."); await clearStats(db, e);
   const buyer = e[buyerOf(e)];
   if (buyer.uid) void pushTo(buyer.uid, `Delivered · ${e.title}`, "Check it and tell your agent if it's right.", `/?engagement=${e.id}`);
   return load(db, e.id);
@@ -907,6 +915,7 @@ app.post("/api/engagements/:id/received", route(async req => {
       outcome: { ...(cur.outcome ?? {}), [buyer]: ok ? "happened" : "fell_through" },
       events: [...cur.events, { at: t, who: buyer, text: ok ? "Received it — all good." : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t };
   });
+  await clearStats(db, e);
   const seller = e[sellerOf(e)];
   if (seller.uid) void pushTo(seller.uid, ok ? `Accepted · ${e.title}` : `Problem reported · ${e.title}`, ok ? "The buyer confirmed it arrived as agreed." : "The buyer reported a problem.", `/?engagement=${e.id}`);
   return load(db, e.id);
@@ -927,6 +936,7 @@ app.post("/api/engagements/:id/outcome", route(async req => {
   if (e.phase !== "agreed") throw new HttpError(400, "no deal yet");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   (e.outcome ??= {})[side] = req.body?.happened ? "happened" : "fell_through";
+  await clearStats(db, e);
   if (!req.body?.happened) await releaseBudget(db, e);
   // A deal that fell through before payment gives its held stock back.
   if (!req.body?.happened && e.reservation?.state === "held" && e.reservation.holdId) {

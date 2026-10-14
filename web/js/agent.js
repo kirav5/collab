@@ -6,6 +6,7 @@
 // Model calls over private notes use Gemini Nano in the browser when Chrome has it; otherwise Gemini through the
 // server for that one call, which logs nothing.
 import { FB, api, insightsLines, session } from "./api.js";
+import { LIMITATION, decideProcessing } from "./processing.js";
 import { local, relevant } from "./local.js";
 import { live, onChange, poke } from "./live.js";
 
@@ -16,7 +17,7 @@ import { live, onChange, poke } from "./live.js";
 const savedMode = () => { try { const m = localStorage.getItem("collab.processing"); if (m === "device-only" || m === "device-first" || m === "cloud") return m; return localStorage.getItem("collab.device") === "off" ? "cloud" : "device-first"; } catch { return "device-first"; } };
 export const engine = { nano: false, status: "checking", progress: null, mode: savedMode() };
 /** The answer a device-only owner gets when the device can't process the question. */
-export const DEVICE_ONLY_LIMIT = { limitation: "Your notes are set to be processed on this device only, and the on-device model can't answer right now. Download or turn it on in Settings › AI engine, or allow cloud processing there." };
+export const DEVICE_ONLY_LIMIT = { limitation: LIMITATION };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
 export const needsLimit = new Set(); // move items this device has no limit for (the owner sets one)
 
@@ -83,7 +84,7 @@ const nums = s => (s.replace(/(\d),(?=\d)/g, "$1").match(/\d+(?:\.\d+)?/g) ?? []
 export async function think(question, notes, side = "self", deviceOnly = false) {
   if (!notes.length) return null;
   deviceOnly ||= engine.mode === "device-only";
-  if (deviceOnly && !engine.nano) return DEVICE_ONLY_LIMIT;
+  if (decideProcessing(deviceOnly ? "device-only" : engine.mode, engine.status) === "limitation") return DEVICE_ONLY_LIMIT;
   if (engine.nano) {
     try {
       // On device through Firebase AI Logic (only_on_device: these notes never go to the cloud this way). If the
@@ -131,6 +132,7 @@ export async function chat(text, recent, area, open = null) {
       return { text: a.text, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: a.on }] };
     }
     case "request": {
+      session.track("request_drafted");
       const d = await api("/api/briefs/draft", { text, here: area });
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });

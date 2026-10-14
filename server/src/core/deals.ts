@@ -154,9 +154,17 @@ export function receipt(e: Engagement, sign: (uid: string, hash: string) => stri
 }
 
 /** A person's track record: deals agreed, and what the other side said afterwards. */
-export async function stats(db: Docs, uid: string) {
+const STATS = "stats", STATS_TTL = 600;
+/** Forgets both parties' cached records (a deal was agreed, or what became of it changed). */
+export async function clearStats(db: Docs, e: Engagement) { for (const uid of [e.requester.uid, e.provider.uid]) if (uid) await db.delete(STATS, uid).catch(() => {}); }
+export async function stats(db: Docs, uid: string, now = Math.floor(Date.now() / 1000)) {
+  // Cached for ten minutes: search asks for every candidate's record, and each one is a scan of their conversations.
+  const cached = (await db.get(STATS, uid)) as { deals: number; kept: number; fellThrough: number; at: number } | null;
+  if (cached && now - cached.at < STATS_TTL) { const { at: _a, ...rest } = cached; return rest; }
   const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
   const agreed = es.filter(e => e.phase === "agreed");
   const said = (e: Engagement) => (e.requester.uid === uid ? e.outcome?.provider : e.outcome?.requester);
-  return { deals: agreed.length, kept: agreed.filter(e => said(e) === "happened").length, fellThrough: agreed.filter(e => said(e) === "fell_through").length };
+  const out = { deals: agreed.length, kept: agreed.filter(e => said(e) === "happened").length, fellThrough: agreed.filter(e => said(e) === "fell_through").length };
+  await db.set(STATS, uid, { ...out, at: now });
+  return out;
 }

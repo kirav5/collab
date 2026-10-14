@@ -163,3 +163,22 @@ export async function deallocate(db: Docs, goalId: string, engagementId: string,
 }
 
 export const budgetUse = (g: Goal) => g.budget ? { ...g.budget, used: (g.allocations ?? []).reduce((n, a) => n + a.amount, 0) } : null;
+
+/** Cancels a goal: conversations without a deal end, held stock or slots are released, budget comes back. */
+export async function cancelGoal(db: Docs, owner: string, goalId: string, now: number): Promise<Goal | null> {
+  const { release } = await import("./resources.ts");
+  const g = await db.update(GOALS, goalId, (cur: Goal | null) => (cur && cur.owner === owner ? { ...cur, closed: "cancelled", revision: cur.revision + 1, updatedAt: now } : null)) as Goal | null;
+  if (!g) return null;
+  for (const id of g.taskIds) {
+    const e = (await db.get(ENGAGEMENTS, id)) as Engagement | null;
+    if (!e || !["asking", "negotiating", "deal", "agreed"].includes(e.phase)) continue;
+    if (e.phase === "agreed" && (e.payment?.status === "paid" || e.payment?.status === "outside")) continue; // a paid deal keeps its obligations
+    if (e.reservation?.state === "held" && e.reservation.holdId) await release(db, e.reservation.resourceId, e.reservation.holdId, now).catch(() => {});
+    await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur ? { ...cur, phase: cur.requester.uid === owner ? "closed" : "declined",
+      ...(cur.reservation?.state === "held" ? { reservation: { ...cur.reservation, state: "released" } } : {}),
+      waiting: { requester: null, provider: null }, outbox: null, outboxPending: false,
+      events: [...cur.events, { at: now, who: cur.requester.uid === owner ? "requester" : "provider", text: "Goal cancelled — conversation ended.", by: "owner" }], updatedAt: now } : null));
+    await deallocate(db, goalId, id, now);
+  }
+  return (await db.get(GOALS, goalId)) as Goal;
+}

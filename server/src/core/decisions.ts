@@ -5,6 +5,7 @@ import type { Docs } from "../docs.ts";
 import type { Engagement, InboxItem } from "./model.ts";
 import { ENGAGEMENTS, INBOX } from "./engage.ts";
 import { deallocate } from "./goals.ts";
+import { release } from "./resources.ts";
 
 export async function expireDecisions(db: Docs, now: number, remind: (i: InboxItem) => Promise<void>, max = 50) {
   const due = ((await db.find(INBOX, [["deadline", "<=", now]], max)) as InboxItem[]).filter(i => i.status === "open");
@@ -23,6 +24,11 @@ export async function expireDecisions(db: Docs, now: number, remind: (i: InboxIt
       });
       const e = (await db.get(ENGAGEMENTS, i.engagementId)) as Engagement | null;
       if (e?.goalId) await deallocate(db, e.goalId, e.id, now);
+      // Stock or a slot held for the lapsed deal goes back.
+      if (e?.reservation?.state === "held" && e.reservation.holdId) {
+        await release(db, e.reservation.resourceId, e.reservation.holdId, now).catch(() => {});
+        await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur?.reservation ? { ...cur, reservation: { ...cur.reservation, state: "released" } } : null));
+      }
       lapsed++;
     } else if (!(i as any).reminded) {
       await db.update(INBOX, i.id, (x: any) => (x?.status === "open" && !x.reminded ? { ...x, reminded: true } : null));

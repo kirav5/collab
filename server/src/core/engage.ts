@@ -12,6 +12,7 @@ import { decide } from "../ai/decide.ts";
 import { type Docs, docId } from "../docs.ts";
 import { AnswerTask, type Fact as AnswerFact, JudgeTask, offerFacts, savedKey } from "../market/answer.ts";
 import { catalog, domain as domainOf } from "../market/domains.ts";
+import { event } from "../log.ts";
 import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
 import { type Mandate, type Proposal, currencyOf, moneyText, newId } from "../market/types.ts";
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
@@ -21,7 +22,7 @@ import { BudgetError, allocate, deallocate } from "./goals.ts";
 import { linesOf, totalOf } from "./pay.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
-import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
+import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
@@ -79,7 +80,8 @@ export async function save(db: Docs, e: Engagement) {
   // The outbox flag is derived on every save, so a waiting turn can always be found by the recovery scan.
   e.outboxPending = !!e.outbox;
   e.outboxAt = e.outbox ? (e.outboxAt ?? now()) : null;
-  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now(), signer ?? undefined); }
+  if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now(), signer ?? undefined); await clearStats(db, e); 
+    event("deal_agreed", { category: e.offer.category ?? "none", rounds: e.negotiation.requester.length + e.negotiation.provider.length, chat: e.offer.price == null }); }
   // Reservation: a deal on tracked stock holds the units for the policy's hold window (released if the deal ends,
   // committed when paid). Out of stock means the deal can't be paid; nothing is charged.
   if (e.phase === "agreed" && !e.reservation && e.offer.factId) await reserveFor(db, e);
@@ -87,7 +89,7 @@ export async function save(db: Docs, e: Engagement) {
   if (e.phase === "agreed" && !e.payment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
     const cart = cartFor(e, signer, now());
-    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; say(e, agentOf(sellerOf(e)), `Cart Mandate issued for ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })} (AP2, test mode).`, "rules"); }
+    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; say(e, agentOf(sellerOf(e)), `Ready to pay: ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })} (test payment — no money moves).`, "rules"); }
   }
   await db.set(ENGAGEMENTS, e.id, e);
 }

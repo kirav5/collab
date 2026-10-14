@@ -305,7 +305,18 @@ export const screens = {
   activity: {
     async html() {
       const items = await api("/api/activity").catch(() => []);
-      return frame("Activity", "What your agent shared", `<p class="small muted">Every answer your always-on agent gave from a Public or Protected fact. Private facts never appear here — they're never shared without you.</p>
+      const es = [...live.engagements.values()], me = session.uid;
+      const sold = es.filter(e => (e.seller ?? "provider") === (e.provider.uid === me ? "provider" : "requester") && e.phase === "agreed");
+      const bought = es.filter(e => e.phase === "agreed" && !sold.includes(e));
+      const paid = x => x.payment?.status === "paid" || x.payment?.status === "outside", done = x => x.fulfilment?.state === "accepted";
+      const sum = xs => xs.reduce((n, e) => n + (e.payment?.cart?.total?.value ?? e.negotiation.deal?.price ?? 0), 0);
+      const stat = (n, l) => `<div><b>${n}</b><span class="small muted">${l}</span></div>`;
+      const numbers = `<div class="card">${label("Your numbers", "sq")}<div class="stats">
+        ${stat(es.filter(e => e.provider.uid === me).length, "asked you")}${stat(es.filter(e => e.requester.uid === me).length, "you asked")}${stat(es.filter(e => e.phase === "agreed").length, "deals")}
+        ${stat(sold.filter(paid).length, "paid to you")}${stat(bought.filter(paid).length, "you paid")}${stat(es.filter(done).length, "completed")}</div>
+        ${sold.length ? `<span class="small muted">Sold ${money(sum(sold.filter(paid)), null, sold[0]?.offer?.currency)} in test payments · ${sold.filter(done).length} handed over and accepted</span>` : ""}
+        <span class="small faint">Counted on this device from your conversations. Nobody else sees these.</span></div>`;
+      return frame("Activity", "What your agent shared", `${numbers}<p class="small muted">Every answer your always-on agent gave from a Public or Protected fact. Private facts never appear here — they're never shared without you.</p>
         <div class="stack">${items.map(x => `<div class="card slim"><div class="row">${tag(x.tier === "protected" ? "Protected" : "Public", x.tier === "protected" ? "accent" : "fresh")}<b class="small">To ${esc(x.to)}</b><span class="end faint small">${new Date(x.at * 1000).toLocaleString()}</span></div>
           <span class="small faint">${esc(x.question)}</span><span class="small">→ ${esc(x.answer)}</span></div>`).join("") || `<p class="muted">Nothing shared yet.</p>`}</div>`);
     },

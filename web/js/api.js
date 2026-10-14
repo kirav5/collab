@@ -1,7 +1,7 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
 export const FB = "https://www.gstatic.com/firebasejs/12.14.0";
-export const session = { pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
+export const session = { track: () => {}, pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
 export const worker = "serviceWorker" in navigator ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
@@ -112,6 +112,13 @@ export async function signIn() {
       }
     };
     session.signOut = async () => { await signOut(auth); location.reload(); };
+    // Product analytics (Google Analytics for Firebase): event names and small numbers only — never message text,
+    // names, handles or private facts. Loaded after sign-in so it never delays the first screen.
+    if (config.measurementId && !as) import(`${FB}/firebase-analytics.js`).then(({ getAnalytics, logEvent, setUserProperties }) => {
+      const ga = getAnalytics(app);
+      session.track = (name, params = {}) => { try { logEvent(ga, name, params); } catch {} };
+      setUserProperties(ga, { signed_in: auth.currentUser?.isAnonymous ? "guest" : "google" });
+    }).catch(() => {});
     // Live updates (Firestore) load after sign-in without holding up the first screen; until then the app polls.
     session.fsReady = import(`${FB}/firebase-firestore.js`).then(({ initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, query, where, onSnapshot }) => {
       // Offline cache: the installed app shows conversations and inbox items with no network, and catches up after.

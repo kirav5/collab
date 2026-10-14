@@ -37,4 +37,54 @@ if ! gcloud alpha monitoring policies list --filter='displayName="Collab is down
 JSON
   gcloud alpha monitoring policies create --policy-from-file=/tmp/collab-policy.json >/dev/null
 fi
-echo "Uptime check: $CHECK · alerts to $EMAIL"
+# Errors: more than 5 % of requests answered 5xx for 5 minutes.
+if ! gcloud alpha monitoring policies list --filter='displayName="Collab errors"' --format='value(name)' | grep -q .; then
+  cat > /tmp/collab-errors.json <<JSON
+{
+  "displayName": "Collab errors",
+  "combiner": "OR",
+  "conditions": [{
+    "displayName": "5xx above 5% for 5 min",
+    "conditionThreshold": {
+      "filter": "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=\"collab-market\" AND metric.label.response_code_class=\"5xx\"",
+      "comparison": "COMPARISON_GT", "thresholdValue": 5, "duration": "300s",
+      "aggregations": [{ "alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_RATE", "crossSeriesReducer": "REDUCE_SUM" }],
+      "trigger": { "count": 1 }
+    }
+  }],
+  "notificationChannels": ["$CHANNEL"]
+}
+JSON
+  gcloud alpha monitoring policies create --policy-from-file=/tmp/collab-errors.json >/dev/null
+fi
+
+# Product events: the server logs one line per event (log.ts → event()); each becomes a counter you can chart.
+for ev in signup request_sent agents_contacted deal_agreed paid collected goal_cancelled; do
+  gcloud logging metrics describe "collab_$ev" >/dev/null 2>&1 || gcloud logging metrics create "collab_$ev" \
+    --description="Collab product event: $ev" \
+    --log-filter="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"collab-market\" AND jsonPayload.message=\"event\" AND jsonPayload.event=\"$ev\"" >/dev/null
+done
+
+# The dashboard: traffic, latency, errors, instances, and the product funnel.
+if ! gcloud monitoring dashboards list --filter='displayName="Collab"' --format='value(name)' | grep -q .; then
+  python3 - > /tmp/collab-dashboard.json <<'PY'
+import json
+def ts(filter, aligner="ALIGN_RATE", reducer="REDUCE_SUM", group=None):
+    a = {"alignmentPeriod": "300s", "perSeriesAligner": aligner, "crossSeriesReducer": reducer}
+    if group: a["groupByFields"] = group
+    return {"timeSeriesQuery": {"timeSeriesFilter": {"filter": filter, "aggregation": a}}, "plotType": "LINE"}
+run = 'resource.type="cloud_run_revision" AND resource.label.service_name="collab-market"'
+tiles = [
+  ("Requests / s", [ts(f'metric.type="run.googleapis.com/request_count" AND {run}', group=["metric.label.response_code_class"])]),
+  ("Latency p95 (ms)", [ts(f'metric.type="run.googleapis.com/request_latencies" AND {run}', "ALIGN_DELTA", "REDUCE_PERCENTILE_95")]),
+  ("Instances", [ts(f'metric.type="run.googleapis.com/container/instance_count" AND {run}', "ALIGN_MAX", "REDUCE_MAX")]),
+  ("Sign-ups / 5 min", [ts('metric.type="logging.googleapis.com/user/collab_signup"')]),
+  ("Funnel: requests · contacts · deals / 5 min", [ts(f'metric.type="logging.googleapis.com/user/collab_{e}"') for e in ("request_sent", "agents_contacted", "deal_agreed")]),
+  ("Payments and pickups / 5 min", [ts(f'metric.type="logging.googleapis.com/user/collab_{e}"') for e in ("paid", "collected")]),
+]
+print(json.dumps({"displayName": "Collab", "mosaicLayout": {"columns": 12, "tiles": [
+  {"xPos": (i % 2) * 6, "yPos": (i // 2) * 4, "width": 6, "height": 4, "widget": {"title": t, "xyChart": {"dataSets": d}}} for i, (t, d) in enumerate(tiles)]}}))
+PY
+  gcloud monitoring dashboards create --config-from-file=/tmp/collab-dashboard.json >/dev/null
+fi
+echo "Uptime check: $CHECK · error alert · product metrics · dashboard 'Collab' · alerts to $EMAIL"

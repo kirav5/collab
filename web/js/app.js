@@ -59,6 +59,7 @@ async function setup() {
       busy(b, true, "Setting up");
       try {
         S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), areaName: f.get("area") });
+        session.track("sign_up", { method: session.user?.isAnonymous ? "guest" : "google" });
         resolve();
       } catch (err) { $("#setup-err").textContent = err.message; busy(b, false); }
     };
@@ -125,7 +126,7 @@ function paintSidebar() {
         ${navRow("activity", "≡", "Activity", "")}
         ${navRow("settings", "⚙", "Settings", "")}
       </div>
-      <div class="stack" style="gap:4px">${label("Your agent's address (A2A)")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a>
+      <div class="stack" style="gap:4px">${label("Your agent's address")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a>
         ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
     </div>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
@@ -192,12 +193,19 @@ async function chatHTML() {
   return cur.messages.map(messageHTML).join("");
 }
 
+/** First visit: three lines on how it works, dismissed with one tap (kept on this device). */
+function howItWorks() {
+  try { if (localStorage.getItem("collab.intro") === "done") return ""; } catch {}
+  return `<div class="card intro"><div class="row">${label("How Collab works", "sq accent")}<button class="linkish small faint end" data-act="intro-done">Got it</button></div>
+    <div class="steps-plain"><div><b>1</b><span>Tell your agent what you need — or scan a shop's QR.</span></div><div><b>2</b><span>It talks to the shop's agent for you: asks, answers, and bargains inside the limit you set.</span></div><div><b>3</b><span>You confirm, pay (test mode for now), and collect with a one-tap pass. Your private notes never leave your account.</span></div></div></div>`;
+}
+
 function emptyChat() {
   const tiles = [["Remember", "Remember that I teach guitar on weekends and I'm free after 6 pm", ""],
     ["Find anything", "Need a 2BHK to rent in Indiranagar, budget 36,000 a month, I have a small dog", "peri"],
     ["Offer something", "I teach tabla online and at home in Jayanagar, ₹700 an hour, lowest 600", ""],
     ["Your context", "What did I note about guitar?", ""]];
-  return `<h1 class="headline">Ask your agent. <span class="soft">It asks anyone's agent for anything — and your private context is never shared.</span></h1>
+  return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It asks anyone's agent for anything — and your private context is never shared.</span></h1>
     <div class="grid-tiles">${tiles.map(([l, p, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(p)}</p><span class="arrow">↗</span></button>`).join("")}</div>
     <div class="card">${label("Who sees what", "sq")}
       <dl class="kv"><dt>${tag("Only me", "peri")}</dt><dd>Private. Stored with your account, but no rule can name it and no one else's agent ever sees it.</dd>
@@ -342,6 +350,7 @@ async function onClick(e) {
   try {
     if (a === "nav") return $("#app").classList.toggle("nav-open");
     if (a === "screen") return openScreen(el.dataset.screen);
+    if (a === "intro-done") { try { localStorage.setItem("collab.intro", "done"); } catch {} return paint(); }
     if (a === "install") { if (session.install && await session.install()) toast("Installed — open Collab from your home screen or apps."); return paint(); }
     if (a === "new-chat") { S.current = null; return openScreen("chat"); }
     if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
@@ -369,6 +378,7 @@ async function onClick(e) {
       const body = a === "eng-pay" ? { idempotencyKey: el.dataset.key ??= crypto.randomUUID(), ...(googlePay ? { googlePay } : {}) } : {};
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);
       live.engagements.set(e.id, e);
+      session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
       toast(a === "eng-pay" ? "Paid — test mode, no money moved. Their agent has the payment." : "Marked as paid outside the app.");
       return refresh(openScreen);
     }
@@ -423,6 +433,7 @@ async function onClick(e) {
       busy(el, true);
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
       live.engagements.set(e.id, e);
+      session.track(a === "eng-delivered" ? "delivered" : ok ? "received" : "disputed");
       toast(a === "eng-delivered" ? "Marked delivered — the buyer will confirm." : ok ? "Thanks — the seller will see it arrived as agreed." : "Problem reported to the seller.");
       return refresh(openScreen);
     }
@@ -494,6 +505,7 @@ async function cardAction(a, el, { s, m, c }) {
     const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: picks.map(p => ({ factId: p.fact.id })) });
     c.step = "engaged"; c.engaged = es.map(x => x.id);
     for (const x of es) { live.engagements.set(x.id, x); m.cards.push({ type: "engagement", id: x.id }); }
+    session.track("agents_contacted", { count: es.length, category: c.draft?.need?.category ?? "none" });
     await saveSession(s); paint();
     for (const x of es) run(x.id);
     return;

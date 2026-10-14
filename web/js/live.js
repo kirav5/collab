@@ -81,8 +81,11 @@ export function start(openChat) {
     // The listener's first snapshot is what refresh() above already loaded.
     let first = true;
     fs.inbox(() => { if (first) { first = false; return; } refresh(openChat); });
-    poll = setInterval(() => refresh(openChat), 12_000);
+    // With live listeners the poll is a backstop (alerts, watches, demo devices): once a minute, and only while the
+    // tab is visible — 10,000 open apps must not poll four endpoints every few seconds.
+    poll = setInterval(() => { if (!document.hidden) refresh(openChat); }, 60_000);
   });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(openChat); });
 }
 
 export const needsYou = () => [...live.inbox.filter(i => i.kind !== "move" || i.question), ...live.alerts];
