@@ -27,6 +27,7 @@ import { modelArmor } from "./core/armor.ts";
 import { turnQueue } from "./core/queue.ts";
 import { recoverOutbox } from "./core/recovery.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
+import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
 import { appCheckDecision, replayProtected } from "./core/app-check.ts";
@@ -246,13 +247,12 @@ app.post("/api/people/:handle/ask", route(async req => {
   await spend(req.uid, 2);
   const t = text(req.body?.text, 600).trim();
   if (t.length < 2) throw new HttpError(400, "Ask something.");
-  const facts = ((await db.find(FACTS, [["owner", "==", p.uid]], 100)) as Fact[]).filter(f => f.tier === "public");
-  const offers = facts.filter(f => f.offer);
-  const f = offers.find(o => sameItem(`${o.offer!.title} ${o.text}`, t)) ?? offers[0] ?? facts[0] ?? null;
+  // The offering this is about: named, or the only match. Otherwise no price yet — the shop's agent asks which.
+  const f = (await chooseOffering(db, p.uid, typeof req.body?.offerFactId === "string" ? req.body.offerFactId : null, t)).fact;
   const questions = (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
   const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length ? questions : [t.slice(0, 160)] };
   const e = fresh({ briefId: null, brief, requester: { uid: me_.uid, handle: me_.handle, name: me_.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
-    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: f?.id ?? null, title: f?.text.slice(0, 80) ?? p.name, price: null, unit: null, category: null } });
+    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
   e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
   e.events.push({ at: now(), who: "system", text: `You asked ${p.name}'s agent directly.` });
   e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };

@@ -92,6 +92,26 @@ test("an outside A2A agent that doesn't sign in is a stranger: Public answers on
   assert.ok((await as("cat", "/api/inbox")).some((i: any) => /PIN/.test(i.question)));
 });
 
+test("outside agents: an anonymous token owns its tasks, others can't read them, and an unnamed product is asked about", async () => {
+  await as("dee", "/api/me", { handle: "dee", name: "Dee", areaName: "Koramangala" });
+  await as("dee", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Koramangala, 1 litre, ₹450 each." });
+  await as("dee", "/api/facts", { tier: "public", text: "Copper water bottles for sale in Koramangala, 1 litre, ₹900 each." });
+  assert.equal((await as("dee", "/api/facts")).filter((f: any) => f.offer).length, 2, "both are listings");
+  const mint = async () => (await (await fetch(`${B}/a2a/anonymous`, { method: "POST" })).json()).token as string;
+  const t1 = await mint(), t2 = await mint();
+  assert.match(t1, /^anon:/);
+  const clientWith = (token?: string) => new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: ((u: any, i: any) => fetch(u, { ...i, headers: { ...(i?.headers ?? {}), ...(token ? { authorization: `Bearer ${token}` } : {}) } })) as any })] }).createFromUrl(`${B}/a2a/dee/`);
+  const msg = (text: string) => Message.fromJSON({ messageId: crypto.randomUUID(), role: "ROLE_USER", parts: [{ text }] });
+  const c1 = await clientWith(t1);
+  const task: any = await c1.sendMessage({ message: msg("Do you have a water bottle? What does it cost?") } as any);
+  assert.match(JSON.stringify(Message.toJSON(task.status.message)), /Which of these do you mean/, "two bottles fit: the agent asks, it doesn't pick the first");
+  assert.equal(((await c1.getTask({ id: task.id } as any)) as any).id, task.id, "the token's owner can read its task");
+  await assert.rejects((await clientWith(t2)).getTask({ id: task.id } as any), "another anonymous identity can't");
+  await assert.rejects((await clientWith()).getTask({ id: task.id } as any), "no identity can't");
+  const forged = t1.slice(0, -2) + (t1.endsWith("AA") ? "BB" : "AA");
+  await assert.rejects((await clientWith(forged)).getTask({ id: task.id } as any), "a forged token is no identity");
+});
+
 test("AP2 on the agent card, a signed deal receipt, deal insights, and outcome stats", async () => {
   const card = await (await fetch(`${B}/a2a/riya/.well-known/agent-card.json`)).json();
   assert.ok(card.capabilities.extensions[0].uri.includes("AP2"), "the agent card declares AP2 roles");

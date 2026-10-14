@@ -157,3 +157,17 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
   }
   return { found: list.slice(0, 8).map(c => ({ ...c, fact: { id: c.fact.id, text: c.fact.text, offer: c.fact.offer } })), overBudget: overBudget.slice(0, 3), rankedByModel: byModel, considered: best.size };
 }
+
+/**
+ * Which of a provider's offerings a request is about — chosen explicitly, never by storage order: the one named (it
+ * must be theirs and Public), else the only one that matches the request's words, else their only offering. Several
+ * possible matches means the agent asks; `options` are what it offers.
+ */
+export async function chooseOffering(db: Docs, providerUid: string, named: string | null | undefined, text: string): Promise<{ fact: Fact | null; options: Fact[] }> {
+  const offers = ((await db.find(FACTS, [["owner", "==", providerUid]], 100)) as Fact[]).filter(f => f.tier === "public" && f.offer);
+  if (named) { const f = offers.find(o => o.id === named); return { fact: f ?? null, options: f ? [] : offers.slice(0, 5) }; }
+  if (offers.length <= 1) return { fact: offers[0] ?? null, options: [] };
+  const matching = offers.filter(o => sameItem(`${o.offer!.title} ${o.text}`, text));
+  if (matching.length === 1) return { fact: matching[0], options: [] };
+  return { fact: null, options: (matching.length ? matching : offers).slice(0, 5) };
+}

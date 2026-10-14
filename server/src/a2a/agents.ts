@@ -16,7 +16,7 @@ import type { Docs } from "../docs.ts";
 import { moneyText } from "../market/types.ts";
 import type { Engagement, Fact, Profile } from "../core/model.ts";
 import { FACTS, PROFILES } from "../core/policy.ts";
-import { byHandle } from "../core/directory.ts";
+import { byHandle, chooseOffering } from "../core/directory.ts";
 import { type Turn, fresh, load, providerTurn, requesterTurn, save } from "../core/engage.ts";
 import { take, withLease } from "../core/limits.ts";
 import { pushTo } from "../core/push.ts";
@@ -45,6 +45,21 @@ export const agentToken = (secret: string, uid: string) => `agent:${uid}.${creat
 /** An owner's signature over a deal receipt's hash. */
 export const signReceipt = (secret: string, uid: string, hash: string) => createHmac("sha256", secret).update(`${uid}:${hash}`).digest("base64url");
 
+/** A free anonymous identity for outside agents that want to continue a conversation (or read its task later): their
+ *  tasks are bound to it. Without one, an outside agent gets its answer in the reply (or its webhook) and nobody can
+ *  reopen that task by id. Valid for 7 days. */
+export const anonToken = (secret: string, id: string) => `anon:${id}.${createHmac("sha256", secret).update(`anon:${id}`).digest("base64url")}`;
+function anonUid(secret: string, token: string): string | null {
+  const m = token.match(/^anon:([a-z0-9]{6,40})\.(.+)$/);
+  if (!m) return null;
+  const issued = parseInt(m[1].slice(0, 8), 36) * 1000;
+  if (!issued || Date.now() - issued > 7 * 86_400_000) return null;
+  const want = Buffer.from(anonToken(secret, m[1]).split(".").pop()!), got = Buffer.from(m[2]);
+  return want.length === got.length && timingSafeEqual(want, got) ? `anon:${m[1]}` : null;
+}
+/** A real person behind this side (not an anonymous outside agent). */
+export const isPerson = (uid: string | null | undefined): uid is string => !!uid && !uid.startsWith("anon:");
+
 function agentUid(secret: string, token: string): string | null {
   const m = token.match(/^agent:([^.]+)\.(.+)$/);
   if (!m) return null;
@@ -55,7 +70,9 @@ function agentUid(secret: string, token: string): string | null {
 class Caller {
   uid: string | null;
   ip: string;
-  constructor(uid: string | null, ip = "") { this.uid = uid; this.ip = ip; }
+  /** The server itself (delivering an owner's answer into a task), not an outside request. */
+  internal: boolean;
+  constructor(uid: string | null, ip = "", internal = false) { this.uid = uid; this.ip = ip; this.internal = internal; }
   get isAuthenticated() { return this.uid !== null; }
   get userName() { return this.uid ?? ""; }
 }
@@ -74,8 +91,15 @@ class FirestoreTaskStore implements TaskStore {
   }
   async load(taskId: string, context: ServerCallContext) {
     const d = await this.db.get(TASKS, taskId);
-    // A task is the caller's: one agent can't read another's conversation by guessing an id.
-    if (!d || (d.caller && d.caller !== callerOf(context))) return undefined;
+    if (!d) return undefined;
+    // A task is its caller's: one agent can't read another's conversation by knowing an id. Tasks started without any
+    // identity can't be reopened later: only within the minute they're being answered (the SDK re-reads the task while
+    // handling that same request). To continue later, an outside agent gets an anonymous token first.
+    const internal = (context.user as Caller | undefined)?.internal;
+    if (!internal) {
+      if (d.caller === null) { if (callerOf(context) !== null || Date.now() - (d.updatedAt ?? 0) > 60_000) return undefined; }
+      else if (d.caller !== callerOf(context)) return undefined;
+    }
     return Task.fromJSON(JSON.parse(d.json));
   }
   async list() { return { tasks: [], nextPageToken: "", pageSize: 0, totalSize: 0 } as any; }
@@ -133,7 +157,8 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
       extensions: [{ uri: "https://github.com/google-agentic-commerce/AP2/tree/v0.1",
         description: "Agentic Payments Protocol roles: merchant (this agent's Public offerings) and shopper (requests it sends). After a deal both owners confirmed, the seller's agent issues a signed Cart Mandate and the buyer's agent sends a signed Payment Mandate for it in a collab.turn/v1 data part (test mode: no money moves).",
         required: false, params: { roles: ["merchant", "shopper"], mode: "test", conformance: "AP2-inspired custom v0.1 flow", publicKey: cfg.receiptKey, subject: cfg.receiptSubject?.(p.uid) } }] },
-    securitySchemes: { firebase: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Firebase ID token", description: "Optional. Without it you're a stranger: Public facts only." } } },
+    securitySchemes: { firebase: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Firebase ID token", description: "Optional. Without it you're a stranger: Public facts only." } },
+      anonymous: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Collab anonymous token", description: `Optional. POST ${cfg.publicUrl}/a2a/anonymous for one: still a stranger (Public facts only), but your tasks are bound to it so you can continue a conversation or read it later. Without any token, a task can't be reopened.` } } },
     defaultInputModes: ["text/plain", "application/json"],
     defaultOutputModes: ["text/plain", "application/json"],
     skills: [{
@@ -192,6 +217,7 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
       const t = turnOf(ctx.userMessage);
       const caller = callerOf(ctx.context);
       let e: Engagement | null = null;
+      let choices: Fact[] = [];
       if (t?.engagementId) {
         try { e = await load(cfg.db, t.engagementId); } catch { e = null; }
         // An engagement is between its two parties: a caller can't continue someone else's.
@@ -202,9 +228,10 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
         // New conversations cost the provider's agent (and Gemini) the most: 20 an hour per caller.
         if (!(await take(cfg.db, `a2a-new:${caller ?? "ip:" + ipOf(ctx.context)}`, 1, 20, 20 / 3600))) throw new Error("Too many new requests — try again later.");
         const who = caller ? ((await cfg.db.get(PROFILES, caller)) as Profile | null) : null;
-        // Which of the provider's offerings this is about: the one named, else their (first) offering.
-        const offerFact = t.offerFactId ? ((await cfg.db.get(FACTS, t.offerFactId)) as Fact | null)
-          : ((await cfg.db.find(FACTS, [["owner", "==", provider.uid]], 100)) as Fact[]).find(f => f.tier === "public" && f.offer) ?? null;
+        // Which of the provider's offerings this is about — named, or the only match; several possible means asking.
+        const chosen = await chooseOffering(cfg.db, provider.uid, t.offerFactId, `${t.brief.title} ${t.brief.summary}`);
+        const offerFact = chosen.fact;
+        choices = chosen.options;
         e = fresh({ briefId: null, brief: t.brief, requester: { uid: caller, handle: who?.handle ?? "outside-agent", name: who?.name ?? "An outside agent" },
           provider: { uid: provider.uid, handle: provider.handle, name: provider.name },
           offer: offerFact?.owner === provider.uid && offerFact.offer
@@ -236,6 +263,15 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
         return r;
       });
       if (!reply) throw new Error("This conversation is busy — try again in a moment.");
+      // Several offerings could fit and none was named: ask which, instead of picking one.
+      if (choices.length > 1 && !current.qa.some(q => q.from === "provider" && q.question.startsWith("Which of these"))) {
+        const question = `Which of these do you mean: ${choices.map(c => c.offer!.title).join("; ")}?`;
+        const id = randomUUID().slice(0, 12);
+        current.qa.push({ id, from: "provider", question, status: "open" });
+        current.events.push({ at: Math.floor(Date.now() / 1000), who: "provider_agent", text: question, by: "rules" });
+        (reply.questions ??= []).push({ id, question });
+        await save(cfg.db, current);
+      }
       if (flagged.length) {
         (reply.declined ??= []).push(...flagged.filter(f => (t?.questions ?? []).every(q => q.question !== f)).slice(0, 4));
         current.events.push({ at: Math.floor(Date.now() / 1000), who: "system", text: `Model Armor flagged ${flagged.length} message${flagged.length === 1 ? "" : "s"} from ${current.requester.name}'s agent as a prompt-injection attempt; ${flagged.length === 1 ? "it was" : "they were"} not answered.` });
@@ -266,8 +302,16 @@ export function a2aRouter(cfg: A2AConfig): { router: Router; store: TaskStore } 
     if (!token) return new Caller(null, ip);
     const agent = agentUid(cfg.secret, token);
     if (agent) return new Caller(agent, ip);
+    const anon = anonUid(cfg.secret, token);
+    if (anon) return new Caller(anon, ip);
     try { return new Caller(await cfg.verifyIdToken(token), ip); } catch { return new Caller(null, ip); }
   };
+  // An anonymous identity for outside agents (see anonToken). Rate-limited per IP.
+  router.post("/anonymous", async (req, res) => {
+    if (!(await take(cfg.db, `a2a-anon:${clientIp(req)}`, 1, 10, 10 / 3600))) { res.status(429).json({ error: "Too many anonymous identities — try later." }); return; }
+    const id = Date.now().toString(36).padStart(8, "0") + randomUUID().replace(/-/g, "").slice(0, 16);
+    res.json({ token: anonToken(cfg.secret, id), expiresIn: 7 * 86_400, use: "Send as 'Authorization: Bearer <token>' to continue conversations and read your tasks." });
+  });
   router.use("/:handle", async (req, res, next) => {
     // Outside callers are limited per IP (our own agents sign their calls and are limited per account upstream).
     const own = agentUid(cfg.secret, req.headers.authorization?.match(/^Bearer (.+)$/)?.[1] ?? "");
@@ -341,7 +385,7 @@ async function onProviderTask(cfg: A2AConfig, engagementId: string, task: Task):
 export async function deliverProviderTurn(cfg: A2AConfig, store: TaskStore, engagementId: string, turn: Turn) {
   const e = await load(cfg.db, engagementId);
   if (!e.taskId) return;
-  const ctx = { user: new Caller(e.requester.uid) } as unknown as ServerCallContext;
+  const ctx = { user: new Caller(e.requester.uid, "", true) } as unknown as ServerCallContext;
   const task = await store.load(e.taskId, ctx);
   if (!task) return;
   const msg = message("ROLE_AGENT", turn, { taskId: e.taskId, contextId: e.contextId ?? undefined });
@@ -349,8 +393,8 @@ export async function deliverProviderTurn(cfg: A2AConfig, store: TaskStore, enga
   task.status = { state: stateOf(e), message: msg, timestamp: new Date().toISOString() };
   await store.save(task, ctx);
   // An outside agent that registered a webhook hears about it now (our own agents read the task below).
-  void pushSender?.send({ payload: { $case: "statusUpdate", value: { taskId: e.taskId, contextId: e.contextId ?? "", status: task.status, metadata: { engagementId: e.id } } } } as any, ctx, task).catch(() => {});
-  if (!e.requester.uid) return;
+  void pushSender?.send({ payload: { $case: "statusUpdate", value: { taskId: e.taskId, contextId: e.contextId ?? "", status: task.status, metadata: { engagementId: e.id } } } } as any, { user: new Caller(e.requester.uid) } as unknown as ServerCallContext, task).catch(() => {});
+  if (!isPerson(e.requester.uid)) return;
   const client = await clientFor(cfg, e.provider.handle, e.requester.uid);
   const fresh = (await client.getTask({ id: e.taskId } as any)) as Task;
   const next = await onProviderTask(cfg, engagementId, fresh);

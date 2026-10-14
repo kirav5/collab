@@ -106,7 +106,8 @@ async function limitFor(db: Docs, e: Engagement, s: Side): Promise<DelegatedLimi
 }
 
 /** Whether a side has a device that can be asked (our users and demo people do; an outside A2A agent doesn't). */
-const hasOwner = (e: Engagement, s: Side) => !!uidOf(e, s);
+// An owner who can be asked: a person, not an anonymous outside agent.
+const hasOwner = (e: Engagement, s: Side) => { const u = uidOf(e, s); return !!u && !u.startsWith("anon:"); };
 
 async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" | "owner" | "engagementId" | "side" | "status" | "createdAt" | "title">): Promise<string> {
   const id = newId();
