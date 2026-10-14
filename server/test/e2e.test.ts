@@ -289,6 +289,46 @@ test('stock: an out-of-stock deal cannot be paid (nothing charged); restocked, p
   await as(seller, `/api/resources/${ledger.id}/stock`, { onHand: 1 });
 });
 
+test('time slots: an agreed lesson asks the buyer to pick a slot; one place goes to one buyer; payment commits it', async () => {
+  await as('tina', '/api/me', { handle: 'tina', name: 'Tina', areaName: 'Jayanagar' });
+  const draft = await as('tina', '/api/offers/draft', { text: 'I teach guitar online and at home in Jayanagar, ₹800 an hour, lowest 700' });
+  const fact = await as('tina', '/api/facts', { tier: 'public', text: draft.publicText });
+  const T = Math.floor(Date.now() / 1000);
+  const schedule = await as('tina', '/api/resources', { factId: fact.id, type: 'slots', slots: [{ start: T + 86400, end: T + 90000, capacity: 1 }, { start: T + 172800, end: T + 176400, capacity: 1 }] });
+  const agree = async (buyer: string) => {
+    await as(buyer, '/api/me', { handle: buyer, name: buyer.toUpperCase(), areaName: 'Jayanagar' });
+    const d = (await as(buyer, '/api/briefs/draft', { text: 'Looking for guitar lessons in Jayanagar, up to 750 an hour' })).draft;
+    const sent = await as(buyer, '/api/briefs', { need: d.need, shared: d.shared });
+    const [e0] = await as(buyer, `/api/briefs/${sent.brief.id}/engage`, { providers: [{ factId: fact.id }] });
+    let e = await as(buyer, `/api/engagements/${e0.id}/run`, {});
+    const limits = { requester: { price: { opening: 650, limit: 750 }, terms: {}, maxRounds: 5 }, provider: { price: { opening: 800, limit: 700 }, terms: {}, maxRounds: 5 } };
+    for (let i = 0; i < 30 && e.phase !== 'agreed'; i++) {
+      const moved = (await device(buyer, limits)) || (await device('tina', limits));
+      e = await as(buyer, `/api/engagements/${e.id}`);
+      if (!moved) break;
+    }
+    assert.equal(e.phase, 'agreed', JSON.stringify(e.events.slice(-3)));
+    return e;
+  };
+  const uma = await agree('uma'), vik = await agree('vik');
+  assert.equal(uma.reservation.state, 'choose_slot');
+  const umaPay = await fetch(B + `/api/engagements/${uma.id}/pay`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer dev:uma' }, body: '{}' });
+  assert.equal(umaPay.status, 409, 'no paying before a slot is picked');
+  const { slots } = await as('uma', `/api/engagements/${uma.id}/slots`);
+  assert.equal(slots.length, 2);
+  const picked = await as('uma', `/api/engagements/${uma.id}/slot`, { slotId: slots[0].id });
+  assert.equal(picked.reservation.state, 'held'); assert.equal(picked.reservation.slot.start, slots[0].start);
+  await assert.rejects(as('tina', `/api/engagements/${uma.id}/slot`, { slotId: slots[1].id }), 'the seller does not pick for the buyer');
+  // Vik can't take the place Uma holds; the other slot is free.
+  const clash = await fetch(B + `/api/engagements/${vik.id}/slot`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer dev:vik' }, body: JSON.stringify({ slotId: slots[0].id }) });
+  assert.equal(clash.status, 409); assert.equal((await clash.json()).code, 'CAPACITY_UNAVAILABLE');
+  assert.equal((await as('vik', `/api/engagements/${vik.id}/slots`)).slots.length, 1);
+  const paid = await as('uma', `/api/engagements/${uma.id}/pay`, { idempotencyKey: 'uma-slot' });
+  assert.equal(paid.reservation.state, 'committed');
+  const [ledger] = (await as('tina', '/api/resources')).filter((r: any) => r.id === schedule.id);
+  assert.ok(ledger.holds.some((h: any) => h.state === 'committed' && h.slotId === slots[0].id));
+});
+
 test('a listing-origin agreement can be paid and issued a pickup pass', async () => {
   const e = await as('amy', `/api/engagements/${agreedId}/pay`, {});
   assert.equal(e.payment.status, 'paid');

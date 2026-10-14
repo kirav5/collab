@@ -139,7 +139,9 @@ async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" 
 /** Holds the deal's units on the offering's ledger (if it has one); records the result on the conversation. */
 export async function reserveFor(db: Docs, e: Engagement) {
   const r = await resourceFor(db, e.offer.factId!);
-  if (!r || r.type !== "quantity") return;
+  if (!r) return;
+  // A service with time slots: the buyer picks one (held when picked), before paying.
+  if (r.type === "slots") { e.reservation = { resourceId: r.id, holdId: null, qty: 1, state: "choose_slot", expiresAt: null, slotId: null, slot: null }; say(e, "system", "Pick a time slot to book it."); return; }
   const qty = (e.negotiation.deal?.items?.reduce((n, l) => n + l.quantity, 0)) ?? (Number.isInteger(e.negotiation.deal?.terms?.quantity) && e.negotiation.deal!.terms.quantity > 1 ? e.negotiation.deal!.terms.quantity : 1);
   try {
     const h = await hold(db, r.id, { holder: e.requester.uid ?? "", engagementId: e.id, qty, ttlSec: policy().timing.holdTtlSec }, now());

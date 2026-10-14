@@ -24,7 +24,7 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
-import { CapacityError, RESOURCES, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
+import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
@@ -701,7 +701,11 @@ app.post("/api/engagements/:id/pay", route(async req => {
     const live = e.reservation.state === "held" && (e.reservation.expiresAt ?? 0) > now();
     if (!live) {
       try {
-        const h = await holdResource(db, e.reservation.resourceId, { holder: req.uid, engagementId: e.id, qty: e.reservation.qty, ttlSec: policy().timing.holdTtlSec }, now());
+        if (e.reservation.state === "choose_slot" || (e.reservation.slotId === null && e.reservation.state !== "unavailable" && (await db.get(RESOURCES, e.reservation.resourceId))?.type === "slots")) {
+          await release();
+          throw new HttpError(409, "Pick a time slot first.", "INVALID_INPUT");
+        }
+        const h = await holdResource(db, e.reservation.resourceId, { holder: req.uid, engagementId: e.id, qty: e.reservation.qty, slotId: e.reservation.slotId ?? null, ttlSec: policy().timing.holdTtlSec }, now());
         e.reservation = { ...e.reservation, holdId: h.id, state: "held", expiresAt: h.expiresAt };
       } catch (err) {
         await release();
@@ -747,6 +751,39 @@ app.post("/api/engagements/:id/cart", route(async req => {
   if (e.phase === "agreed" && !e.payment) await saveEngagement(db, e);
   return load(db, e.id);
 }));
+// Slots for a deal: the open ones, and the buyer's pick (held atomically; another buyer can't take it meanwhile).
+app.get("/api/engagements/:id/slots", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const r = e.reservation ? ((await db.get(RESOURCES, e.reservation.resourceId)) as Resource | null) : null;
+  if (!r || r.type !== "slots") return { timezone: null, slots: [] };
+  const t = now();
+  return { timezone: r.timezone, slots: r.slots.filter(s => s.start > t && availableIn(r, t, s.id) > 0).sort((a, b) => a.start - b.start).slice(0, 50) };
+}));
+app.post("/api/engagements/:id/slot", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e[buyerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the buyer picks the slot.", "AUTHORITY_REQUIRED");
+  if (!e.reservation || e.payment?.status === "paid") throw new HttpError(409, "There's no slot to pick for this deal.", "VERSION_CONFLICT");
+  const slotId = text(req.body?.slotId, 40);
+  try {
+    if (e.reservation.holdId && e.reservation.state === "held") await releaseResource(db, e.reservation.resourceId, e.reservation.holdId, now());
+    const h = await holdResource(db, e.reservation.resourceId, { holder: req.uid, engagementId: e.id, qty: 1, slotId, ttlSec: policy().timing.holdTtlSec }, now());
+    const r = (await db.get(RESOURCES, e.reservation.resourceId)) as Resource;
+    const s = r.slots.find(x => x.id === slotId)!;
+    await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, reservation: { ...cur.reservation!, holdId: h.id, slotId, slot: { start: s.start, end: s.end }, state: "held", expiresAt: h.expiresAt },
+      events: [...cur.events, { at: now(), who: buyerOf(cur), text: `Picked ${new Date(s.start * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC — held until paid.`, by: "owner" }], updatedAt: now() } : null));
+  } catch (err) { if (err instanceof CapacityError) throw new HttpError(409, err.message, err.code); throw err; }
+  return load(db, e.id);
+}));
+app.post("/api/resources/:id/slots", route(async req => {
+  const id = String(req.params.id);
+  const add = (Array.isArray(req.body?.slots) ? req.body.slots : []).slice(0, 50).map((x: any) => ({ start: num(x?.start, 0, 4e9) ?? 0, end: num(x?.end, 0, 4e9) ?? 0, capacity: num(x?.capacity, 1, 1000) ?? 1 }));
+  if (!add.length || add.some((s: any) => s.end <= s.start)) throw new HttpError(400, "Each slot needs a start before its end.", "INVALID_INPUT");
+  const r = await db.update(RESOURCES, id, (cur: Resource | null) => (cur && cur.owner === req.uid && cur.type === "slots"
+    ? { ...cur, slots: [...cur.slots, ...add.map((s: any) => ({ id: randomUUID().slice(0, 12), ...s }))].slice(-500), revision: cur.revision + 1, updatedAt: now(), observedAt: now() } : null));
+  if (!r) throw new HttpError(404, "No such schedule.", "NOT_FOUND");
+  return r;
+}));
+
 // Stock and slots for an owner's offerings (the ledger the reservations come from).
 app.get("/api/resources", route(async req => db.find(RESOURCES, [["owner", "==", req.uid]], 100)));
 app.post("/api/resources", route(async req => {

@@ -139,7 +139,8 @@ export interface Engagement {
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
   /** The stock held for this deal (see core/resources.ts): held until paid (then committed), released if it ends. */
-  reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable"; expiresAt: number | null; reason?: string };
+  reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable" | "choose_slot";
+    expiresAt: number | null; reason?: string; slotId?: string | null; slot?: { start: number; end: number } | null };
   /** The requester's goal this conversation is a task of (see core/goals.ts). */
   goalId?: string | null;
   /** The operational policy version this conversation started under (see config/policy.ts). */
