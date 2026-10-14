@@ -113,8 +113,16 @@ async function limitFor(db: Docs, e: Engagement, s: Side): Promise<DelegatedLimi
 const hasOwner = (e: Engagement, s: Side) => { const u = uidOf(e, s); return !!u && !u.startsWith("anon:"); };
 
 async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" | "owner" | "engagementId" | "side" | "status" | "createdAt" | "title">): Promise<string> {
+  // One request per decision: the same question, or the same deal to confirm, already open isn't asked again.
+  const proposalId = item.kind === "confirm" ? e.negotiation.deal?.id : undefined;
+  for (const open of e.waiting[s]?.inbox ?? []) {
+    const x = (await db.get(INBOX, open)) as InboxItem | null;
+    if (x?.status === "open" && x.kind === item.kind && (item.kind === "confirm" ? x.proposalId === proposalId : item.qaId ? x.qaId === item.qaId : x.question === item.question)) return x.id;
+  }
   const id = newId();
-  await db.set(INBOX, id, { ...item, id, owner: uidOf(e, s)!, engagementId: e.id, side: s, status: "open", title: e.title, createdAt: now() } satisfies InboxItem);
+  const t = now();
+  await db.set(INBOX, id, { ...item, ...(proposalId ? { proposalId } : {}), deadline: t + policy().timing.decisionTtlSec, onTimeout: item.kind === "confirm" ? "lapse" : "wait",
+    id, owner: uidOf(e, s)!, engagementId: e.id, side: s, status: "open", title: e.title, createdAt: t } satisfies InboxItem);
   // A move the device makes on its own needs no one's attention; everything else notifies the owner.
   if (!(item.kind === "move" && !item.question)) {
     const what = item.kind === "confirm" ? "Confirm the deal" : item.kind === "move" ? "No deal inside your limit yet" : item.kind === "approve" ? "Check an answer before it's shared" : "A question only you can answer";
@@ -123,6 +131,9 @@ async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" 
   e.waiting[s] = { kind: item.kind, inbox: [...(e.waiting[s]?.inbox ?? []), id], text: item.question ?? (item.kind === "move" ? "A negotiating move with your private limit" : "Confirm the deal") };
   return id;
 }
+
+/** For tests and other modules: ask an owner (deduplicated, with a deadline). */
+export const askOwner = ask;
 
 /** Names the wall replaces: the owner's contacts (other than the person they're talking to). */
 async function wallNames(db: Docs, owner: string | null, keep: string): Promise<{ name: string; replacement: string }[]> {
@@ -392,6 +403,9 @@ export interface Resolution { text?: string; share?: boolean; mandate?: Mandate;
 /** The owner's device resolves an inbox item: an answer (typed, or drafted from private notes and approved), a move
  *  with the private limit (used for this move only, never stored), a confirmation. Returns the turn to send if this
  *  side has nothing else waiting. */
+/** A decision about a version of something that has since changed (maps to VERSION_CONFLICT). */
+export class Stale extends Error {}
+
 export async function resolve(db: Docs, model: Model | null, item: InboxItem, r: Resolution): Promise<{ e: Engagement; turn: Turn | null }> {
   const e = await load(db, item.engagementId);
   const s = item.side;
@@ -433,6 +447,11 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       }
     }
   } else if (item.kind === "confirm") {
+    // An approval is for the exact deal it was asked about: a changed or finished deal makes it stale.
+    if (!r.decline && (e.phase !== "deal" || (item.proposalId && item.proposalId !== e.negotiation.deal?.id))) {
+      await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
+      throw new Stale("This deal changed since you were asked — check the new terms before confirming.");
+    }
     if (r.decline && e.offer.price == null) {
       // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
       say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: currencyOf(e), period: e.offer.unit })}.`, "owner");

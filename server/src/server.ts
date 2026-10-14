@@ -22,13 +22,14 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
 import { recoverOutbox } from "./core/recovery.ts";
+import { expireDecisions } from "./core/decisions.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
@@ -861,8 +862,9 @@ app.post("/cron/recover", async (req, res, next) => {
     const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
     if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
-    if (recovered.found) log.info("outbox recovery", recovered);
-    res.json(recovered);
+    const decisions = await expireDecisions(db, now(), i => pushTo(i.owner, `Still waiting for you · ${i.title}`, i.question ?? "A decision is due.", `/?engagement=${i.engagementId}`).then(() => {}));
+    if (recovered.found || decisions.lapsed || decisions.reminded) log.info("minute jobs", { recovered, decisions });
+    res.json({ ...recovered, decisions });
   } catch (e) { next(e); }
 });
 
@@ -878,6 +880,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code });
   if (err instanceof Problem) return res.status(400).json({ error: err.message, code: "INVALID_INPUT" });
   if (err instanceof Refused) return res.status(403).json({ error: err.message, code: "AUTHORITY_REQUIRED" });
+  if (err instanceof Stale) return res.status(409).json({ error: err.message, code: "VERSION_CONFLICT" });
   log.error("unhandled", err, { path: _req.path });
   res.status(500).json({ error: "something went wrong" });
 });

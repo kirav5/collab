@@ -302,7 +302,9 @@ function whoLabel(who, mine, themName) {
 function inboxBlock(i) {
   const demo = i.owner !== session.uid;
   const as = demo ? `<span class="small faint">Their phone is simulated in the demo — you're answering as them.</span>` : "";
-  const box = (title, body) => `<div class="card slim accent" data-item="${esc(i.id)}">${label(title, "accent")}${as}${body}</div>`;
+  // Every decision says when it's due and what happens otherwise — silence is never taken as a yes.
+  const due = i.deadline ? `<span class="small faint">Decide by ${new Date(i.deadline * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} · ${i.onTimeout === "lapse" ? "if you don't, the deal lapses and nothing is agreed" : "if you don't, your agent keeps waiting"}</span>` : "";
+  const box = (title, body) => `<div class="card slim accent" data-item="${esc(i.id)}">${label(title, "accent")}${as}${body}${due}</div>`;
   if (i.kind === "answer") {
     const d = drafts.get(i.id);
     return box(demo ? "Their agent needs them" : "Your agent needs you", `<span class="small">${i.side === "provider" ? "The requester's agent asks" : "Their agent asks"}: <b>${esc(i.question)}</b></span>

@@ -165,8 +165,13 @@ export interface InboxItem {
   /** move: what similar deals closed at (market data, shown to the owner). */
   hint?: string;
   title: string;
-  /** "working": claimed by one device while it's being resolved. */
-  status: "open" | "working" | "done";
+  /** confirm: the exact proposal this approval is for — a changed deal makes it stale (VERSION_CONFLICT). */
+  proposalId?: string;
+  /** When the decision is due, and what happens if nobody decides: the deal lapses, or the agent keeps waiting.
+   *  Silence is never approval. */
+  deadline?: number; onTimeout?: "lapse" | "wait";
+  /** "working": claimed by one device while it's being resolved; "expired": its deadline passed. */
+  status: "open" | "working" | "done" | "expired";
   createdAt: number;
 }
 
