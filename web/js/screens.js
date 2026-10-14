@@ -1,7 +1,7 @@
 // The screens beside chat (Collab's Screens.swift): Context (what your agent knows, and who sees each thing),
 // People, Sharing (rules for Protected topics, pause everything), Requests (every conversation between agents, live),
 // Activity (what your agent shared, with whom) and Settings.
-import { api, ios, session, standalone } from "./api.js";
+import { api, ios, session, standalone, cached } from "./api.js";
 import { downloadNano, engine, setProcessingMode } from "./agent.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
@@ -12,7 +12,7 @@ const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(
 
 /** Every fact the owner has — all tiers live on the server under their account; Private is never shared. */
 async function allFacts() {
-  return (await api("/api/facts").catch(() => [])).sort((a, b) => b.createdAt - a.createdAt);
+  return [...(await cached("/api/facts").catch(() => []))].sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /** Gemini Nano's state on this device, and what the owner can do about it. */
@@ -138,7 +138,7 @@ export const screens = {
 
   people: {
     async html(S) {
-      const contacts = await api("/api/contacts").catch(() => []);
+      const contacts = await cached("/api/contacts").catch(() => []);
       const card = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
       let qr = "";
@@ -176,7 +176,7 @@ export const screens = {
 
   sharing: {
     async html(S) {
-      const [rules, contacts, facts] = await Promise.all([api("/api/rules").catch(() => []), api("/api/contacts").catch(() => []), allFacts()]);
+      const [rules, contacts, facts] = await Promise.all([cached("/api/rules").catch(() => []), cached("/api/contacts").catch(() => []), allFacts()]);
       const topics = [...new Set(facts.filter(f => f.tier === "protected").flatMap(f => f.topics))];
       const shapeText = { yesNo: "Yes / no only", oneLine: "One line", summary: "A summary", full: "Everything in the fact" };
       return frame("Sharing", "Who sees what", `
@@ -304,7 +304,7 @@ export const screens = {
 
   activity: {
     async html() {
-      const items = await api("/api/activity").catch(() => []);
+      const items = await cached("/api/activity").catch(() => []);
       const es = [...live.engagements.values()], me = session.uid;
       const sold = es.filter(e => (e.seller ?? "provider") === (e.provider.uid === me ? "provider" : "requester") && e.phase === "agreed");
       const bought = es.filter(e => e.phase === "agreed" && !sold.includes(e));

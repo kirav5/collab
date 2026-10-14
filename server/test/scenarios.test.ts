@@ -1,0 +1,232 @@
+// Final-test scenarios, end to end against the real server (in memory, offline stand-in for Gemini): sign-up edge
+// cases, opening a shop's or a person's agent from a QR, conversations that end midway, a paused agent, private facts,
+// payment outside the app with a pass, and random buyer–seller conversations checked against invariants after every
+// step. docs/TEST-SCENARIOS.md maps each scenario to where it is tested.
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+
+const PORT = 9000 + Math.floor(Math.random() * 100);
+const B = `http://localhost:${PORT}`;
+let server: ChildProcess;
+
+before(async () => {
+  server = spawn(process.execPath, ["src/server.ts"], { cwd: new URL("..", import.meta.url).pathname, stdio: "pipe",
+    env: { ...process.env, PORT: String(PORT), STORE: "memory", DEV_AUTH: "1", GEMINI_FAKE: "1", GEMINI_API_KEY: "", PUBLIC_URL: B } });
+  for (let i = 0; i < 50; i++) { try { if ((await fetch(`${B}/health`)).ok) return; } catch { /* starting */ } await new Promise(r => setTimeout(r, 200)); }
+  throw new Error("server didn't start");
+});
+after(() => { server.kill(); });
+
+const raw = (uid: string | null, path: string, body?: unknown) => fetch(B + path, { method: body === undefined ? "GET" : "POST",
+  headers: { "content-type": "application/json", ...(uid ? { authorization: `Bearer dev:${uid}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+async function as(uid: string, path: string, body?: unknown) {
+  const r = await raw(uid, path, body);
+  const data = await r.json();
+  if (!r.ok) throw Object.assign(new Error(`${path}: ${r.status} ${JSON.stringify(data)}`), { status: r.status });
+  return data;
+}
+const inboxFor = async (uid: string, engagementId: string, kind?: string) =>
+  ((await as(uid, "/api/inbox")) as any[]).find(i => i.engagementId === engagementId && (!kind || i.kind === kind));
+
+let shopFact = "";
+test("sign-up: no account, no profile, bad and taken handles, and a handle given up is free again", async () => {
+  assert.equal((await raw(null, "/api/me")).status, 401, "no sign-in, no API");
+  assert.equal(await as("newbie", "/api/me"), null, "signed in but no profile yet");
+  await assert.rejects(as("newbie", "/api/me", { handle: "a!", name: "N" }), /3–24 letters/);
+  await as("shop", "/api/me", { handle: "steel-shop", name: "Steel Shop", areaName: "Indiranagar" });
+  await assert.rejects(as("newbie", "/api/me", { handle: "steel-shop", name: "N" }), /taken/);
+  await assert.rejects(as("newbie", "/api/me", { handle: "Steel-Shop", name: "N" }), /taken/, "handles ignore case");
+  const n = await as("newbie", "/api/me", { handle: "newbie-1", name: "Newbie" });
+  assert.equal(n.handle, "newbie-1");
+  const renamed = await as("newbie", "/api/me", { handle: "newbie-2" });
+  assert.equal(renamed.name, "Newbie", "renaming the handle keeps the rest");
+  await as("other", "/api/me", { handle: "newbie-1", name: "Other" });
+  assert.equal((await as("other", "/api/me")).handle, "newbie-1", "the old handle was released");
+});
+
+test("QR: a shop's card suggests stock, price and pickup; a person's suggests questions about them; the agent card publishes the same", async () => {
+  // (The offline stand-in model reads a listing phrased "for sale"; Gemini reads any phrasing.)
+  const f = await as("shop", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
+  assert.ok(f.offer, "a public offering");
+  shopFact = f.id;
+  await as("shop", "/api/resources", { factId: f.id, type: "quantity", onHand: 3 });
+  await as("buyer", "/api/me", { handle: "anu-b", name: "Anu", areaName: "Indiranagar" });
+  const shop = await as("buyer", "/api/people/steel-shop");
+  assert.equal(shop.offers, 1);
+  assert.match(shop.suggestions[0].text, /in stock\?$/);
+  assert.match(shop.suggestions[1].text, /best price/);
+  assert.match(shop.suggestions[2].text, /pick it up/);
+  const card = await (await fetch(`${B}/a2a/steel-shop/.well-known/agent-card.json`)).json();
+  const skill = card.skills.find((s: any) => s.id === `offer-${f.id}`);
+  assert.ok(skill, "one skill per offering");
+  assert.deepEqual(skill.examples, shop.suggestions.map((s: any) => s.text));
+  assert.match(skill.description, /Stock is tracked/);
+  const anu = await as("shop", "/api/people/anu-b");
+  assert.equal(anu.offers, 0);
+  assert.deepEqual(anu.suggestions.map((s: any) => s.text), ["What are you looking for right now?", "Are you free this weekend?", "What do you do, Anu?"]);
+  assert.equal((await raw("buyer", "/api/people/nobody-here")).status, 404);
+  await assert.rejects(as("shop", "/api/people/steel-shop/ask", { text: "hi" }), /that's you/);
+});
+
+test("QR: tapping the stock suggestion is answered from the ledger at once, without the owner", async () => {
+  const shop = await as("buyer", "/api/people/steel-shop");
+  let e = await as("buyer", "/api/people/steel-shop/ask", { text: shop.suggestions[0].text });
+  e = await as("buyer", `/api/engagements/${e.id}/run`, {});
+  const qa = e.qa.find((q: any) => q.question === shop.suggestions[0].text);
+  assert.equal(qa?.status, "answered");
+  assert.equal(qa?.answer, "3 available");
+  assert.equal(await inboxFor("shop", e.id, "answer"), undefined, "the owner wasn't asked");
+});
+
+test("mid-conversation: whoever ends it, nobody can keep asking; paying or a pass before a deal is refused", async () => {
+  let e = await as("buyer", "/api/people/steel-shop/ask", { text: "Do you have a blue one?" });
+  e = await as("buyer", `/api/engagements/${e.id}/run`, {});
+  assert.ok([400, 409].includes((await raw("buyer", `/api/engagements/${e.id}/pay`, {})).status), "no deal, nothing to pay");
+  assert.equal((await raw("buyer", `/api/engagements/${e.id}/pickup`)).status, 400, "no payment, no pass");
+  e = await as("buyer", `/api/engagements/${e.id}/close`, {});
+  assert.equal(e.phase, "closed");
+  await assert.rejects(as("shop", `/api/engagements/${e.id}/ask`, { text: "Still there?" }), /ended/);
+  await assert.rejects(as("buyer", `/api/engagements/${e.id}/ask`, { text: "Wait" }), /ended/);
+  assert.equal((await as("buyer", `/api/engagements/${e.id}/close`, {})).phase, "closed", "ending twice is harmless");
+  let d = await as("buyer", "/api/people/steel-shop/ask", { text: "Can you deliver to Koramangala?" });
+  d = await as("buyer", `/api/engagements/${d.id}/run`, {});
+  d = await as("shop", `/api/engagements/${d.id}/close`, {});
+  assert.equal(d.phase, "declined", "the shop ending it is a decline");
+  assert.equal((await as("buyer", `/api/engagements/${d.id}`)).phase, "declined");
+});
+
+test("a paused shop's agent answers nobody from its facts, and its private notes never cross", async () => {
+  await as("shop", "/api/facts", { tier: "private", text: "My supplier charges me ₹170 a bottle; never go below ₹250." });
+  let e = await as("buyer", "/api/people/steel-shop/ask", { text: "What does your supplier charge you per bottle?" });
+  e = await as("buyer", `/api/engagements/${e.id}/run`, {});
+  const said = JSON.stringify([e.qa, e.events]);
+  assert.ok(!/170|250/.test(said), "the private cost and floor are never said");
+  await as("shop", "/api/me/pause", { paused: true });
+  let p = await as("buyer", "/api/people/steel-shop/ask", { text: "Do you have steel water bottles?" });
+  p = await as("buyer", `/api/engagements/${p.id}/run`, {});
+  assert.ok(!p.qa.some((q: any) => q.status === "answered" && q.source === "listing"), "paused: nothing answered from the listing");
+  await as("shop", "/api/me/pause", { paused: false });
+});
+
+/** Buyer asks; the shop names a price; the buyer confirms → agreed. */
+async function agreed(price: number) {
+  let e = await as("buyer", "/api/people/steel-shop/ask", { text: "I'd like one steel bottle.", offerFactId: shopFact });
+  e = await as("buyer", `/api/engagements/${e.id}/run`, {});
+  e = await as("shop", `/api/engagements/${e.id}/ask`, { text: `I'll sell the steel bottle for ₹${price}` });
+  const c = await inboxFor("buyer", e.id, "confirm");
+  assert.ok(c, "the buyer is asked to confirm");
+  await as("buyer", `/api/inbox/${c.id}`, { confirm: true });
+  e = await as("buyer", `/api/engagements/${e.id}`);
+  assert.equal(e.phase, "agreed");
+  assert.equal(e.negotiation.deal.price, price);
+  return e;
+}
+
+test("paid outside the app (cash/UPI): the buyer still gets a pass, it says who marked it, and the shop scans it once", async () => {
+  const e = await agreed(380);
+  const settled = await as("buyer", `/api/engagements/${e.id}/paid-outside`, {});
+  assert.equal(settled.payment.status, "outside");
+  const pass = await as("buyer", `/api/engagements/${e.id}/pickup`);
+  assert.equal(pass.kind, "pickup"); assert.equal(pass.payment, "outside"); assert.equal(pass.markedBy, "buyer");
+  const code = pass.path.split(".html#")[1].split(".")[1];
+  const pub = await (await fetch(`${B}/public/pickup/${e.id}?code=${code}`)).json();
+  assert.equal(pub.markedBy, "buyer"); assert.equal(pub.amount.value, 380);
+  assert.equal((await raw("buyer", `/api/pickup/${e.id}/collect`, { code })).status, 403, "the buyer can't mark their own pickup");
+  assert.equal((await raw("shop", `/api/pickup/${e.id}/collect`, { code })).status, 200);
+  assert.equal((await raw("shop", `/api/pickup/${e.id}/collect`, { code })).status, 409, "once only");
+  const after = await as("buyer", `/api/engagements/${e.id}`);
+  assert.equal(after.fulfilment.state, "delivered");
+  assert.ok([400, 409].includes((await raw("buyer", `/api/engagements/${e.id}/pay`, {})).status), "already settled outside: nothing to pay in the app");
+  const byShop = await agreed(390);
+  await as("shop", `/api/engagements/${byShop.id}/paid-outside`, {});
+  assert.equal((await as("buyer", `/api/engagements/${byShop.id}/pickup`)).markedBy, "seller");
+});
+
+// A small deterministic random generator, so a failing sequence can be replayed from its seed.
+const rng = (seed: number) => () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+
+test("random buyer–seller conversations keep every invariant after every step", async () => {
+  const ORDER: Record<string, number> = { asking: 0, negotiating: 1, deal: 2, agreed: 3, closed: 4, declined: 4 };
+  const reached = new Set<string>(), actions = new Map<string, number>();
+  for (const seed of [7, 42, 1234, 99991, 5, 77, 2026, 31337]) {
+    const r = rng(seed), pick = <T,>(xs: T[]) => xs[Math.floor(r() * xs.length)];
+    // Each run is its own buyer and shop (accounts are rate-limited, as they should be).
+    const buyer = `rb-${seed}`, shop = `rs-${seed}`;
+    await as(buyer, "/api/me", { handle: buyer, name: `Buyer ${seed}`, areaName: "Indiranagar" });
+    await as(shop, "/api/me", { handle: shop, name: `Shop ${seed}`, areaName: "Indiranagar" });
+    const listing = await as(shop, "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
+    await as(shop, "/api/resources", { factId: listing.id, type: "quantity", onHand: 2 });
+    let e = await as(buyer, `/api/people/${shop}/ask`, { text: "Is the steel bottle available?", offerFactId: listing.id });
+    e = await as(buyer, `/api/engagements/${e.id}/run`, {});
+    let lastPrice: number | null = null, phase = e.phase;
+    for (let step = 0; step < 18; step++) {
+      const ended = ["closed", "declined"].includes(phase), done = phase === "agreed";
+      // Weighted like real chats: offers and confirmations are common, walking away is rarer.
+      const action = pick(["buyerAsk", "buyerAsk", "shopAnswer", "shopPrice", "shopPrice", "buyerPrice", "confirm", "confirm", "confirm", "decline", "pay", "pay", "close"]);
+      const price = 300 + Math.floor(r() * 150);
+      let res: Response | null = null;
+      if (action === "buyerAsk") res = await raw(buyer, `/api/engagements/${e.id}/ask`, { text: pick(["What colour is it?", "Is it dishwasher safe?", "Can I collect today?", "मुझे दो चाहिए, मिलेगा?"]) });
+      if (action === "shopAnswer") { const q = await inboxFor(shop, e.id, "answer"); if (q) res = await raw(shop, `/api/inbox/${q.id}`, { text: pick(["Yes.", "Blue and black.", "Open till 9 pm."]) }); }
+      if (action === "shopPrice") { res = await raw(shop, `/api/engagements/${e.id}/ask`, { text: `I'll sell it for ₹${price}` }); if (res.ok) lastPrice = (await res.clone().json()).negotiation.deal?.price ?? lastPrice; }
+      if (action === "buyerPrice") { res = await raw(buyer, `/api/engagements/${e.id}/ask`, { text: `I'll buy it for ₹${price}` }); if (res.ok) lastPrice = (await res.clone().json()).negotiation.deal?.price ?? lastPrice; }
+      if (action === "confirm" || action === "decline") {
+        for (const uid of [buyer, shop]) { const c = await inboxFor(uid, e.id, "confirm"); if (c) { res = await raw(uid, `/api/inbox/${c.id}`, action === "confirm" ? { confirm: true } : { decline: true }); break; } }
+      }
+      if (action === "close") res = await raw(pick([buyer, shop]), `/api/engagements/${e.id}/close`, {});
+      if (action === "pay") res = await raw(buyer, `/api/engagements/${e.id}/pay`, {});
+      const ctx = `seed ${seed} step ${step} ${action}`;
+      if (res) actions.set(`${action}:${res.status}`, (actions.get(`${action}:${res.status}`) ?? 0) + 1);
+      if (res) {
+        assert.ok(res.status < 500, `${ctx}: server error ${res.status}`);
+        if ((ended || done) && ["buyerAsk", "shopPrice", "buyerPrice"].includes(action)) assert.equal(res.status, 400, `${ctx}: asking after the end is refused`);
+        if (action === "pay" && phase !== "agreed") assert.ok([400, 409].includes(res.status), `${ctx}: no payment before a deal (${res.status})`);
+      }
+      e = await as(buyer, `/api/engagements/${e.id}`);
+      assert.ok(e.phase in ORDER, `${ctx}: known phase ${e.phase}`);
+      if (["closed", "declined"].includes(phase)) assert.equal(e.phase, phase, `${ctx}: an ended conversation stays ended`);
+      if (phase === "agreed") assert.equal(e.phase, "agreed", `${ctx}: a deal is never undone by chat`);
+      if (e.phase === "agreed") {
+        assert.equal(e.negotiation.deal.price, lastPrice, `${ctx}: the deal is the last price named`);
+        assert.ok(e.payment, `${ctx}: an agreed deal has a payment step`);
+      }
+      if (e.payment?.status === "paid") assert.equal(e.phase, "agreed", `${ctx}: paid only after agreement`);
+      phase = e.phase; reached.add(phase);
+      if (e.payment?.status === "paid") reached.add("paid");
+    }
+  }
+  // The runs went somewhere: deals were made and paid, and conversations were ended early.
+  assert.ok(reached.has("agreed") && reached.has("paid"), `reached ${[...reached]}`);
+  assert.ok(reached.has("closed") || reached.has("declined"), `reached ${[...reached]}`);
+  console.log("random runs:", [...reached].join(" "), "|", [...actions].map(([k, v]) => `${k}×${v}`).join(" "));
+});
+
+test("a changed price replaces the pending one (the stale confirmation is refused); a decision must say yes or no", async () => {
+  await as("cp-b", "/api/me", { handle: "cp-b", name: "CP Buyer", areaName: "Indiranagar" });
+  await as("cp-s", "/api/me", { handle: "cp-s", name: "CP Shop", areaName: "Indiranagar" });
+  const listing = await as("cp-s", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
+  let e = await as("cp-b", "/api/people/cp-s/ask", { text: "Is it available?", offerFactId: listing.id });
+  e = await as("cp-b", `/api/engagements/${e.id}/run`, {});
+  e = await as("cp-s", `/api/engagements/${e.id}/ask`, { text: "I'll sell it for ₹320" });
+  const first = await inboxFor("cp-b", e.id, "confirm");
+  assert.equal((await raw("cp-b", `/api/inbox/${first.id}`, { confirm: false })).status, 400, "neither yes nor no: refused, not taken as yes");
+  assert.equal((await raw("cp-b", `/api/inbox/${first.id}`, {})).status, 400);
+  e = await as("cp-s", `/api/engagements/${e.id}/ask`, { text: "Sorry, I'll sell it for ₹448" });
+  assert.equal(e.negotiation.deal.price, 448, "the new price replaced the pending one");
+  assert.equal((await raw("cp-b", `/api/inbox/${first.id}`, { confirm: true })).status, 404, "the ₹320 confirmation is gone");
+  e = await as("cp-s", `/api/engagements/${e.id}/ask`, { text: "Is ₹448 ok?" });
+  assert.equal(e.negotiation.deal.price, 448, "a question naming the same price changes nothing");
+  // The buyer counters: their own pending confirmation is answered by it, and the shop now decides.
+  e = await as("cp-b", `/api/engagements/${e.id}/ask`, { text: "I'll buy it for ₹400" });
+  assert.equal(e.negotiation.deal.price, 400); assert.equal(e.negotiation.dealBy, "requester");
+  assert.equal(await inboxFor("cp-b", e.id, "confirm"), undefined, "the buyer has nothing left to confirm");
+  const shopSays = await inboxFor("cp-s", e.id, "confirm");
+  await as("cp-s", `/api/inbox/${shopSays.id}`, { decline: true });
+  e = await as("cp-b", `/api/engagements/${e.id}`);
+  assert.equal(e.phase, "asking", "saying no to a typed offer keeps the chat open");
+  e = await as("cp-s", `/api/engagements/${e.id}/ask`, { text: "I can do ₹420, final" });
+  await as("cp-b", `/api/inbox/${(await inboxFor("cp-b", e.id, "confirm")).id}`, { confirm: true });
+  e = await as("cp-b", `/api/engagements/${e.id}`);
+  assert.equal(e.phase, "agreed"); assert.equal(e.negotiation.deal.price, 420);
+  assert.equal(e.payment.cart.total.value, 420, "the cart is for the agreed price");
+});

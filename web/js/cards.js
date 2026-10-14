@@ -29,14 +29,18 @@ export function renderCard(card, m, i) {
 // MARK: - A person's or shop's agent, opened from a QR code
 
 function storeCard(c) {
-  const p = c.profile, offers = c.facts.filter(f => f.offer), notes = c.facts.filter(f => !f.offer);
-  const quick = ["Is it in stock?", "What's the price?", "Can I order now and pick it up?"];
+  const p = c.profile, offers = c.facts.filter(f => f.offer), notes = c.facts.filter(f => !f.offer), first = esc(p.name.split(" ")[0]);
+  // From the server (the same questions their agent card publishes); a card saved before that falls back to plain ones.
+  const quick = (c.suggestions?.length ? c.suggestions.map(s => s.text)
+    : offers.length ? ["Is it available?", "What's your best price?", "Can I pick it up today?"] : ["What are you looking for right now?", "Are you free this weekend?"]);
   return `<div class="card">
     <div class="row eng-head"><span class="avatar" aria-hidden="true">${esc(p.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(p.name)}</b><span class="small faint">@${esc(p.handle)}${p.bio ? ` · ${esc(p.bio)}` : ""}</span></div>
       <button class="btn secondary compact end" data-act="add-contact-direct" data-handle="${esc(p.handle)}">Add to people</button></div>
     ${offers.length ? `<div class="stack" style="gap:4px">${offers.slice(0, 5).map(f => `<div class="row small"><span>${esc(f.offer.title)}</span><b class="end">${money(f.offer.price.amount, f.offer.price.period)}</b></div>`).join("")}</div>` : ""}
     ${!offers.length && notes.length ? `<span class="small muted">${esc(notes[0].text.slice(0, 160))}</span>` : ""}
-    <span class="small faint">Type below to ask their agent — it answers from what ${esc(p.name.split(" ")[0])} shares, and asks them anything else. No queue.</span>
+    <span class="small faint">${offers.length
+      ? `Tap a question or type your own. ${first}'s agent answers from what they share and asks them the rest — no queue.`
+      : `${first} hasn't listed anything for sale. Their agent answers from what they share and passes anything else to them.`}</span>
     <div class="row">${quick.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}">${esc(q)}</button>`).join("")}</div>
   </div>`;
 }
@@ -65,7 +69,7 @@ function briefCard(c, at) {
       <div class="stack" style="gap:6px">${label("While you're away")}${autonomyPick(c)}</div>
       ${c.insights?.length ? `<div class="stack" style="gap:4px">${label("What similar deals closed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}
     </details>
-    <div><button class="btn secondary compact" data-act="price-check" data-item="${esc(s.title)}" data-area="${esc(need.place.name)}">Check fair price</button><span class="small faint"> Private hint · ${quotaText("priceCheck")} · item description sent to Google Search</span><div data-price-result></div></div>
+    <div><button class="btn secondary compact" data-act="price-check" data-item="${esc(s.title)}" data-area="${esc(need.place.name)}">Check fair price</button><span class="small faint"> Prices from the web for this item · only you see them</span><div data-price-result></div></div>
     <div class="row"><button class="btn accent" data-act="brief-send" ${at}>Find people</button><span class="small faint">Nothing is sent until you choose who.</span></div>
   </div>`;
 }
@@ -212,6 +216,16 @@ function priceItem(e) {
   return [asked, listed].filter(Boolean).join(" — ").slice(0, 160) || e.title;
 }
 
+/** The pass a paid deal gets, by what changes hands (the server decides the same way: core/pickup.ts passKind). */
+const BOOKING = new Set(["lessons", "services", "tasks", "pets", "stays", "rides", "events", "freight", "equipment-rental"]);
+const HANDOVER = new Set(["property-rent", "commercial-lease", "property-sale", "vehicles", "jobs"]);
+export const passKind = e => (e.reservation?.slotId || BOOKING.has(e.offer?.category) ? "booking" : HANDOVER.has(e.offer?.category) ? "handover" : "pickup");
+export const PASS = {
+  pickup: { name: "Pickup pass", sellerHint: "Scan their pickup pass when they collect", buyerHint: them => `Show your pickup pass to ${them} when you collect.`, done: "Collected" },
+  booking: { name: "Booking pass", sellerHint: "Scan their booking pass when they arrive", buyerHint: them => `Show your booking pass to ${them} when you arrive.`, done: "Checked in" },
+  handover: { name: "Handover pass", sellerHint: "Scan their handover pass when you hand over", buyerHint: them => `Show your handover pass to ${them} at the handover.`, done: "Handed over" },
+};
+
 /** "3 of 5 left today", from the server's policy (the numbers it enforces). */
 function quotaText(name) {
   const q = session.policy?.quotas?.[name];
@@ -241,8 +255,8 @@ export function engagementCard(e, id) {
     ${items.map(inboxBlock).join("")}
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(them.name.split(" ")[0])}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
-      <span class="small faint">Name a price — “I'll sell for ₹100” — to offer a deal; they confirm or say no.</span>` : ""}
-    ${["deal", "agreed", "negotiating"].includes(e.phase) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}">Check fair price</button><span class="small faint"> Private hint · ${quotaText("priceCheck")} · item sent to Google Search</span><div data-price-result></div></div>` : ""}
+      <span class="small faint">To make an offer, name a price — “${mine === "requester" ? "I'll buy it for ₹350" : "I'll sell it for ₹400"}”. They confirm or say no; nothing is final until both do.</span>` : ""}
+    ${["asking", "deal", "agreed", "negotiating"].includes(e.phase) && mine === "requester" ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>
@@ -294,8 +308,8 @@ function dealBlock(e, mine) {
     ? `<div class="row"><span class="small muted">${them} handed it over.</span><button class="btn accent compact" data-act="eng-received" data-id="${id}" data-ok="1">Received it ✓</button><button class="btn quiet compact" data-act="eng-received" data-id="${id}" data-ok="0">Report a problem</button></div>`
     : `<span class="small muted">✓ Delivered · waiting for ${them} to confirm</span>`;
   else if (f === "not_started") fulfil = mine === seller
-    ? `<div class="row"><span class="small muted">Hand it over with the pickup pass, or</span><button class="btn secondary compact" data-act="eng-delivered" data-id="${id}">Mark delivered</button></div>`
-    : `<span class="small muted">Waiting for ${them} to hand it over — show your pickup pass.</span>`;
+    ? `<div class="row"><span class="small muted">${PASS[passKind(e)].sellerHint}, or</span><button class="btn secondary compact" data-act="eng-delivered" data-id="${id}">Mark delivered</button></div>`
+    : `<span class="small muted">${PASS[passKind(e)].buyerHint(them)}</span>`;
   const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
     : p?.status === "paid" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
@@ -303,7 +317,7 @@ function dealBlock(e, mine) {
     ${reservationLine(e, mine, buyer)}
     ${pay}
     ${fulfil}
-    ${p?.status === "paid" && !["accepted", "disputed"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">Pickup pass</button></div>` : ""}
+    ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
   </div>`;
 }

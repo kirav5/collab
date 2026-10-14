@@ -121,7 +121,9 @@ export interface Engagement {
   negotiation: { requester: Proposal[]; provider: Proposal[]; deal: Proposal | null; dealBy: Side | null;
     confirmed: { requester: boolean; provider: boolean };
     /** Who confirmed: the owner on their device, or their standing mandate inside its limit. */
-    confirmedBy?: Partial<Record<Side, "owner" | "mandate">> };
+    confirmedBy?: Partial<Record<Side, "owner" | "mandate">>;
+    /** The pending deal was a price an owner typed in the chat (saying no keeps the conversation open). */
+    chatOffer?: boolean };
   events: Event[];
   /** When both owners confirmed (for the receipt). */
   agreedAt?: number;

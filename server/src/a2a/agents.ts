@@ -24,6 +24,8 @@ import { outboxKey } from "../core/recovery.ts";
 import { policy } from "../config/policy.ts";
 import { capabilities, unsupported } from "../core/capabilities.ts";
 import { SafePushSender } from "./webhooks.ts";
+import { RESOURCES } from "../core/resources.ts";
+import { type Tracked, forOffer, suggestionsFor } from "../core/suggest.ts";
 
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
@@ -147,6 +149,8 @@ let pushSender: SafePushSender | null = null;
 
 async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
   const offers = ((await cfg.db.find(FACTS, [["owner", "==", p.uid]], 100)) as Fact[]).filter(f => f.tier === "public");
+  const tracked = Object.fromEntries(((await cfg.db.find(RESOURCES, [["owner", "==", p.uid]], 100)) as { factId: string | null; type: Tracked }[])
+    .filter(r => r.factId).map(r => [r.factId!, r.type])) as Record<string, Tracked>;
   return AgentCard.fromJSON({
     name: `${p.name}'s agent (@${p.handle})`,
     description: `${p.bio ? p.bio + " " : ""}Ask about what ${p.name} offers or send a request. This agent answers only from what ${p.name} chose to share; anything else goes to ${p.name}.`,
@@ -170,9 +174,17 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
       id: "engage", name: "Requests and questions",
       description: `Send a request (a brief) or a question. The agent answers from ${p.name}'s shared facts, asks what it needs to know, and negotiates within ${p.name}'s limits.`,
       tags: [...new Set(offers.map(f => f.offer?.category).filter(Boolean) as string[])].slice(0, 8),
-      examples: offers.slice(0, 4).map(f => f.offer ? `I'm interested in: ${f.offer.title}` : `Question about: ${f.text.slice(0, 60)}`),
+      examples: suggestionsFor(p.name, offers, tracked).map(x => x.text),
       inputModes: ["text/plain", "application/json"], outputModes: ["text/plain", "application/json"],
-    }],
+    },
+    // Each thing on offer, with what it costs and the questions this agent can answer about it.
+    ...offers.filter(f => f.offer && f.offer.status !== "sold").slice(0, 8).map(f => ({
+      id: `offer-${f.id}`, name: f.offer!.title.split(" · ")[0].slice(0, 80),
+      description: `${f.offer!.title}${f.offer!.price?.amount != null ? ` — ${moneyText({ amount: f.offer!.price.amount, currency: f.offer!.price.currency ?? "INR", period: f.offer!.price.period })}` : ""}. ${tracked[f.id] === "quantity" ? "Stock is tracked: ask whether it's in." : tracked[f.id] === "slots" ? "Bookable time slots." : ""}`.trim(),
+      tags: [f.offer!.category].filter(Boolean) as string[],
+      examples: forOffer(f, tracked[f.id] ?? null).map(x => x.text),
+      inputModes: ["text/plain", "application/json"], outputModes: ["text/plain", "application/json"],
+    }))],
   });
 }
 

@@ -5,7 +5,7 @@
 //
 // Model calls over private notes use Gemini Nano in the browser when Chrome has it; otherwise Gemini through the
 // server for that one call, which logs nothing.
-import { FB, api, insightsLines, session } from "./api.js";
+import { FB, api, cached, insightsLines, session } from "./api.js";
 import { LIMITATION, decideProcessing } from "./processing.js";
 import { local, relevant } from "./local.js";
 import { live, onChange, poke } from "./live.js";
@@ -62,7 +62,7 @@ export function setProcessingMode(mode) {
 // A copy of the owner's private notes on this device, so questions about them can be answered offline (on device).
 async function cacheNotes(facts) { try { await local.put("facts", { id: "notes", items: facts.filter(f => f.tier === "private").map(f => ({ id: f.id, text: f.text, tier: f.tier, createdAt: f.createdAt })), at: Date.now() }); } catch {} }
 /** Keeps the device's copy of the private notes current (called while online). */
-export async function refreshNotesCache() { const f = await api("/api/facts").catch(() => null); if (f) await cacheNotes(f); }
+export async function refreshNotesCache() { const f = await cached("/api/facts").catch(() => null); if (f) await cacheNotes(f); }
 async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
 
 /** No network: questions about the owner's own notes are answered on the device; anything else waits. */

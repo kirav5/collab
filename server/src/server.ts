@@ -31,6 +31,7 @@ import { getSafe } from "./a2a/webhooks.ts";
 import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
+import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
@@ -40,11 +41,11 @@ import { NearbyError, nearby } from "./core/nearby.ts";
 import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS, quotaStatus } from "./core/price-check.ts";
-import { appCheckDecision, replayProtected } from "./core/app-check.ts";
+import { appCheckDecision, replayProtected, appCheckRequired } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
-import { offeredMoney } from "./core/direct.ts";
+import { offeredMoney, explicitOffer } from "./core/direct.ts";
 import { moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
@@ -193,6 +194,8 @@ let appCheck: ((t: string, options?: { consume: boolean }) => Promise<{ alreadyC
 app.use("/api", async (req, res, next) => {
   if (APPCHECK === "off" || req.path === "/config") return next();
   const token = req.headers["x-firebase-appcheck"];
+  // A read with no token yet (a first visit, before reCAPTCHA has answered) goes through; a token that is sent is checked.
+  if (!appCheckRequired(req.method, req.path) && typeof token !== "string") return next();
   // Consuming a token needs a network call and the Token Verifier IAM role. Do it only for sensitive writes when
   // enforcement is on; monitor mode keeps working with ordinary cached tokens.
   const consume = APPCHECK === "enforce" && replayProtected(req.method, req.path);
@@ -327,18 +330,19 @@ app.get("/api/me", route(async req => (await db.get(PROFILES, req.uid)) ?? null)
 app.post("/api/me", route(async req => {
   const b = req.body ?? {};
   const areaPlace = placeFrom(b.area) ?? (typeof b.areaName === "string" ? resolve(b.areaName) : undefined);
-  const existed = !!(await db.get(PROFILES, req.uid));
-  const saved = await saveProfile(db, req.uid, { handle: b.handle, name: b.name, bio: b.bio, ...(areaPlace !== undefined ? { area: areaPlace } : {}) });
-  if (!existed) event("signup");
-  return saved;
+  return saveProfile(db, req.uid, { handle: b.handle, name: b.name, bio: b.bio, ...(areaPlace !== undefined ? { area: areaPlace } : {}) }, () => event("signup"));
 
 }));
 app.post("/api/me/pause", route(async req => { const p = await me(req.uid); p.paused = !!req.body?.paused; await db.set(PROFILES, p.uid, p); return p; }));
 app.get("/api/people/:handle", route(async req => {
   const p = await byHandle(db, String(req.params.handle));
   if (!p) throw new HttpError(404, "no one by that handle");
-  const facts = ((await db.find(FACTS, [["owner", "==", p.uid]], 200)) as Fact[]).filter(f => f.tier === "public").map(publicFact);
-  return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: await stats(db, p.uid), facts, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
+  const [all, resources, record] = await Promise.all([db.find(FACTS, [["owner", "==", p.uid]], 200) as Promise<Fact[]>,
+    db.find(RESOURCES, [["owner", "==", p.uid]], 100) as Promise<Resource[]>, stats(db, p.uid)]);
+  const facts = all.filter(f => f.tier === "public").map(publicFact);
+  const tracked = Object.fromEntries(resources.filter(r => r.factId).map(r => [r.factId!, r.type])) as Record<string, Tracked>;
+  return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: record, facts,
+    offers: facts.filter(f => f.offer).length, suggestions: suggestionsFor(p.name, facts as Fact[], tracked), agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
 }));
 // Direct: a QR code (or a link) opens a conversation with one person's or shop's agent — no search. Questions go over
 // A2A like any engagement; their agent answers from what they share and can quote, negotiate and close.
@@ -377,7 +381,11 @@ app.post("/api/engagements/:id/ask", route(async req => {
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   // Naming a price in a chat with no listed price offers a deal: the other person confirms or says no.
   // A named price offers a deal — in a currency this deployment supports, and the one the conversation already uses.
-  const offered = e.offer.price == null && e.phase !== "deal" ? offeredMoney(q, e.offer.currency ?? policy().money.defaultCurrency) : null;
+  // While a deal waits for confirmation, only words that clearly make a new offer replace it ("I'll do ₹448"); the
+  // same price again is just chat. A replaced offer's pending confirmation goes stale (offerDeal).
+  const canOffer = e.phase === "deal" ? explicitOffer(q) : e.offer.price == null || explicitOffer(q);
+  let offered = canOffer ? offeredMoney(q, e.offer.currency ?? policy().money.defaultCurrency) : null;
+  if (offered && e.phase === "deal" && offered.amount === e.negotiation.deal?.price) offered = null;
   if (offered) {
     if (!policy().money.currencies.includes(offered.currency))
       throw new HttpError(400, `Payments in ${offered.currency} aren't supported yet — use ${policy().money.currencies.join(" or ")}.`, "UNSUPPORTED_CURRENCY");
@@ -691,12 +699,21 @@ app.get("/public/receipts/:id", route(async req => {
   if (!validCode(cfg.secret, id, "receipt", req.query.code)) throw new HttpError(404, "receipt not found");
   return receiptBundle(await load(db, id));
 }, false));
+/**
+ * A pass is honoured when the agreement record matches and the seller's signed cart is intact; an in-app payment
+ * must also carry a valid payment signature. Paid outside the app (cash, UPI) has no payment signature to check —
+ * the pass says who marked it paid instead.
+ */
+async function passVerified(e: Engagement, check: ReturnType<typeof checkPayment>) {
+  if (!check?.cartOk || !(await verifyReceipt(db, e)).matches) return false;
+  return e.payment?.status === "outside" || !!check.paymentOk;
+}
 app.get("/api/engagements/:id/pickup", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   let details;
   try { details = pickupDetails(e); } catch (err) { throw new HttpError(400, (err as Error).message); }
   const check = checkPayment(e, verifySigned);
-  if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
   return { ...details, collectedAt: (await db.get(PICKUPS, e.id))?.collectedAt ?? null,
     path: `/pickup.html#${e.id}.${passCode(cfg.secret, e.id, "pickup")}` };
 }));
@@ -704,7 +721,7 @@ app.get("/public/pickup/:id", route(async req => {
   const id = String(req.params.id);
   if (!validCode(cfg.secret, id, "pickup", req.query.code)) throw new HttpError(404, "pass not found");
   const e = await load(db, id), check = checkPayment(e, verifySigned);
-  if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
   return { ...pickupDetails(e), collectedAt: (await db.get(PICKUPS, id))?.collectedAt ?? null };
 }, false));
 app.post("/api/pickup/:id/collect", route(async req => {
@@ -712,7 +729,7 @@ app.post("/api/pickup/:id/collect", route(async req => {
   if (!validCode(cfg.secret, id, "pickup", req.body?.code)) throw new HttpError(404, "pass not found");
   const e = await participant(req.uid, id), check = checkPayment(e, verifySigned);
   if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark collected.");
-  if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
   const result = await collect(db, e, req.uid, now());
   if (result.alreadyCollected) throw new HttpError(409, `Already collected at ${new Date(result.collectedAt * 1000).toISOString()}`);
   await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass."); await clearStats(db, e);
@@ -977,6 +994,9 @@ app.post("/api/inbox/:id", route(async req => {
   const e = await load(db, found.engagementId);
   const asDemo = found.owner.startsWith("demo-") && e.requester.uid === req.uid;
   if (found.owner !== req.uid && !asDemo) throw new HttpError(403, "not yours");
+  // A deal decision is yes or no, said explicitly — a missing or false "confirm" is never taken as yes.
+  if (found.kind === "confirm" && (req.body?.confirm === true) === (req.body?.decline === true))
+    throw new HttpError(400, "Say confirm: true to accept the deal, or decline: true to say no.");
   await spend(req.uid, 2);
   // Claimed in a transaction: two devices (or two taps) can't both resolve it.
   let claimed = false;

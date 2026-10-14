@@ -23,7 +23,7 @@ export class Problem extends Error {}
 const handleOk = (h: string) => /^[a-z0-9][a-z0-9-]{2,23}$/.test(h);
 
 /** Creates or updates the owner's profile; a handle is theirs once claimed. */
-export async function saveProfile(db: Docs, uid: string, p: { handle?: string; name?: string; bio?: string; area?: Profile["area"] }): Promise<Profile> {
+export async function saveProfile(db: Docs, uid: string, p: { handle?: string; name?: string; bio?: string; area?: Profile["area"] }, created?: () => void): Promise<Profile> {
   const cur = (await db.get(PROFILES, uid)) as Profile | null;
   let handle = cur?.handle;
   if (p.handle !== undefined && p.handle !== cur?.handle) {
@@ -38,6 +38,7 @@ export async function saveProfile(db: Docs, uid: string, p: { handle?: string; n
   const next: Profile = { uid, handle, name: (p.name ?? cur?.name ?? handle).slice(0, 60), bio: (p.bio ?? cur?.bio ?? "").slice(0, 280),
     area: p.area !== undefined ? p.area : cur?.area ?? null, createdAt: cur?.createdAt ?? now(), ...(cur?.demo ? { demo: true } : {}), ...(cur?.paused ? { paused: true } : {}) };
   await db.set(PROFILES, uid, next);
+  if (!cur) created?.();
   return next;
 }
 

@@ -501,10 +501,10 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       throw new Stale("This deal changed since you were asked — check the new terms before confirming.");
     }
     if (r.decline) await releaseBudget(db, e);
-    if (r.decline && e.offer.price == null) {
+    if (r.decline && (e.offer.price == null || e.negotiation.chatOffer)) {
       // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
       say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: currencyOf(e), period: e.offer.unit })}.`, "owner");
-      e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false };
+      e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false }; e.negotiation.chatOffer = false;
     } else if (r.decline) { e.phase = "closed"; out.decline = "My owner decided not to go ahead. Thank you."; say(e, s, "Walked away.", "owner"); }
     else {
       const over = await budgetCheck(db, e, s);
@@ -554,6 +554,15 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   }
   const keep = (e.waiting[o]?.inbox ?? []).filter(id => !stale.includes(id));
   e.waiting[o] = keep.length ? { ...e.waiting[o]!, inbox: keep } : null;
+  // A counter-offer answers the offer they were asked to confirm: that request is done too.
+  const mine: string[] = [];
+  for (const id of e.waiting[s]?.inbox ?? []) {
+    const i = (await db.get(INBOX, id)) as InboxItem | null;
+    if (i?.kind === "confirm") { mine.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
+  }
+  const left = (e.waiting[s]?.inbox ?? []).filter(id => !mine.includes(id));
+  e.waiting[s] = left.length ? { ...e.waiting[s]!, inbox: left } : null;
+  e.negotiation.chatOffer = true;
   await ask(db, e, o, { kind: "confirm" });
   await save(db, e);
 }

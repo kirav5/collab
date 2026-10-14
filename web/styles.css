@@ -215,3 +215,8 @@ details.more[open] { display: grid; gap: 10px; }
 .steps-plain { display: grid; gap: 8px; }
 .steps-plain > div { display: flex; gap: 10px; align-items: flex-start; }
 .steps-plain b { flex: 0 0 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* Fair-price results: one line per source, price on the right. */
+.price-list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 6px; }
+.price-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 13px; }
+.price-list li a { grid-column: 1 / -1; }

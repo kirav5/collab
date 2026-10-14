@@ -43,3 +43,9 @@ test("questions about what's there now go to the ledger, not the model", async (
   for (const q of ["Is it in stock?", "Do you have a 1 litre bottle today?", "Have you got any left?", "Any slots on Saturday?", "Do you still have it?", "How many are available?"]) assert.equal(isStockQuestion(q), true, q);
   for (const q of ["What is the price?", "Do you deliver to Koramangala?", "Which brands do you sell?", "Can I pay by UPI?"]) assert.equal(isStockQuestion(q), false, q);
 });
+
+test("on a priced listing, only words that make an offer are an offer; questions about the price stay questions", async () => {
+  const { explicitOffer } = await import("../src/core/direct.ts");
+  for (const t of ["I'll buy it for ₹350", "Can you do ₹350?", "final ₹380, deal?", "I can pay 350 rupees", "ok ₹360", "How about ₹340?", "I'll sell it for ₹390"]) assert.equal(explicitOffer(t), true, t);
+  for (const t of ["Is it ₹400?", "Why ₹400?", "What is the price, ₹400?", "Does ₹400 include the bag?", "Are both ₹400?"]) assert.equal(explicitOffer(t), false, t);
+});

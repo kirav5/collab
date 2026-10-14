@@ -1,4 +1,13 @@
 /** Only these POSTs need a fresh, single-use App Check token. Other API calls keep the cached token. */
+/**
+ * Whether a call must carry an App Check token when enforcement is on. Reads of the caller's own data (and public
+ * profiles) are already bound to their sign-in and cost nothing to serve, so they don't wait for reCAPTCHA on a first
+ * visit; writes, and reads that can run the model (a goal's plan advances on read), still need it.
+ */
+export function appCheckRequired(method: string, path: string): boolean {
+  return method !== "GET" || /^\/goals(\/|$)/.test(path);
+}
+
 export function replayProtected(method: string, path: string): boolean {
   return method === "POST" && (path === "/price-check"
     || /^\/engagements\/[^/]+\/pay$/.test(path)

@@ -24,6 +24,14 @@ export async function quotaStatus(db: Docs, key: string, uid: string, limit: num
   return { limit, remaining: Math.max(0, limit - used), resetsAt: Math.floor(Date.parse(`${day}T00:00:00Z`) / 1000) + 86_400 };
 }
 
+/** "Thanish steel bottle 500 ml new costs INR 499 per item" → "Thanish steel bottle 500 ml new" (the price is shown beside it). */
+export function cleanLabel(label: string): string {
+  const verb = "(?:costs?|is priced at|priced at|sells? for|at|for)\\s*";
+  const tail = new RegExp(`\\s*(?:[,–—-]\\s*(?:${verb})?|${verb})(?:INR|₹|Rs\\.?)\\s*[\\d,]+(?:\\.\\d+)?(?:\\s*(?:per|\\/)\\s*\\w+)?\\s*[.!]?\\s*$`, "i");
+  const t = label.replace(tail, "").trim();
+  return (t || label).replace(/^./, c => c.toUpperCase());
+}
+
 export function priceEvidence(g: GroundedResult) {
   let parsed: any;
   try { parsed = JSON.parse(g.text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "")); } catch {
@@ -45,7 +53,7 @@ export function priceEvidence(g: GroundedResult) {
     }
     const sources = [...indices].map(n => g.sources[n]).filter(s => s && /^https:\/\//.test(s.url));
     if (!sources.length || items.some(x => x.label === i.label && x.price === i.price)) continue;
-    items.push({ label: i.label.slice(0, 240), price: i.price, unit: i.unit.slice(0, 60), sources });
+    items.push({ label: cleanLabel(i.label).slice(0, 240), price: i.price, unit: i.unit.slice(0, 60), sources });
   }
   const comparable = items.length >= 2 && items.every(i => i.unit === items[0].unit);
   const prices = items.map(i => i.price).sort((a, b) => a - b);

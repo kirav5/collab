@@ -50,6 +50,16 @@ const CURRENCY: [RegExp, string][] = [[/₹|\brs\.?(?=\s*\d)|\b(inr|rupees?)\b|\
   [/€|\b(eur|euros?)\b/i, "EUR"], [/£|\b(gbp|pounds?)\b/i, "GBP"], [/¥|\b(jpy|yen)\b/i, "JPY"], [/\b(aed|dirhams?)\b/i, "AED"]];
 
 /** The amount and currency a chat message offers. `fallback` applies when no currency is written (e.g. "for 400"). */
+/**
+ * On a listing that already has a price, a named price is an offer only when the words make one ("I'll buy it for
+ * ₹350", "can you do ₹350?", "final ₹380, deal?") — "Is it ₹400?" or "Why ₹400?" stay questions.
+ */
+export function explicitOffer(text: string): boolean {
+  const t = text.trim();
+  if (/^(why|is|are|was|does|did|when|where|which|who)\b/i.test(t) || /^(what|how)\b(?!\s+about\b)/i.test(t)) return false;
+  return /\b(i'?ll|i will|i can|i'?d|we'?ll|we can|let'?s|ok(ay)?|final|deal|offer|take it|sell|buy|pay|give|can you do|could you do|would you do|how about|what about)\b/i.test(t);
+}
+
 export function offeredMoney(text: string, fallback: string): { amount: number; currency: string } | null {
   const named = CURRENCY.find(([re]) => re.test(text))?.[1];
   const t = named && named !== "INR" ? text.replace(/[$€£¥]\s*/g, "₹").replace(/\b(usd|dollars?|eur|euros?|gbp|pounds?|jpy|yen|aed|dirhams?)\b/gi, "rupees") : text;

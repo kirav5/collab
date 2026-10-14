@@ -1,7 +1,7 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
 export const FB = "https://www.gstatic.com/firebasejs/12.14.0";
-export const session = { track: () => {}, pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
+export const session = { track: () => {}, appCheckNow: () => null, ready: null, fresh: false, pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
 export const worker = "serviceWorker" in navigator ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
@@ -73,22 +73,32 @@ export async function signIn() {
     // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API. It runs on
     // its own Firebase app instance so sign-in doesn't wait for reCAPTCHA (Auth would otherwise attach a token to
     // every call): the two run side by side, and API calls wait for the token only if it isn't ready yet.
-    const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, getLimitedUseToken }) => {
+    const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, getLimitedUseToken, onTokenChanged }) => {
       const ac = initializeAppCheck(initializeApp(config, `check-${as ?? "main"}`), { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
+      let current = null;
+      onTokenChanged(ac, t => { current = t?.token ?? null; }, () => {});
+      session.appCheckNow = () => current;
       getToken(ac, false).catch(() => {});
       return async (limited = false) => (await (limited ? getLimitedUseToken(ac) : getToken(ac, false))).token;
     }).catch(() => null) : null;
     if (appCheck) session.appCheck = async (limited = false) => { const get = await appCheck; return get ? get(limited) : null; };
     const auth = getAuth(app);
-    // Returning from a Google redirect (used where pop-ups don't work, like some installed apps).
-    await getRedirectResult(auth).catch(async e => {
+    // Returning from a Google redirect (used where pop-ups don't work, like some installed apps) — only checked when
+    // this tab started one, so ordinary visits don't wait on it.
+    let redirected = false;
+    try { redirected = sessionStorage.getItem("collab.redirect") === "1"; sessionStorage.removeItem("collab.redirect"); } catch {}
+    if (redirected) await getRedirectResult(auth).catch(async e => {
       const cred = GoogleAuthProvider.credentialFromError(e);
       if (e.code === "auth/credential-already-in-use" && cred) await signInWithCredential(auth, cred);
     });
-    await new Promise(resolve => onAuthStateChanged(auth, async u => {
-      if (!u) { await signInAnonymously(auth); return; }
-      session.uid = u.uid; session.user = u;
-      session.token = () => u.getIdToken();
+    const adopt = u => { session.uid = u.uid; session.user = u; session.token = () => u.getIdToken(); };
+    await new Promise(resolve => onAuthStateChanged(auth, u => {
+      if (u) { adopt(u); session.ready ??= Promise.resolve(); resolve(); return; }
+      if (session.ready) return;
+      // First visit on this device: the start screen shows now and the guest sign-in (about a second) runs while the
+      // visitor types their name. Everything that needs the account waits on session.ready.
+      session.fresh = true;
+      session.ready = signInAnonymously(auth).then(c => adopt(c.user));
       resolve();
     }));
     /**
@@ -106,7 +116,10 @@ export async function signIn() {
       } catch (e) {
         const cred = GoogleAuthProvider.credentialFromError(e);
         if (e.code === "auth/credential-already-in-use" && cred) { await signInWithCredential(auth, cred); return "switched"; }
-        if (/popup-blocked|operation-not-supported|web-storage-unsupported/.test(e.code ?? "")) { await (auth.currentUser?.isAnonymous ? linkWithRedirect(auth.currentUser, provider) : signInWithRedirect(auth, provider)); return "redirect"; }
+        if (/popup-blocked|operation-not-supported|web-storage-unsupported/.test(e.code ?? "")) {
+          try { sessionStorage.setItem("collab.redirect", "1"); } catch {}
+          await (auth.currentUser?.isAnonymous ? linkWithRedirect(auth.currentUser, provider) : signInWithRedirect(auth, provider)); return "redirect";
+        }
         if (/popup-closed|cancelled-popup/.test(e.code ?? "")) return "cancelled";
         throw e;
       }
@@ -144,13 +157,29 @@ export async function signIn() {
   }
 }
 
+/**
+ * A read shared by everything that asks for it within a few seconds (screens repaint on every live update, and several
+ * parts of a screen want the same list). Any write clears it.
+ */
+const reads = new Map();
+export function cached(path, ttl = 10_000) {
+  const hit = reads.get(path);
+  if (hit && Date.now() - hit.at < ttl) return hit.p;
+  const p = api(path).catch(e => { reads.delete(path); throw e; });
+  reads.set(path, { at: Date.now(), p });
+  return p;
+}
+
 export async function api(path, body) {
   const headers = { "content-type": "application/json" };
   if (session.token) headers.authorization = `Bearer ${await session.token()}`;
   const limited = body !== undefined && (path === "/api/price-check"
     || /^\/api\/engagements\/[^/]+\/pay$/.test(path)
     || /^\/api\/pickup\/[^/]+\/collect$/.test(path));
-  if (session.appCheck) {
+  // Plain reads (not goals, which can run the model) go out at once; the server checks a token only if one is sent.
+  const plainRead = body === undefined && !/^\/api\/goals(\/|$)/.test(path);
+  if (plainRead) { const t = session.appCheckNow(); if (t) headers["x-firebase-appcheck"] = t; }
+  else if (session.appCheck) {
     try {
       const t = await session.appCheck(limited);
       if (!t && limited) throw new Error("No limited-use token was returned.");
@@ -158,6 +187,7 @@ export async function api(path, body) {
     }
     catch (e) { if (limited) throw new Error("Could not verify this app for the action. Please try again.", { cause: e }); }
   }
+  if (body !== undefined) reads.clear(); // a write may change anything a cached read shows
   const res = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; throw e; }

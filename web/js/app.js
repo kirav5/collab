@@ -3,11 +3,11 @@
 // screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
 // agents are doing (Requests) and what was shared (Activity).
 import { shouldReload } from "./version.js";
-import { api, insightsLines, ios, session, signIn, standalone } from "./api.js";
+import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
 import { chat, detectNano, engine, itemOf, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
-import { engagementCard, messageHTML } from "./cards.js";
+import { PASS, engagementCard, messageHTML } from "./cards.js";
 import { payWithGoogle, preload as preloadGooglePay } from "./gpay.js";
 import { screens } from "./screens.js";
 import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
@@ -25,22 +25,34 @@ async function setup() {
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
       ${label("Collab", "sq ink")}
       <h1 class="headline">Your agent. <span class="soft">Your private context is never shared.</span></h1>
-      ${to ? `<p class="small">You're opening <b>@${esc(to)}</b>'s agent. Start your own first — it takes ten seconds.</p>` : ""}
+      ${to ? `<div class="card slim" id="setup-to"><span class="small">You're about to ask <b>@${esc(to)}</b>'s agent.</span></div><p class="small muted">Start your own agent first — just your name. It asks for you, and keeps what's private to you.</p>` : ""}
       ${session.google ? (google
         ? `<p class="small muted">Signed in as <b>${esc(session.user.email ?? session.user.displayName ?? "Google")}</b> — this identity follows you to any device.</p>`
         : `<button type="button" class="btn google" id="google"><svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg> Continue with Google</button>
            <p class="small faint">Keeps your handle, context and deals on every device. Already have Collab? This signs you back in.</p>
            <div class="or"><span>or start as a guest</span></div>`) : ""}
-      <p class="small muted">Pick a handle — it's your agent's address (A2A) that other people's agents reach you at.</p>
-      <input class="field" name="name" placeholder="Your name" required maxlength="60" value="${esc(session.user?.displayName ?? "")}">
-      <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" required minlength="3" maxlength="24" autocapitalize="none" value="${esc(suggest.length >= 3 ? suggest : "")}"></div>
+      <input class="field" name="name" placeholder="Your name" required maxlength="60" autocomplete="given-name" value="${esc(session.user?.displayName ?? "")}">
+      <details class="more"><summary>Your Collab address (optional)</summary>
+        <p class="small muted">Other people's agents reach yours at this handle. Leave it empty and one is made from your name.</p>
+        <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" minlength="3" maxlength="24" autocapitalize="none" value="${esc(suggest.length >= 3 ? suggest : "")}"></div></details>
       <input class="field" name="area" placeholder="Your area (e.g. Indiranagar, Bengaluru)" value="Bengaluru">
       <p class="small faint">Only a neighbourhood is ever used — never your exact location.</p>
       <button class="btn accent">Start</button><p class="small" id="setup-err" style="color:var(--danger)"></p></form></div>`;
+    // A QR visitor sees whose agent this is (public agent card: no sign-in needed), and their details load meanwhile.
+    if (to) {
+      fetch(`/a2a/${encodeURIComponent(to)}/.well-known/agent-card.json`).then(r => (r.ok ? r.json() : null)).then(card => {
+        const box = $("#setup-to");
+        if (!card || !box) return;
+        const offers = (card.skills ?? []).filter(s => s.id?.startsWith("offer-")).slice(0, 3);
+        box.innerHTML = `<span class="small">You're about to ask <b>${esc(card.name.replace(/'s agent.*$/, ""))}</b>'s agent (@${esc(to)}).</span>${offers.length ? `<span class="small muted">${offers.map(s => esc(s.name)).join(" · ")}</span>` : ""}`;
+      }).catch(() => {});
+      session.ready?.then(() => person(to));
+    }
     const g = $("#google");
     if (g) g.onclick = async () => {
       busy(g, true, "Opening Google");
       try {
+        if (!session.uid) await session.ready;
         const r = await session.google();
         if (r === "switched") { location.reload(); return; }
         if (r === "linked") {
@@ -58,7 +70,15 @@ async function setup() {
       const f = new FormData(e.target), b = e.submitter;
       busy(b, true, "Setting up");
       try {
-        S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), areaName: f.get("area") });
+        await session.ready;
+        const typed = String(f.get("handle") ?? "").toLowerCase().trim();
+        // No handle typed: one from the name, with a few digits; tried again with others if it's taken.
+        const base = String(f.get("name")).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "").slice(0, 16) || "me";
+        for (let i = 0; ; i++) {
+          const handle = typed || `${base}${Math.floor(100 + Math.random() * 900)}`;
+          try { S.profile = await api("/api/me", { name: f.get("name"), handle, areaName: f.get("area") }); break; }
+          catch (err) { if (typed || i >= 3 || !/taken/.test(err.message)) throw err; }
+        }
         session.track("sign_up", { method: session.user?.isAnonymous ? "guest" : "google" });
         resolve();
       } catch (err) { $("#setup-err").textContent = err.message; busy(b, false); }
@@ -179,7 +199,7 @@ async function paintContent(soft = false) {
 // Saved-note cards show the note as it is now (it may have moved tier on another screen); fetched at most every 20 s.
 let factsCache = null;
 function savedFacts() {
-  if (!factsCache || Date.now() - factsCache.at > 20_000) factsCache = { at: Date.now(), map: api("/api/facts").then(fs => new Map(fs.map(f => [f.id, f]))).catch(() => new Map()) };
+  if (!factsCache || Date.now() - factsCache.at > 20_000) factsCache = { at: Date.now(), map: cached("/api/facts").then(fs => new Map(fs.map(f => [f.id, f]))).catch(() => new Map()) };
   return factsCache.map;
 }
 
@@ -217,16 +237,29 @@ function emptyChat() {
 // MARK: - Direct chats (QR codes and links)
 
 /** A chat with one person's or shop's agent, opened by scanning their QR code (or a /?to=handle link). */
+const people = new Map();
+/** Someone's public profile, offerings and suggested questions — one request however many places ask. */
+function person(handle) {
+  handle = String(handle).replace(/^@/, "").toLowerCase();
+  if (!people.has(handle)) people.set(handle, api(`/api/people/${encodeURIComponent(handle)}`).catch(() => { people.delete(handle); return null; }));
+  return people.get(handle);
+}
+
 async function openDirect(handle) {
   handle = String(handle).replace(/^@/, "").toLowerCase();
-  const p = await api(`/api/people/${encodeURIComponent(handle)}`).catch(() => null);
+  const p = await person(handle);
   if (!p) return toast(`No one is called @${handle}.`);
   if (p.profile.uid === session.uid) return toast("That's your own QR code.");
+  const card = { type: "store", profile: p.profile, facts: p.facts, suggestions: p.suggestions ?? [] };
   let cur = S.sessions.find(x => x.to === handle);
   if (!cur) {
     cur = { id: id(), title: `${p.profile.name} (@${handle})`, to: handle, toName: p.profile.name, updatedAt: now(),
-      messages: [{ id: id(), role: "agent", text: "", at: now(), cards: [{ type: "store", profile: p.profile, facts: p.facts }] }] };
+      messages: [{ id: id(), role: "agent", text: "", at: now(), cards: [card] }] };
     await saveSession(cur);
+  } else {
+    // Scanned again: their card shows what they offer now.
+    const m = cur.messages.find(x => x.cards?.some(c => c.type === "store"));
+    if (m) { m.cards = m.cards.map(c => (c.type === "store" ? card : c)); await saveSession(cur); }
   }
   S.current = cur.id;
   openScreen("chat");
@@ -398,8 +431,13 @@ async function onClick(e) {
       const box = el.parentElement.querySelector("[data-price-result]");
       try {
         const r = await api("/api/price-check", { item: el.dataset.item, area: el.dataset.area });
-        box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · typical ${money(r.typical)}/${esc(r.unit)}` : "Not enough comparable evidence"}</b><span class="small">${esc(r.note)}</span>${r.items.map(i => `<p class="small">${esc(i.label)} · ${money(i.price)}/${esc(i.unit)} ${i.sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" · ")}</p>`).join("")}<span class="small faint">Only you see this · ${r.remaining} checks left today · ${new Date(r.checkedAt * 1000).toLocaleString()}</span></div>`;
-        if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = r.searchEntryPoint; frame.style.cssText = "width:100%;border:0;min-height:110px"; box.append(frame); }
+        const left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
+        box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
+          <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(s => `<a class="small" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
+          <span class="small faint">${esc(r.note)}</span><span class="small faint">Only you see this${left} · ${new Date(r.checkedAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>`;
+        // Google's search suggestions (required with grounded answers): its links open in a new tab — google.com
+        // refuses to load inside a frame.
+        if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = `<base target="_blank">${r.searchEntryPoint}`; frame.style.cssText = "width:100%;border:0;height:64px"; box.append(frame); }
       } finally { busy(el, false); }
       loadPolicy();
       return;
@@ -410,7 +448,8 @@ async function onClick(e) {
       const link = `${location.origin}${p.path}`;
       let qr = "";
       try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1 }); } catch {}
-      document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="Pickup QR">${qr}</div><b>${p.collectedAt ? `Already collected at ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : "✓ Paid (test mode) · Not collected yet"}</b><a class="btn secondary" href="${esc(link)}">Open pickup pass</a><span class="small faint">Show this pass to the seller. Keep the link private.</span></div>`;
+      const k = PASS[p.kind ?? "pickup"], paid = p.payment === "outside" ? `Paid outside the app (marked by the ${p.markedBy})` : "✓ Paid (test mode)";
+      document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="${esc(k.name)} QR">${qr}</div><b>${p.collectedAt ? `${k.done} · ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : `${paid} · not ${k.done.toLowerCase()} yet`}</b><a class="btn secondary" href="${esc(link)}">Open ${k.name.toLowerCase()}</a><span class="small faint">Show this to the seller — they scan it once. Keep the link private.</span></div>`;
       return;
     }
     if (a === "slots-load") {
@@ -616,9 +655,15 @@ navigator.serviceWorker?.addEventListener("message", e => {
 
 // Started last, once everything above is defined.
 await signIn();
-if (!session.uid) { root.innerHTML = `<div class="setup"><div class="card">${label("Collab", "sq ink")}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
-setOwner(session.uid);
-S.profile = await api("/api/me").catch(() => null);
+if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${label("Collab", "sq ink")}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
+// A returning visitor: their profile and (from a QR) the person they're opening load side by side. A first visit has
+// no profile yet, so the start screen shows at once.
+if (session.uid) {
+  setOwner(session.uid);
+  const to = new URLSearchParams(location.search).get("to");
+  if (to) person(to);
+  S.profile = await api("/api/me").catch(() => null);
+}
 if (!S.profile) await setup();
 setOwner(session.uid);
 await boot();
