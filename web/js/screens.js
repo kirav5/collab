@@ -221,6 +221,37 @@ export const screens = {
         h.paint(); return true;
       }
       if (a === "alert-done") { await api(`/api/alerts/${el.dataset.id}/done`, {}); live.alerts = live.alerts.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
+      if (a === "goal-budget") {
+        const amount = Number(document.querySelector(`[data-goal-budget="${CSS.escape(el.dataset.id)}"]`)?.value) || 0;
+        const currency = document.querySelector(`[data-goal-currency="${CSS.escape(el.dataset.id)}"]`)?.value ?? "INR";
+        busy(el, true);
+        try { await api(`/api/goals/${el.dataset.id}/budget`, { amount, currency }); h.toast(amount ? "Budget set — deals in this goal must fit it." : "Budget removed."); } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "goal-plan") {
+        busy(el, true, "Planning");
+        try { const g = await api(`/api/goals/${el.dataset.id}/plan`, {}); h.toast(`${g.plan.length} step${g.plan.length === 1 ? "" : "s"} — ready steps are searching.`); } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "goal-repeat" || a === "goal-repeat-stop") {
+        const everyDays = a === "goal-repeat" ? Number(document.querySelector(`[data-goal-every="${CSS.escape(el.dataset.id)}"]`)?.value) || 7 : 0;
+        await api(`/api/goals/${el.dataset.id}/recurrence`, { everyDays }); h.toast(everyDays ? `Your agent will look again every ${everyDays} days and tell you — it never buys on its own.` : "Stopped repeating."); h.paint(); return true;
+      }
+      if (a === "goal-aon") { await api(`/api/goals/${el.dataset.id}/settings`, { allOrNothing: el.checked }); h.toast(el.checked ? "All or nothing: if a part fails, the others are released." : "Parts are independent."); h.paint(); return true; }
+      if (a === "step-matches") {
+        busy(el, true);
+        const r = await api(`/api/goals/${el.dataset.goal}/steps/${el.dataset.step}/matches`).catch(err => ({ error: err.message }));
+        const box = document.querySelector(`[data-step-box="${CSS.escape(el.dataset.step)}"]`);
+        box.innerHTML = r.error ? `<span class="small faint">${esc(r.error)}</span>` : r.found.length ? r.found.slice(0, 5).map(f => `<div class="row small"><span>${esc(f.profile.name)}</span><span class="faint">${esc((f.fact.offer?.title ?? f.fact.text).slice(0, 60))}</span>${f.fact.offer ? `<b>${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</b>` : ""}
+          <button class="btn accent compact end" data-act="step-ask" data-brief="${esc(r.briefId)}" data-fact="${esc(f.fact.id)}">Ask their agent</button></div>`).join("") : `<span class="small faint">No one fits yet.</span>`;
+        busy(el, false); return true;
+      }
+      if (a === "step-ask") {
+        busy(el, true, "Contacting");
+        const es = await api(`/api/briefs/${el.dataset.brief}/engage`, { providers: [{ factId: el.dataset.fact }] });
+        for (const e of es) live.engagements.set(e.id, e);
+        h.toast("Your agent is contacting them over A2A."); h.paint(); return true;
+      }
       if (a === "goal-cancel") {
         if (!confirm("Cancel this goal? Conversations without a deal end; agreed deals keep their obligations.")) return true;
         await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
@@ -239,9 +270,24 @@ export const screens = {
       const STATE = { draft: ["Draft", ""], active: ["In progress", "accent"], waiting: ["Needs you", "accent"], completed: ["Done", "fresh"],
         partially_completed: ["Partly done", "peri"], cancelled: ["Cancelled", ""], failed: ["Didn't work out", "danger"] };
       const open = goals.filter(g => !["completed", "cancelled", "failed"].includes(g.state)), done = goals.filter(g => !open.includes(g)).slice(0, 5);
-      const goalRow = g => `<div class="card slim goal ${g.state === "waiting" ? "needs-card" : ""}"><div class="row"><b class="small">${esc(g.outcome)}</b><span class="end">${tag(...(STATE[g.state] ?? [g.state, ""]))}</span></div>
-        <span class="small muted">${g.tasks.length ? `${g.tasks.length} conversation${g.tasks.length === 1 ? "" : "s"}${g.next ? ` · ${esc(g.next)}` : ""}` : "No conversations yet"}</span>
-        ${g.state !== "cancelled" && open.includes(g) ? `<div class="row"><button class="linkish small faint end" data-act="goal-cancel" data-id="${esc(g.id)}">Cancel goal</button></div>` : ""}</div>`;
+      const STEP = { waiting: "waits", ready: "ready", searched: "matches found", started: "talking", done: "✓ done", failed: "✗ didn't work" };
+      const goalRow = g => {
+        const id = esc(g.id), live_ = open.includes(g), b = g.budgetUse;
+        const steps = (g.plan ?? []).map((st, i) => `<div class="row small"><span class="faint">${i + 1}.</span><span>${esc(st.title)}</span>${st.after ? `<span class="faint">after ${esc(g.plan.find(x => x.id === st.after)?.title ?? "")}</span>` : ""}
+          <span class="end faint">${STEP[st.state] ?? st.state}</span>${st.state === "searched" ? `<button class="btn quiet compact" data-act="step-matches" data-goal="${id}" data-step="${esc(st.id)}">See matches</button>` : ""}</div>${st.note && st.state !== "done" ? `<span class="small faint">${esc(st.note)}</span>` : ""}<div data-step-box="${esc(st.id)}"></div>`).join("");
+        return `<div class="card slim goal ${g.state === "waiting" ? "needs-card" : ""}"><div class="row"><b class="small">${esc(g.outcome)}</b><span class="end">${tag(...(STATE[g.state] ?? [g.state, ""]))}</span></div>
+        <span class="small muted">${g.tasks.length ? `${g.tasks.length} conversation${g.tasks.length === 1 ? "" : "s"}${g.next ? ` · ${esc(g.next)}` : ""}` : g.plan?.length ? `${g.plan.length} step plan` : "No conversations yet"}</span>
+        ${b ? `<span class="small">Budget ${money(b.used, null, b.currency)} of ${money(b.amount, null, b.currency)} committed</span>` : ""}
+        ${steps ? `<div class="stack" style="gap:2px">${steps}</div>` : ""}
+        ${g.recurrence && !g.recurrence.stopped ? `<span class="small faint">Repeats every ${g.recurrence.everyDays} day${g.recurrence.everyDays === 1 ? "" : "s"} · next ${new Date(g.recurrence.nextAt * 1000).toLocaleDateString()} · ${g.recurrence.rounds} round${g.recurrence.rounds === 1 ? "" : "s"} so far</span>` : g.recurrence?.stopped ? `<span class="small faint">Repeating stopped: ${esc(g.recurrence.stopped)}</span>` : ""}
+        ${g.compensation ? `<span class="small" style="color:var(--stale)">Part of this all-or-nothing goal failed: ${g.compensation.cancelled.length} unpaid deal${g.compensation.cancelled.length === 1 ? "" : "s"} cancelled, ${g.compensation.released.length} reservation${g.compensation.released.length === 1 ? "" : "s"} released${g.compensation.paidNeedsOwner.length ? `; ${g.compensation.paidNeedsOwner.length} already paid — ask those sellers to cancel` : ""}.</span>` : ""}
+        ${live_ ? `<details class="more"><summary>Goal settings</summary><div class="stack" style="gap:6px">
+          <div class="row small"><input class="field" type="number" min="0" style="max-width:110px" data-goal-budget="${id}" placeholder="Budget" value="${b?.amount ?? ""}"><select class="field" style="max-width:90px" data-goal-currency="${id}">${(session.policy?.currencies ?? ["INR"]).map(c => `<option ${b?.currency === c ? "selected" : ""}>${c}</option>`).join("")}</select><button class="btn secondary compact" data-act="goal-budget" data-id="${id}">Set budget</button></div>
+          ${g.plan?.length ? "" : `<div class="row small"><button class="btn secondary compact" data-act="goal-plan" data-id="${id}">Plan it — several providers</button><span class="faint">Gemini splits it into steps; each step searches when ready</span></div>`}
+          <div class="row small"><span>Repeat every</span><input class="field" type="number" min="1" max="90" style="max-width:70px" data-goal-every="${id}" value="${g.recurrence?.everyDays ?? 7}"><span>days</span><button class="btn quiet compact" data-act="goal-repeat" data-id="${id}">${g.recurrence && !g.recurrence.stopped ? "Update" : "Repeat"}</button>${g.recurrence && !g.recurrence.stopped ? `<button class="btn quiet compact" data-act="goal-repeat-stop" data-id="${id}">Stop</button>` : ""}</div>
+          <label class="row small" style="gap:6px"><input type="checkbox" data-act="goal-aon" data-id="${id}" ${g.allOrNothing ? "checked" : ""}> All or nothing — if one part fails, release the others</label>
+          <div class="row"><button class="linkish small faint end" data-act="goal-cancel" data-id="${id}">Cancel goal</button></div></div></details>` : ""}</div>`;
+      };
       return frame("Requests", "What your agents are doing", `
         ${goals.length ? `${label(`Your goals · ${open.length} open`, "sq ink")}${open.map(goalRow).join("")}${done.length ? `<details class="more"><summary>Finished · ${done.length}</summary>${done.map(goalRow).join("")}</details>` : ""}` : ""}
         ${live.alerts.length ? `${label(`New matches · ${live.alerts.length}`, "sq accent")}${live.alerts.map(a => `<div class="card slim needs-card">
