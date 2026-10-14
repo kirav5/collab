@@ -1,18 +1,22 @@
 // Model Armor: a second, model-based screen next to the deterministic policy (which stays the guarantee). Text from
 // other agents is checked for prompt injection and jailbreaks before any model reads it; answers our agents are
 // about to share are checked for sensitive data (cards, credentials, account numbers) and go to the owner for review
-// when something is found. If Model Armor is unreachable the text passes (the policy and the privacy wall still
-// apply) and the miss is logged.
+// when something is found. What an outage means is an explicit setting (MODEL_ARMOR_FAIL_MODE, see below).
 import { GoogleAuth } from "google-auth-library";
 import { log } from "../log.ts";
 
 export interface Screen { flagged: boolean; reason?: string }
-export interface Armor { incoming(text: string): Promise<Screen>; outgoing(text: string): Promise<Screen>; stats: { checked: number; flagged: number; errors: number } }
+export interface Armor { incoming(text: string): Promise<Screen>; outgoing(text: string): Promise<Screen>; stats: { checked: number; flagged: number; errors: number; unscreened: number; failMode: "open" | "closed" } }
 
-export function modelArmor(project: string | undefined, location: string, incoming?: string, outgoing?: string): Armor | null {
+/**
+ * `failMode` decides what an outage means. "open" (default): unscreened text passes — the deterministic policy still
+ * applies — and is counted as unscreened. "closed": unscreened incoming text is treated as flagged (not answered) and
+ * unscreened outgoing answers go to the owner for review.
+ */
+export function modelArmor(project: string | undefined, location: string, incoming?: string, outgoing?: string, failMode: "open" | "closed" = "open"): Armor | null {
   if (!project || (!incoming && !outgoing)) return null;
   const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
-  const stats = { checked: 0, flagged: 0, errors: 0 };
+  const stats = { checked: 0, flagged: 0, errors: 0, unscreened: 0, failMode };
   const base = `https://modelarmor.${location}.rep.googleapis.com/v1/projects/${project}/locations/${location}/templates`;
   async function call(template: string | undefined, method: "sanitizeUserPrompt" | "sanitizeModelResponse", text: string): Promise<Screen> {
     if (!template || !text.trim()) return { flagged: false };
@@ -34,9 +38,9 @@ export function modelArmor(project: string | undefined, location: string, incomi
       log.info("model armor flagged", { method, reason });
       return { flagged: true, reason };
     } catch (e) {
-      stats.errors++;
-      log.warn("model armor unavailable", { method, error: String(e).slice(0, 160) });
-      return { flagged: false };
+      stats.errors++; stats.unscreened++;
+      log.warn("model armor unavailable", { method, failMode, error: String(e).slice(0, 160) });
+      return failMode === "closed" ? { flagged: true, reason: "screening unavailable (fail closed)" } : { flagged: false };
     }
   }
   return { stats, incoming: t => call(incoming, "sanitizeUserPrompt", t), outgoing: t => call(outgoing, "sanitizeModelResponse", t) };

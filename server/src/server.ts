@@ -75,7 +75,8 @@ async function verifyIdToken(token: string): Promise<string> {
 
 const signing = signer(env.RECEIPT_KEY, env.STORE === "memory");
 const verifySigned = (uid: string, hash: string, sig: string) => sig.startsWith("ed25519.") ? signing.verify(uid, hash, sig) : signReceipt(cfg.secret, uid, hash) === sig;
-const armor = modelArmor(env.GOOGLE_CLOUD_PROJECT, env.MODEL_ARMOR_LOCATION ?? "asia-south1", env.MODEL_ARMOR_INCOMING, env.MODEL_ARMOR_OUTGOING);
+const armor = modelArmor(env.GOOGLE_CLOUD_PROJECT, env.MODEL_ARMOR_LOCATION ?? "asia-south1", env.MODEL_ARMOR_INCOMING, env.MODEL_ARMOR_OUTGOING,
+  env.MODEL_ARMOR_FAIL_MODE === "closed" ? "closed" : "open");
 setOutgoingScreen(armor ? armor.outgoing : null);
 const queue = turnQueue(env.TASKS_QUEUE, env.RUN_URL, env.TASKS_SERVICE_ACCOUNT);
 const cfg = { db, model, directUrl: env.RUN_URL || undefined, enqueue: queue ? queue.enqueue : undefined, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },

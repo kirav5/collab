@@ -2,7 +2,7 @@
 // People, Sharing (rules for Protected topics, pause everything), Requests (every conversation between agents, live),
 // Activity (what your agent shared, with whom) and Settings.
 import { api, ios, session, standalone } from "./api.js";
-import { downloadNano, engine, setPreferDevice } from "./agent.js";
+import { downloadNano, engine, setProcessingMode } from "./agent.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
@@ -19,8 +19,7 @@ async function allFacts() {
 function deviceAI() {
   const pct = engine.progress == null ? "" : ` ${Math.round(engine.progress * 100)}%`;
   switch (engine.status) {
-    case "available": return `<span style="color:var(--fresh)">● Gemini Nano ready on this device</span>
-      <label class="row small" style="gap:6px;margin-top:6px"><input type="checkbox" data-act="device-pref" ${engine.prefer ? "checked" : ""}> Answer from my notes on this device (works offline)</label>`;
+    case "available": return `<span style="color:var(--fresh)">● Gemini Nano ready on this device</span>`;
     case "downloadable": return `Gemini Nano can run on this device (Chrome built-in AI). It's a one-time download of about 3–4 GB.
       <button class="btn secondary compact" data-act="device-download">Download on-device model</button>`;
     case "downloading": return `<span class="spinner"></span> Downloading Gemini Nano…${pct} <span class="small faint">You can keep using Collab.</span>`;
@@ -195,7 +194,10 @@ export const screens = {
           <input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="Your area">
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>On-device AI</dt><dd>${deviceAI()}</dd>
-          <dt>Your notes</dt><dd>${engine.nano ? "Answered by Gemini Nano on this device (Firebase AI Logic, on-device only) — also offline" : "Answered by Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
+          <dt>Process my notes</dt><dd class="stack" style="gap:4px">${[["device-only", "On this device only", "never sent to the cloud; if this device can't answer, you're told"],
+            ["device-first", "Device first, cloud if needed", "the cloud answers when this device can't"], ["cloud", "In the cloud", "Gemini on Vertex AI"]]
+            .map(([v, t, d]) => `<label class="row small" style="gap:6px"><input type="radio" name="processing" data-act="processing" value="${v}" ${engine.mode === v ? "checked" : ""}> <b>${t}</b> <span class="faint">${d}</span></label>`).join("")}</dd>
+          <dt>Your notes</dt><dd>${engine.nano ? (engine.mode === "device-only" ? "Answered only on this device (Gemini Nano via Firebase AI Logic) — also offline" : "Answered by Gemini Nano on this device when it can — also offline") : engine.mode === "device-only" ? "Set to this device only — waiting for the on-device model" : "Answered by Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Install Collab to open it like an app. Notifications tell you when your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
@@ -218,7 +220,7 @@ export const screens = {
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
-      if (a === "device-pref") { setPreferDevice(el.checked); h.toast(el.checked ? "Your notes will be answered on this device." : "Your notes will be answered by Gemini in the cloud."); h.paint(); return true; }
+      if (a === "processing") { setProcessingMode(el.value); h.toast(el.value === "device-only" ? "Your notes are processed on this device only." : el.value === "cloud" ? "Your notes are answered by Gemini in the cloud." : "Your notes are answered on this device when it can, else in the cloud."); h.paint(); return true; }
       if (a === "push-test") {
         busy(el, true, "Sending");
         try { const r = await api("/api/push/test", {}); h.toast(r.sent ? `Sent to ${r.sent} device${r.sent === 1 ? "" : "s"} — it should appear in a few seconds.` : "The notification service didn't accept it — try turning notifications off and on."); }

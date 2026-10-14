@@ -11,8 +11,12 @@ import { live, onChange, poke } from "./live.js";
 
 // On-device AI (Gemini Nano in Chrome): its state is shown in Settings › AI engine, where the owner can download it
 // and choose whether private-note answers stay on the device. `nano` = ready and chosen.
-const pref = () => { try { return localStorage.getItem("collab.device") !== "off"; } catch { return true; } };
-export const engine = { nano: false, status: "checking", progress: null, prefer: pref() };
+// `mode` is where private-note questions may be processed: "device-only" (never sent to the cloud — if the on-device
+// model can't answer, the owner is told), "device-first" (cloud when the device can't), or "cloud".
+const savedMode = () => { try { const m = localStorage.getItem("collab.processing"); if (m === "device-only" || m === "device-first" || m === "cloud") return m; return localStorage.getItem("collab.device") === "off" ? "cloud" : "device-first"; } catch { return "device-first"; } };
+export const engine = { nano: false, status: "checking", progress: null, mode: savedMode() };
+/** The answer a device-only owner gets when the device can't process the question. */
+export const DEVICE_ONLY_LIMIT = { limitation: "Your notes are set to be processed on this device only, and the on-device model can't answer right now. Download or turn it on in Settings › AI engine, or allow cloud processing there." };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
 export const needsLimit = new Set(); // move items this device has no limit for (the owner sets one)
 
@@ -34,7 +38,7 @@ async function onDeviceModel() {
 export async function detectNano() {
   try { engine.status = "LanguageModel" in self ? await self.LanguageModel.availability() : "unsupported"; }
   catch { engine.status = "unsupported"; }
-  engine.nano = engine.status === "available" && engine.prefer;
+  engine.nano = engine.status === "available" && engine.mode !== "cloud";
   return engine.nano;
 }
 
@@ -48,10 +52,10 @@ export async function downloadNano(onProgress) {
   return detectNano();
 }
 
-export function setPreferDevice(on) {
-  engine.prefer = on;
-  try { localStorage.setItem("collab.device", on ? "on" : "off"); } catch {}
-  engine.nano = engine.status === "available" && on;
+export function setProcessingMode(mode) {
+  engine.mode = mode;
+  try { localStorage.setItem("collab.processing", mode); } catch {}
+  engine.nano = engine.status === "available" && mode !== "cloud";
 }
 
 // A copy of the owner's private notes on this device, so questions about them can be answered offline (on device).
@@ -63,10 +67,11 @@ async function cachedNotes() { try { return (await local.get("facts", "notes"))?
 /** No network: questions about the owner's own notes are answered on the device; anything else waits. */
 async function offlineAnswer(text) {
   if (!engine.nano) return { text: engine.status === "available"
-    ? "You're offline. Turn on “Answer from my notes on this device” in Settings › AI engine to ask about your notes offline."
+    ? "You're offline. Choose on-device processing for your notes in Settings › AI engine to ask about them offline."
     : "You're offline. Download the on-device model in Settings › AI engine to ask about your own notes without a connection. Requests to other people's agents need the network.", cards: [] };
   const notes = relevant(await cachedNotes(), text);
   const a = notes.length ? await think(text, notes, "self", true) : null;
+  if (a?.limitation) return { text: a.limitation, cards: [] };
   if (!a) return { text: notes.length ? "Offline — your saved notes don't clearly answer that." : "Offline — nothing in the notes saved on this device matches that.", cards: [] };
   return { text: a.text, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: "device" }] };
 }
@@ -77,6 +82,8 @@ const nums = s => (s.replace(/(\d),(?=\d)/g, "$1").match(/\d+(?:\.\d+)?/g) ?? []
 /** An answer from these notes only, with the evidence it relied on (checked: quoted from the notes, no new numbers). */
 export async function think(question, notes, side = "self", deviceOnly = false) {
   if (!notes.length) return null;
+  deviceOnly ||= engine.mode === "device-only";
+  if (deviceOnly && !engine.nano) return DEVICE_ONLY_LIMIT;
   if (engine.nano) {
     try {
       // On device through Firebase AI Logic (only_on_device: these notes never go to the cloud this way). If the
@@ -91,9 +98,9 @@ export async function think(question, notes, side = "self", deviceOnly = false) 
         }
         return null;
       }
-    } catch { /* fall through to Gemini */ }
+    } catch { if (deviceOnly) return DEVICE_ONLY_LIMIT; /* else fall through to Gemini */ }
   }
-  if (deviceOnly) return null;
+  if (deviceOnly) return DEVICE_ONLY_LIMIT;
   const r = await api("/api/think", { question, notes: notes.map(n => ({ text: n.text })), side });
   return r.action === "answer" ? { text: r.text ?? r.answer, evidence: r.evidence, on: "gemini" } : null;
 }
@@ -119,6 +126,7 @@ export async function chat(text, recent, area, open = null) {
       if (facts.length) cacheNotes(facts);
       const notes = relevant(facts, text);
       const a = notes.length ? await think(text, notes) : null;
+      if (a?.limitation) return { text: a.limitation, cards: [] };
       if (!a) return { text: notes.length ? "Your notes don't clearly answer that." : "I don't have anything about that in your context yet.", cards: [] };
       return { text: a.text, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: a.on }] };
     }
@@ -181,7 +189,7 @@ async function work() {
       inflight.add(item.id);
       const facts = (await api("/api/facts").catch(() => [])).filter(f => f.tier === "private");
       const notes = relevant(facts, item.question ?? "");
-      think(item.question, notes, item.side).then(a => { drafts.set(item.id, a ? { text: a.text, notes: notes.map(n => n.text), on: a.on } : null); for (const fn of live.listeners) fn(); })
+      think(item.question, notes, item.side).then(a => { drafts.set(item.id, a && !a.limitation ? { text: a.text, notes: notes.map(n => n.text), on: a.on } : null); for (const fn of live.listeners) fn(); })
         .catch(() => drafts.set(item.id, null)).finally(() => inflight.delete(item.id));
     }
   }
