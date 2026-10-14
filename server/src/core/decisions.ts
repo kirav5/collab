@@ -4,6 +4,7 @@
 import type { Docs } from "../docs.ts";
 import type { Engagement, InboxItem } from "./model.ts";
 import { ENGAGEMENTS, INBOX } from "./engage.ts";
+import { deallocate } from "./goals.ts";
 
 export async function expireDecisions(db: Docs, now: number, remind: (i: InboxItem) => Promise<void>, max = 50) {
   const due = ((await db.find(INBOX, [["deadline", "<=", now]], max)) as InboxItem[]).filter(i => i.status === "open");
@@ -20,6 +21,8 @@ export async function expireDecisions(db: Docs, now: number, remind: (i: InboxIt
           waiting: { ...e.waiting, [i.side]: w && w.inbox.filter(x => x !== i.id).length ? { ...w, inbox: w.inbox.filter(x => x !== i.id) } : null },
           events: [...e.events, { at: now, who: "system", text: "The deal lapsed — it wasn't confirmed in time. Nothing was agreed." }], updatedAt: now };
       });
+      const e = (await db.get(ENGAGEMENTS, i.engagementId)) as Engagement | null;
+      if (e?.goalId) await deallocate(db, e.goalId, e.id, now);
       lapsed++;
     } else if (!(i as any).reminded) {
       await db.update(INBOX, i.id, (x: any) => (x?.status === "open" && !x.reminded ? { ...x, reminded: true } : null));

@@ -22,7 +22,7 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
 import { getSafe } from "./a2a/webhooks.ts";
@@ -238,6 +238,21 @@ app.post("/api/goals", route(async req => {
   const amount = num(req.body?.budget?.amount, 1, 1e9), currency = text(req.body?.budget?.currency, 3).toUpperCase() || policy().money.defaultCurrency;
   if (amount && !policy().money.currencies.includes(currency)) throw new HttpError(400, `Budgets in ${currency} aren't supported.`, "UNSUPPORTED_CURRENCY");
   return goalView(db, await createGoal(db, req.uid, outcome, kind, amount ? { amount, currency } : null, now()));
+}));
+// A goal's budget across all its deals; it can't be set below what's already committed.
+app.post("/api/goals/:id/budget", route(async req => {
+  const amount = num(req.body?.amount, 0, 1e9), currency = text(req.body?.currency, 3).toUpperCase() || policy().money.defaultCurrency;
+  if (!policy().money.currencies.includes(currency)) throw new HttpError(400, `Budgets in ${currency} aren't supported.`, "UNSUPPORTED_CURRENCY");
+  let refusal: HttpError | null = null;
+  const g = await db.update(GOALS, String(req.params.id), (cur: Goal | null) => {
+    if (!cur || cur.owner !== req.uid) { refusal = new HttpError(404, "goal not found"); return null; }
+    const used = (cur.allocations ?? []).reduce((n, a) => n + a.amount, 0);
+    if (amount !== null && amount > 0 && amount < used) { refusal = new HttpError(409, `${used} ${currency} is already committed to this goal's deals.`, "VERSION_CONFLICT"); return null; }
+    if (used && cur.budget && cur.budget.currency !== currency) { refusal = new HttpError(409, `This goal's deals are in ${cur.budget.currency}.`, "VERSION_CONFLICT"); return null; }
+    return { ...cur, budget: amount ? { amount, currency } : null, revision: cur.revision + 1, updatedAt: now() };
+  });
+  if (refusal) throw refusal;
+  return goalView(db, g);
 }));
 app.post("/api/goals/:id/cancel", route(async req => {
   const r = await db.update(GOALS, String(req.params.id), (g: Goal | null) => (g && g.owner === req.uid ? { ...g, closed: "cancelled", revision: g.revision + 1, updatedAt: now() } : null));
@@ -875,6 +890,7 @@ app.post("/api/engagements/:id/outcome", route(async req => {
   if (e.phase !== "agreed") throw new HttpError(400, "no deal yet");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   (e.outcome ??= {})[side] = req.body?.happened ? "happened" : "fell_through";
+  if (!req.body?.happened) await releaseBudget(db, e);
   // A deal that fell through before payment gives its held stock back.
   if (!req.body?.happened && e.reservation?.state === "held" && e.reservation.holdId) {
     await releaseResource(db, e.reservation.resourceId, e.reservation.holdId, now());

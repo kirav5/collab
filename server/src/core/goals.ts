@@ -20,6 +20,8 @@ export interface Goal {
   /** Optional ceiling across all the goal's tasks (checked when a deal is confirmed). */
   budget: { amount: number; currency: string } | null;
   taskIds: string[];
+  /** Money committed against the budget, one entry per confirmed deal (released if the deal lapses or ends). */
+  allocations?: { engagementId: string; amount: number; currency: string; at: number }[];
   /** Set by the owner; a goal they closed stays closed. */
   closed: "cancelled" | null;
   createdAt: number; updatedAt: number;
@@ -95,7 +97,7 @@ export async function goalView(db: Docs, g: Goal) {
   const tasks = es.map(e => taskOf(e, g.owner));
   const state = goalState(g, tasks);
   const next = tasks.find(t => t.waitingOn === "you")?.next ?? tasks.find(t => t.state === "waiting_for_external" || t.state === "running")?.next ?? null;
-  return { ...g, state, tasks, next };
+  return { ...g, state, tasks, next, budgetUse: budgetUse(g) };
 }
 
 /**
@@ -118,3 +120,30 @@ export async function backfillGoals(db: Docs, owner: string, now: number): Promi
   await db.set("migrations", marker, { id: marker, owner, goals: groups.size, conversations: mine.length, at: now });
   return groups.size;
 }
+
+// MARK: - Budget across a goal's deals
+
+export class BudgetError extends Error {}
+
+/** Reserves `amount` of the goal's budget for one deal, in a transaction on the goal — two deals confirmed at once
+ *  can't both fit under the same remaining budget. No budget: nothing to do. Idempotent per deal. */
+export async function allocate(db: Docs, goalId: string, engagementId: string, amount: number, currency: string, now: number) {
+  let refusal: Error | null = null;
+  await db.update(GOALS, goalId, (g: Goal | null) => {
+    if (!g?.budget) return null;
+    const allocs = g.allocations ?? [];
+    if (allocs.some(a => a.engagementId === engagementId)) return null;
+    if (g.budget.currency !== currency) { refusal = new BudgetError(`This goal's budget is in ${g.budget.currency}; this deal is in ${currency}.`); return null; }
+    const used = allocs.reduce((n, a) => n + a.amount, 0);
+    if (used + amount > g.budget.amount) { refusal = new BudgetError(`That would take “${g.outcome}” over its budget: ${g.budget.amount - used} ${currency} left of ${g.budget.amount}.`); return null; }
+    return { ...g, allocations: [...allocs, { engagementId, amount, currency, at: now }], revision: g.revision + 1, updatedAt: now };
+  });
+  if (refusal) throw refusal;
+}
+
+export async function deallocate(db: Docs, goalId: string, engagementId: string, now: number) {
+  await db.update(GOALS, goalId, (g: Goal | null) => (g?.allocations?.some(a => a.engagementId === engagementId)
+    ? { ...g, allocations: g.allocations.filter(a => a.engagementId !== engagementId), revision: g.revision + 1, updatedAt: now } : null));
+}
+
+export const budgetUse = (g: Goal) => g.budget ? { ...g.budget, used: (g.allocations ?? []).reduce((n, a) => n + a.amount, 0) } : null;

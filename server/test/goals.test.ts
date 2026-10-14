@@ -63,3 +63,30 @@ test("migration goals-v1: older conversations become goals once, ids kept, nothi
   assert.equal(info.kind, "information");
   assert.equal((await goalView(db, info)).tasks[0].id, c.id);
 });
+
+test("a goal's budget holds across its deals, even confirmed at the same moment; a lapsed deal gives it back", async () => {
+  const { offerDeal, resolve, INBOX, load } = await import("../src/core/engage.ts");
+  const { expireDecisions } = await import("../src/core/decisions.ts");
+  const db = memoryDocs();
+  await db.set(GOALS, "g1", { ...goal("purchase"), id: "g1", budget: { amount: 500, currency: "INR" } });
+  const deal = async (id: string, price: number) => {
+    const e = conv(null); e.id = id; e.goalId = "g1"; await save(db, e);
+    await offerDeal(db, e, "provider", price, `I'll sell you a mug for ₹${price}`);
+    return ((await db.find(INBOX, [["owner", "==", "me"]], 20)) as any[]).find(i => i.engagementId === id && i.kind === "confirm");
+  };
+  const [a, b] = [await deal("e-a", 300), await deal("e-b", 300)];
+  const both = await Promise.allSettled([resolve(db, null, a, { confirm: true }), resolve(db, null, b, { confirm: true })]);
+  assert.deepEqual(both.map(x => x.status).sort(), ["fulfilled", "rejected"]);
+  assert.match(String((both.find(x => x.status === "rejected") as PromiseRejectedResult).reason?.message), /over its budget: 200 INR left of 500/);
+  const g = await db.get(GOALS, "g1");
+  assert.equal(g.allocations.length, 1); assert.equal(g.allocations[0].amount, 300);
+  // A deal offered but never confirmed holds no budget, and lapses at its deadline.
+  const lapse = await deal("e-c", 150);
+  const r = await expireDecisions(db, lapse.deadline + 1, async () => {});
+  assert.equal(r.lapsed >= 1, true);
+  assert.equal(((await db.get(GOALS, "g1")).allocations ?? []).length, 1, "an unconfirmed deal never held budget");
+  const fits = await deal("e-d", 200);
+  await resolve(db, null, fits, { confirm: true });
+  assert.equal((await load(db, "e-d")).phase, "agreed");
+  assert.equal((await db.get(GOALS, "g1")).allocations.reduce((n: number, x: any) => n + x.amount, 0), 500);
+});

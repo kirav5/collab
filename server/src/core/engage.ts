@@ -17,6 +17,8 @@ import { type Mandate, type Proposal, currencyOf, moneyText, newId } from "../ma
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
 import { policy, policyHash } from "../config/policy.ts";
 import { CapacityError, availabilityText, hold, resourceFor } from "./resources.ts";
+import { BudgetError, allocate, deallocate } from "./goals.ts";
+import { linesOf, totalOf } from "./pay.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
@@ -135,6 +137,15 @@ async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" 
   e.waiting[s] = { kind: item.kind, inbox: [...(e.waiting[s]?.inbox ?? []), id], text: item.question ?? (item.kind === "move" ? "A negotiating move with your private limit" : "Confirm the deal") };
   return id;
 }
+
+/** The buyer's confirmation must fit their goal's budget (allocated atomically); returns why not, or null. */
+async function budgetCheck(db: Docs, e: Engagement, s: Side): Promise<string | null> {
+  if (!e.goalId || s !== "requester" || sellerOf(e) === "requester" || !e.negotiation.deal) return null;
+  try { await allocate(db, e.goalId, e.id, totalOf(linesOf(e)), currencyOf(e), now()); return null; }
+  catch (err) { if (err instanceof BudgetError) return err.message; throw err; }
+}
+/** Gives a deal's share of its goal's budget back (it lapsed, was declined or fell through). */
+export async function releaseBudget(db: Docs, e: Engagement) { if (e.goalId) await deallocate(db, e.goalId, e.id, now()); }
 
 /** Holds the deal's units on the offering's ledger (if it has one); records the result on the conversation. */
 export async function reserveFor(db: Docs, e: Engagement) {
@@ -371,7 +382,9 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
       // A "close" mandate is the owner's confirmation given in advance, while the deal is inside its limit.
       const l = await limitFor(db, e, s);
       const deal = e.negotiation.deal;
-      if (l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate))) {
+      const overBudget = l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate)) ? await budgetCheck(db, e, s) : null;
+      if (overBudget) { say(e, "system", `${overBudget} The standing mandate can't confirm it — the owner decides.`); if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" }); }
+      else if (l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate))) {
         e.negotiation.confirmed[s] = true;
         (e.negotiation.confirmedBy ??= {})[s] = "mandate";
         out.confirm = true;
@@ -480,12 +493,17 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
       throw new Stale("This deal changed since you were asked — check the new terms before confirming.");
     }
+    if (r.decline) await releaseBudget(db, e);
     if (r.decline && e.offer.price == null) {
       // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
       say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: currencyOf(e), period: e.offer.unit })}.`, "owner");
       e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false };
     } else if (r.decline) { e.phase = "closed"; out.decline = "My owner decided not to go ahead. Thank you."; say(e, s, "Walked away.", "owner"); }
-    else { e.negotiation.confirmed[s] = true; out.confirm = true; say(e, s, "Confirmed.", "owner"); settle(e); }
+    else {
+      const over = await budgetCheck(db, e, s);
+      if (over) throw new Refused(over);
+      e.negotiation.confirmed[s] = true; out.confirm = true; say(e, s, "Confirmed.", "owner"); settle(e);
+    }
   }
   await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
   const w = e.waiting[s];
@@ -515,6 +533,9 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
   e.negotiation.confirmed = { requester: s === "requester", provider: s === "provider" };
   (e.negotiation.confirmedBy ??= {})[s] = "owner";
+  // An offer is the offerer's confirmation: a buyer's must fit their goal's budget.
+  const over = await budgetCheck(db, e, s);
+  if (over) throw new Refused(over);
   if (text) say(e, s, text, "owner");
   say(e, "system", `Deal offered at ${moneyText({ amount: price, currency: currencyOf(e), period: e.offer.unit })}. Nothing is final until both confirm.`);
   const o = other(s);
