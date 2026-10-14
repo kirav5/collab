@@ -1,6 +1,10 @@
 # Collab
 
-**Personal agents for neighbourhood commerce: scan a shop, agree within private limits, collect once.**
+**Everyone’s agent for getting things done together.** Consumers, shops and service providers can represent their needs and offerings, share permitted context, and collaborate through their agents.
+
+The current working demonstration covers discovery, two-party collaboration, agreement, simulated payment and one-time retail pickup. The broader product adds reliable resource commitments, connected services and multi-task goals.
+
+Product direction: [Product vision](docs/PRODUCT-VISION.md) · [Technical PRD](docs/TECHNICAL-PRD.md) · [Current application state](docs/CURRENT-STATE.md).
 
 Say what you need in your own words — or scan a shop's QR code. Gemini helps shape the request (and asks what's
 missing, with tap-to-answer options). Your agent finds the people whose public offerings fit, or goes straight to the

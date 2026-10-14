@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-10-14T21:13:54.191Z",
+  "sourceCommit": "914fc4546861fb1be63d2ac960cdf218c9954125",
+  "localValidation": {
+    "command": "cd server && npm run check",
+    "passed": 65,
+    "failed": 0
+  },
+  "live": {
+    "base": "https://collab-55.web.app",
+    "healthy": true,
+    "store": "firestore",
+    "modelBackend": "vertex-ai",
+    "configuredModels": [
+      "gemini-3.6-flash",
+      "gemini-3.8-flash",
+      "gemini-3.5-flash-lite"
+    ],
+    "modelArmor": {
+      "on": true,
+      "checked": 6,
+      "flagged": 1,
+      "errors": 0
+    },
+    "webVersion": "756452d-1792009875",
+    "agentCard": {
+      "path": "/a2a/riya/.well-known/agent-card.json",
+      "signatureVerified": true,
+      "keyOrigin": "https://collab-55.web.app/public/keys",
+      "capabilities": {
+        "streaming": true,
+        "pushNotifications": true
+      },
+      "advertisedPaymentConformance": "AP2-inspired custom v0.1 flow"
+    }
+  },
+  "limitations": [
+    "Public read-only checks; no new authenticated transaction or device exercise.",
+    "Web version is not the current source commit; backend build identity not exposed.",
+    "Capability advertisement is not an end-to-end external integration test.",
+    "Health counters are per process and not benchmark or billing evidence."
+  ]
+}

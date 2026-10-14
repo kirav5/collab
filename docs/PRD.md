@@ -1,5 +1,9 @@
 # Collab (web) — Product Requirements Document
 
+Product direction: [Collab — everyone’s agent for getting things done together](PRODUCT-VISION.md). That document defines the full consumer, business and service-provider vision; this PRD describes the current web implementation and its delivery scope.
+
+For forward engineering requirements use [TECHNICAL-PRD.md](TECHNICAL-PRD.md); for the audited implementation and verification status use [CURRENT-STATE.md](CURRENT-STATE.md). The dated requirements and status statements below are a historical baseline and may lag subsequent code changes.
+
 Status: v1 retail completion deployed (15 Oct 2026); remaining live device and seller collection checks are in [HANDOFF.md](HANDOFF.md) · Hackathon: AI Builder Cup 2026, theme **Retail & Commerce** · Submission
 deadline **18 Oct 2026** · Live: https://collab-55.web.app · Work log and engineering handoff: [HANDOFF.md](HANDOFF.md)
 

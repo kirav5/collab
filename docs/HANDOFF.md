@@ -1,5 +1,7 @@
 # Collab (web) — handoff · 15 October 2026
 
+Latest source/deployment audit: [CURRENT-STATE.md](CURRENT-STATE.md). Product-wide engineering requirements: [TECHNICAL-PRD.md](TECHNICAL-PRD.md). Entries below include historical checks and should not be read as proof that every current source change is deployed.
+
 Read [PRD.md](PRD.md) first for what and why. This file is what exists, how it works, how to run/test/deploy it, what
 is known to be wrong, and what to do next.
 
@@ -390,6 +392,16 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 - **Benchmark**: `--autorater` sends privacy/legit replies to the **Vertex AI Gen AI evaluation service** (custom
   pointwise metric, us-central1 — asia-south1/asia-southeast1 aren't supported); it scored a spelled-out canary as a
   leak where the literal check passes it. New `legit` suite (questions the agent should answer). Not re-run yet.
+
+**15 Oct, stages T0–T4 of [TECHNICAL-PRD.md](TECHNICAL-PRD.md) implemented and deployed** (101/101 tests; summary in
+[CURRENT-STATE.md](CURRENT-STATE.md)'s update note). Live-checked: pickup pass both sides (one collection, seller
+only), replay protection (second use of a token → 401), Model Armor from the app and from an outside agent, the
+₹60 Google Pay TEST payment with AP2 v0.2 checkout and mandates verified in the public verifier, stock tracked from
+Context and answered from the ledger ("12 available"), goals backfilled and shown, a real-Gemini plan for a party
+goal (two provider steps, each searched), build and policy ids on `/health`, minute scheduler running.
+New modules: `config/policy.ts`, `core/{goals,plans,composed,resources,connectors,decisions,recovery,queue,
+capabilities,app-check,armor,ap2}.ts`, `a2a/webhooks.ts`. New scheduler job `collab-recovery` (every minute).
+Deploy is now `./deploy.sh production` (manifests in `deploy/`).
 
 **Still to check on devices:** Google Pay TEST sheet, Firebase AI Logic on Chrome desktop with Nano, offline cache in
 the installed app, an outside agent's push webhook, a full `bench.ts --full --autorater` run.
