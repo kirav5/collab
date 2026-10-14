@@ -24,6 +24,7 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { turnQueue } from "./core/queue.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
@@ -74,7 +75,8 @@ const signing = signer(env.RECEIPT_KEY, env.STORE === "memory");
 const verifySigned = (uid: string, hash: string, sig: string) => sig.startsWith("ed25519.") ? signing.verify(uid, hash, sig) : signReceipt(cfg.secret, uid, hash) === sig;
 const armor = modelArmor(env.GOOGLE_CLOUD_PROJECT, env.MODEL_ARMOR_LOCATION ?? "asia-south1", env.MODEL_ARMOR_INCOMING, env.MODEL_ARMOR_OUTGOING);
 setOutgoingScreen(armor ? armor.outgoing : null);
-const cfg = { db, model, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },
+const queue = turnQueue(env.TASKS_QUEUE, env.RUN_URL, env.TASKS_SERVICE_ACCOUNT);
+const cfg = { db, model, enqueue: queue ? queue.enqueue : undefined, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },
   screen: armor ? armor.incoming : undefined, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
 setSigner(signing.sign);
@@ -708,6 +710,15 @@ app.post("/api/inbox/:id", route(async req => {
 
 // Cloud Scheduler runs the due watches every 15 minutes. Outside /api (no App Check — it's not the web app);
 // it must carry the cron token derived from the agent secret.
+// Cloud Tasks delivers waiting agent turns here (outside /api: it isn't the web app). Only this service's own
+// account, by OIDC, may call it; it always answers 200 once checked, so a finished conversation isn't retried.
+app.post("/tasks/turns", express.json({ limit: "4kb" }), async (req, res) => {
+  if (!queue || !(await queue.verify(req.headers.authorization))) return res.status(401).json({ error: "not Cloud Tasks" });
+  const id = text(req.body?.engagementId, 40);
+  try { const e = await load(db, id); if (e.outbox) await sendTurn(cfg, e.id, null); }
+  catch (err) { log.warn("queued turn failed", { id, error: String(err).slice(0, 160) }); return res.status(500).json({ error: "retry" }); }
+  res.json({ ok: true });
+});
 export const cronToken = (secret: string) => createHmac("sha256", secret).update("collab-cron").digest("base64url");
 app.post("/cron/run", async (req, res, next) => {
   try {

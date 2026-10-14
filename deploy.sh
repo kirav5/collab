@@ -54,7 +54,7 @@ gcloud model-armor templates describe collab-outgoing "${ARMOR[@]}" >/dev/null 2
 unset CLOUDSDK_API_ENDPOINT_OVERRIDES_MODELARMOR
 
 # A new service account takes a few seconds to be usable in policies: retry until it is.
-for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin roles/firebaseappcheck.tokenVerifier roles/modelarmor.user; do
+for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin roles/firebaseappcheck.tokenVerifier roles/modelarmor.user roles/cloudtasks.enqueuer; do
   for try in 1 2 3 4 5 6; do
     gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null 2>&1 && break
     [ "$try" = 6 ] && { echo "Couldn't grant $role to $SA"; exit 1; }
@@ -64,6 +64,14 @@ done
 gcloud secrets add-iam-policy-binding agent-secret --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
 
 gcloud secrets add-iam-policy-binding receipt-key --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null
+
+# Cloud Tasks: waiting agent turns re-run on the server. The service mints OIDC tokens for itself (actAs on its own
+# account) so the handler can check the caller.
+gcloud services enable cloudtasks.googleapis.com --project "$PROJECT" >/dev/null
+gcloud tasks queues describe collab-turns --location "$REGION" --project "$PROJECT" >/dev/null 2>&1 || \
+  gcloud tasks queues create collab-turns --location "$REGION" --project "$PROJECT" --max-attempts 5 --min-backoff 5s --max-dispatches-per-second 10 >/dev/null
+gcloud iam service-accounts add-iam-policy-binding "$SA" --project "$PROJECT" --member "serviceAccount:$SA" --role roles/iam.serviceAccountUser >/dev/null
+RUN_URL_NOW=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)' 2>/dev/null || true)
 
 # Request-based billing (CPU only while a request runs); one instance kept warm so the app never waits ~3 s for a cold
 # start (MIN_INSTANCES=0 turns that off), startup CPU boost for when a second one starts, at most 2 instances caps cost.
@@ -76,7 +84,7 @@ gcloud run deploy "$SERVICE" --quiet \
   --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
   --timeout 60 \
   --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
-  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing"
+  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).
 echo "$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)" > web/version.txt

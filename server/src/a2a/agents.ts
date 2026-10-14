@@ -27,6 +27,8 @@ export const TURN = "collab.turn/v1";
 export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; secret: string; receiptKey?: object; receiptSubject?: (uid: string) => string;
   /** Signs every agent card (A2A §8.4: JWS over the JCS-canonical card); the public key is published at /public/keys. */
   cardKey?: { privateKey: KeyObject; kid: string };
+  /** Re-runs a conversation's waiting turn on the server (Cloud Tasks). */
+  enqueue?: (engagementId: string, delaySeconds?: number) => Promise<void>;
   /** Screens text arriving from other agents before any model sees it (Model Armor). */
   screen?: (text: string) => Promise<{ flagged: boolean; reason?: string }>;
   verifyIdToken: (t: string) => Promise<string> }
@@ -297,6 +299,7 @@ export async function sendTurn(cfg: A2AConfig, engagementId: string, first: Turn
   if (ran === null && first) {
     const e = await load(cfg.db, engagementId);
     if (!e.outbox) { e.outbox = first; await save(cfg.db, e); }
+    await cfg.enqueue?.(engagementId, 15);
   }
 }
 
@@ -308,7 +311,7 @@ async function runTurns(cfg: A2AConfig, engagementId: string, first: Turn | null
       const e = await load(cfg.db, engagementId);
       if (!e.requester.uid) return;
       // A request behind Firebase Hosting has 60 s: past ~35 s the next turn waits in the outbox for the next run.
-      if (Date.now() - started > 35_000) { e.outbox = turn; await save(cfg.db, e); return; }
+      if (Date.now() - started > 35_000) { e.outbox = turn; await save(cfg.db, e); await cfg.enqueue?.(engagementId); return; }
       if (e.outbox) { e.outbox = null; await save(cfg.db, e); }
       const client = await clientFor(cfg, e.provider.handle, e.requester.uid);
       const task = (await client.sendMessage({ message: message("ROLE_USER", turn, { taskId: e.taskId ?? undefined, contextId: e.contextId ?? undefined }) } as any)) as Task;
