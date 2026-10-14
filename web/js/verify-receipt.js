@@ -2,6 +2,28 @@
 const bytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 const utf8 = s => new TextEncoder().encode(s);
 const digest = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(JSON.stringify(value)))), b => b.toString(16).padStart(2, '0')).join('');
+const b64url = u8 => btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+/** RFC 8785 canonical JSON (the subset AP2 checkouts use). */
+const jcs = x => x === null || typeof x !== 'object' ? JSON.stringify(x) : Array.isArray(x) ? `[${x.map(jcs).join(',')}]`
+  : `{${Object.keys(x).filter(k => x[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${jcs(x[k])}`).join(',')}}`;
+
+/** AP2 v0.2: the seller agent's detached JWS over the checkout, and the buyer agent's SD-JWT mandates bound to it. */
+async function verifyAp2(b, key, kid, dealHash) {
+  const header = h => { try { const j = JSON.parse(new TextDecoder().decode(bytes(h))); return j.alg === 'EdDSA' && j.kid === kid; } catch { return false; } };
+  const jws = async (h, p, sig) => header(h) && crypto.subtle.verify('Ed25519', key, bytes(sig), utf8(`${h}.${p}`)).catch(() => false);
+  const canonical = jcs({ ...b.checkout, status: 'ready_for_complete' });
+  const hash = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(canonical))));
+  const [mh, , ms] = b.merchant_authorization.split('.');
+  const merchant = hash === b.checkout_hash && b.checkout.deal_hash === dealHash && await jws(mh, b64url(utf8(canonical)), ms);
+  const claims = async sd => { const [h, p, sig] = sd.replace(/~$/, '').split('.'); return (await jws(h, p, sig)) ? JSON.parse(new TextDecoder().decode(bytes(p))) : null; };
+  const cm = await claims(b.checkout_mandate), pm = await claims(b.payment_mandate), total = b.checkout.totals.total;
+  const mandates = !!cm && !!pm && cm.vct === 'ap2.CheckoutMandate' && cm.checkout_hash === b.checkout_hash && cm.checkout_id === b.checkout.id
+    && pm.vct === 'ap2.PaymentMandate' && pm.transaction_id === b.checkout_hash && pm.payee === b.checkout.merchant.agent
+    && pm.payment_amount?.value === total.value && pm.payment_amount?.currency === total.currency && pm.idempotency_key === b.idempotency_key
+    && cm.iss === b.checkout.buyer.agent && pm.iss === b.checkout.buyer.agent;
+  return { merchant, mandates };
+}
+
 export async function verifyReceiptBundle(r, trustedKey) {
   if (!trustedKey) throw new Error('A trusted public key is required to verify this receipt.');
   const key = await crypto.subtle.importKey('jwk', trustedKey, { name: 'Ed25519' }, false, ['verify']);
@@ -32,5 +54,6 @@ export async function verifyReceiptBundle(r, trustedKey) {
       payment = cart && mh === m.hash && m.cartHash === ch && m.cartId === c.id && m.amount.currency === c.total.currency && m.amount.value === c.total.value && m.payer === a[buyer].handle && m.payee === a[seller].handle && await signature(r.subjects[buyer], mh, m.payerSignature);
     }
   }
-  return { receipt, cart, payment };
+  const ap2 = r.payment?.ap2 ? await verifyAp2(r.payment.ap2, key, trustedKey.kid, hash) : null;
+  return { receipt, cart, payment, ap2 };
 }
