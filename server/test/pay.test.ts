@@ -37,7 +37,8 @@ test("a chat deal gets a seller-signed cart; only the buyer pays; tampering show
   const paid = structuredClone(agreed);
   pay(paid, "provider", sign, Math.floor(Date.now() / 1000));
   assert.equal(paid.payment?.status, "paid");
-  assert.deepEqual(paid.outcome, { requester: "happened", provider: "happened" });
+  assert.equal(paid.outcome, undefined, "paying doesn't decide whether it happened");
+  assert.equal(paid.fulfilment?.state, "not_started");
   assert.deepEqual(checkPayment(paid, verify), { cartOk: true, paymentOk: true });
 
   const forged = structuredClone(paid);

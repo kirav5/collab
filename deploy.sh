@@ -71,6 +71,9 @@ gcloud services enable cloudtasks.googleapis.com --project "$PROJECT" >/dev/null
 gcloud tasks queues describe collab-turns --location "$REGION" --project "$PROJECT" >/dev/null 2>&1 || \
   gcloud tasks queues create collab-turns --location "$REGION" --project "$PROJECT" --max-attempts 5 --min-backoff 5s --max-dispatches-per-second 10 >/dev/null
 gcloud iam service-accounts add-iam-policy-binding "$SA" --project "$PROJECT" --member "serviceAccount:$SA" --role roles/iam.serviceAccountUser >/dev/null
+# Build identity: the same id is served by the API (/health) and the web app (version.txt), so a deployment can be
+# matched to its source. "-dirty" marks uncommitted changes.
+BUILD_ID="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)$(git diff --quiet 2>/dev/null || echo -dirty)-$(date +%s)"
 RUN_URL_NOW=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)' 2>/dev/null || true)
 
 # Request-based billing (CPU only while a request runs); one instance kept warm so the app never waits ~3 s for a cold
@@ -84,10 +87,10 @@ gcloud run deploy "$SERVICE" --quiet \
   --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
   --timeout 60 \
   --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
-  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW"
+  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW##BUILD_ID=$BUILD_ID"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).
-echo "$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)" > web/version.txt
+echo "$BUILD_ID" > web/version.txt
 firebase deploy --project "$PROJECT" --only hosting,firestore --non-interactive
 
 # Scheduled agents: Cloud Scheduler runs the due watches every 15 minutes (the token is derived from the agent secret).

@@ -20,7 +20,9 @@ export interface PaymentMandate {
 }
 export interface Payment {
   cart: CartMandate; mandate?: PaymentMandate;
-  status: "awaiting" | "paid" | "outside"; mode: "test";
+  status: "awaiting" | "paying" | "paid" | "outside"; mode: "test";
+  /** The tap that claimed this payment (set atomically before anything is signed). */
+  claim?: { key: string; at: number };
   paymentId?: string; paidAt?: number; by?: Side;
   /** AP2 v0.2 checkout + mandates (added at Pay). */
   ap2?: import("./ap2.ts").Ap2Bundle;
@@ -55,7 +57,7 @@ export function cartFor(e: Engagement, sign: (uid: string, hash: string) => stri
 /** The buyer's tap: their agent signs a payment mandate against the cart; test mode settles it at once. */
 export function pay(e: Engagement, side: Side, sign: (uid: string, hash: string) => string, now: number): PaymentMandate {
   const p = e.payment;
-  if (!p || p.status !== "awaiting") throw new Error("Nothing to pay.");
+  if (!p || (p.status !== "awaiting" && p.status !== "paying")) throw new Error("Nothing to pay.");
   if (side !== buyerOf(e)) throw new Error("Only the buyer pays.");
   if (p.cart.expiresAt < now) throw new Error("This cart has expired — agree the deal again.");
   if (digest(stripCart(p.cart)) !== p.cart.hash) throw new Error("The cart doesn't match what the seller's agent signed.");
@@ -65,7 +67,8 @@ export function pay(e: Engagement, side: Side, sign: (uid: string, hash: string)
   const hash = digest(body);
   const mandate = { ...body, hash, payerSignature: sign(buyer.uid!, hash) };
   e.payment = { ...p, mandate, status: "paid", paymentId: `test_${newId()}`, paidAt: now, by: side };
-  e.outcome = { requester: "happened", provider: "happened" };
+  // Paid is not delivered: fulfilment starts now and is completed by the handover and the buyer's acceptance.
+  e.fulfilment ??= { state: "not_started" };
   return mandate;
 }
 

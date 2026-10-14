@@ -400,6 +400,15 @@ async function onClick(e) {
       document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="Pickup QR">${qr}</div><b>${p.collectedAt ? `Already collected at ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : "✓ Paid (test mode) · Not collected yet"}</b><a class="btn secondary" href="${esc(link)}">Open pickup pass</a><span class="small faint">Show this pass to the seller. Keep the link private.</span></div>`;
       return;
     }
+    if (a === "eng-delivered" || a === "eng-received") {
+      const ok = el.dataset.ok !== "0";
+      const note = a === "eng-received" && !ok ? (prompt("What went wrong? (optional)") ?? "") : "";
+      busy(el, true);
+      const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
+      live.engagements.set(e.id, e);
+      toast(a === "eng-delivered" ? "Marked delivered — the buyer will confirm." : ok ? "Thanks — the seller will see it arrived as agreed." : "Problem reported to the seller.");
+      return refresh(openScreen);
+    }
     if (a === "eng-receipt") {
       busy(el, true);
       const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);

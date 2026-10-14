@@ -128,6 +128,9 @@ export interface Engagement {
   outcome?: Partial<Record<Side, "happened" | "fell_through">>;
   /** Which side sells. Listings: the provider. A deal offered in a direct chat: whoever said they'd sell. */
   seller?: Side;
+  /** What happened after the deal, separate from payment: handed over / delivered, then accepted or disputed by the
+   *  buyer. Payment alone never marks a deal fulfilled. */
+  fulfilment?: { state: "not_started" | "delivered" | "accepted" | "disputed" | "cancelled"; deliveredAt?: number; acceptedAt?: number; note?: string };
   /** AP2: the cart the seller's agent signed, and the buyer's payment against it. */
   payment?: import("./pay.ts").Payment;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */

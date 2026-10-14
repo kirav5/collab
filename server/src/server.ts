@@ -84,7 +84,10 @@ initPush(db, env.STORE !== "memory");
 
 // MARK: - Plumbing
 
-class HttpError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
+// Stable error codes (AUTHORITY_REQUIRED, VERSION_CONFLICT, …) let clients act on routine failures without reading prose;
+// the message stays for people. Codes default from the status when a route doesn't name one.
+const CODE_BY_STATUS: Record<number, string> = { 400: "INVALID_INPUT", 401: "AUTHENTICATION_REQUIRED", 403: "AUTHORITY_REQUIRED", 404: "NOT_FOUND", 409: "VERSION_CONFLICT", 413: "TOO_LARGE", 429: "RATE_LIMITED", 503: "UNAVAILABLE" };
+class HttpError extends Error { status: number; code: string; constructor(status: number, message: string, code?: string) { super(message); this.status = status; this.code = code ?? CODE_BY_STATUS[status] ?? "ERROR"; } }
 type Handler = (req: Request & { uid: string }, res: Response) => Promise<unknown>;
 
 async function uidOf(req: Request): Promise<string> {
@@ -202,7 +205,7 @@ app.use("/api", async (req, res, next) => {
   next();
 });
 
-app.get("/health", route(async () => ({ ok: true, model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
+app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local", model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
   modelArmor: armor ? { on: true, ...armor.stats } : { on: false } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
@@ -590,6 +593,7 @@ app.post("/api/pickup/:id/collect", route(async req => {
   if (!check?.cartOk || !check.paymentOk || !(await verifyReceipt(db, e)).matches) throw new HttpError(409, "Payment or agreement cannot be verified.");
   const result = await collect(db, e, req.uid, now());
   if (result.alreadyCollected) throw new HttpError(409, `Already collected at ${new Date(result.collectedAt * 1000).toISOString()}`);
+  await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass.");
   const buyer = e[buyerOf(e)];
   if (buyer.uid) void pushTo(buyer.uid, "Collected", e.offer.title, `/?engagement=${e.id}`);
   return { collectedAt: result.collectedAt };
@@ -603,27 +607,51 @@ app.get("/api/engagements/:id/verify", route(async req => {
 // AP2, test mode: the buyer pays against the seller agent's Cart Mandate; their agent signs the Payment Mandate and
 // sends it to the seller's agent over A2A. No money moves.
 app.post("/api/engagements/:id/pay", route(async req => {
-  const e = await participant(req.uid, String(req.params.id));
-  const side = e.requester.uid === req.uid ? "requester" : "provider";
-  // Idempotent: the same tap (same key) sent twice returns the payment already made.
+  const id = String(req.params.id);
+  const before = await participant(req.uid, id);
+  const side = before.requester.uid === req.uid ? "requester" : "provider";
   const key = text(req.body?.idempotencyKey, 80).replace(/[^\w-]/g, "") || randomUUID();
-  if (e.payment?.status === "paid" && e.payment.ap2?.idempotency_key === key) return e;
+  // The same tap again returns what the first one did.
+  if (before.payment?.claim?.key === key && before.payment.status === "paid") return before;
+  if (side !== buyerOf(before)) throw new HttpError(403, "Only the buyer pays.", "AUTHORITY_REQUIRED");
   await spend(req.uid, 1);
+  // Exactly one tap claims the payment (a transaction moves awaiting → paying); a claim stuck for two minutes (a
+  // crashed request) can be taken over.
+  const t0 = now();
+  const claimable = (p: any) => p?.status === "awaiting" || (p?.status === "paying" && t0 - (p.claim?.at ?? 0) > 120);
+  const claimed = (await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur && cur.phase === "agreed" && claimable(cur.payment)
+    ? { ...cur, payment: { ...cur.payment!, status: "paying", claim: { key, at: t0 } } } : null))) as Engagement | null;
+  if (!claimed) {
+    const cur = await load(db, id);
+    if (cur.payment?.claim?.key === key) { if (cur.payment.status === "paid") return cur; throw new HttpError(409, "This payment is already in progress.", "IN_PROGRESS"); }
+    throw new HttpError(409, cur.payment?.status === "paid" ? "Already paid." : cur.payment?.status === "paying" ? "Another payment is in progress." : "Nothing to pay.", "VERSION_CONFLICT");
+  }
+  const e = claimed;
+  const release = () => db.update(ENGAGEMENTS, id, (cur: Engagement | null) => {
+    if (cur?.payment?.status !== "paying" || cur.payment.claim?.key !== key) return null;
+    const { claim: _c, ...rest } = cur.payment;
+    return { ...cur, payment: { ...rest, status: "awaiting" } };
+  });
   let mandate;
-  try { mandate = pay(e, side, signing.sign, now()); } catch (err) { throw new HttpError(400, (err as Error).message); }
-  // AP2 v0.2 shapes: a 10-minute checkout authorised by the seller's agent, and the buyer agent's Checkout and Payment
-  // Mandates (SD-JWT) bound to its hash. Google Pay (TEST environment) supplies the instrument when the buyer used it.
-  const gp = req.body?.googlePay;
-  const instrument: Ap2Instrument = gp && typeof gp.token === "string"
-    ? { id: "instr_1", type: "google_pay", environment: "TEST", network: text(gp.network, 20) || undefined, description: text(gp.description, 60) || undefined,
-        token_sha256: createHash("sha256").update(gp.token).digest("base64url") }
-    : { id: "instr_1", type: "test", environment: "TEST" };
-  const seller_ = sellerOf(e) === "requester" ? e.requester : e.provider, buyer_ = sellerOf(e) === "requester" ? e.provider : e.requester;
-  e.payment!.ap2 = await ap2Pay({ key: signing.privateKey, kid: signing.kid, base: cfg.publicUrl, now: now(), dealHash: e.payment!.cart.dealHash, idempotencyKey: key,
-    item: e.payment!.cart.items[0]?.label ?? e.title, amount: e.payment!.cart.total.value, merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
-  e.events.push({ at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" });
-  await saveEngagement(db, e);
-  const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate, ap2: { checkout_mandate: e.payment!.ap2.checkout_mandate, payment_mandate: e.payment!.ap2.payment_mandate, checkout_hash: e.payment!.ap2.checkout_hash } };
+  try {
+    mandate = pay(e, side, signing.sign, now());
+    // AP2 v0.2 shapes: a 10-minute checkout authorised by the seller's agent, and the buyer agent's Checkout and Payment
+    // Mandates (SD-JWT) bound to its hash. Google Pay (TEST environment) supplies the instrument when the buyer used it.
+    const gp = req.body?.googlePay;
+    const instrument: Ap2Instrument = gp && typeof gp.token === "string"
+      ? { id: "instr_1", type: "google_pay", environment: "TEST", network: text(gp.network, 20) || undefined, description: text(gp.description, 60) || undefined,
+          token_sha256: createHash("sha256").update(gp.token).digest("base64url") }
+      : { id: "instr_1", type: "test", environment: "TEST" };
+    const seller_ = sellerOf(e) === "requester" ? e.requester : e.provider, buyer_ = sellerOf(e) === "requester" ? e.provider : e.requester;
+    e.payment!.ap2 = await ap2Pay({ key: signing.privateKey, kid: signing.kid, base: cfg.publicUrl, now: now(), dealHash: e.payment!.cart.dealHash, idempotencyKey: key,
+      item: e.payment!.cart.items[0]?.label ?? e.title, amount: e.payment!.cart.total.value, merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
+  } catch (err) { await release(); throw new HttpError(400, (err as Error).message); }
+  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" as const };
+  // Commit only while this tap still holds the claim.
+  const committed = await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.payment?.status === "paying" && cur.payment.claim?.key === key
+    ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, events: [...cur.events, paidEvent], updatedAt: now() } : null));
+  if (!committed) throw new HttpError(409, "This payment changed while it was being made. Try again.", "VERSION_CONFLICT");
+  const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate, ap2: { checkout_mandate: e.payment!.ap2!.checkout_mandate, payment_mandate: e.payment!.ap2!.payment_mandate, checkout_hash: e.payment!.ap2!.checkout_hash } };
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
@@ -634,6 +662,41 @@ app.post("/api/engagements/:id/pay", route(async req => {
 app.post("/api/engagements/:id/cart", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (e.phase === "agreed" && !e.payment) await saveEngagement(db, e);
+  return load(db, e.id);
+}));
+// Fulfilment, separate from payment: the seller hands over (pickup pass) or marks delivered; the buyer then accepts or
+// reports a problem. Each side's report also feeds the other side's track record.
+async function markDelivered(id: string, seller: "requester" | "provider", at: number, note: string) {
+  await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => {
+    if (!cur || cur.phase !== "agreed" || ["delivered", "accepted", "disputed"].includes(cur.fulfilment?.state ?? "")) return null;
+    return { ...cur, fulfilment: { state: "delivered", deliveredAt: at, note }, outcome: { ...(cur.outcome ?? {}), [seller]: "happened" },
+      events: [...cur.events, { at, who: seller, text: note, by: "owner" }], updatedAt: at };
+  });
+}
+app.post("/api/engagements/:id/delivered", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark this delivered.", "AUTHORITY_REQUIRED");
+  if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
+  await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered.");
+  const buyer = e[buyerOf(e)];
+  if (buyer.uid) void pushTo(buyer.uid, `Delivered · ${e.title}`, "Check it and tell your agent if it's right.", `/?engagement=${e.id}`);
+  return load(db, e.id);
+}));
+app.post("/api/engagements/:id/received", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const buyer = buyerOf(e);
+  if (e[buyer].uid !== req.uid) throw new HttpError(403, "Only the buyer can accept or dispute.", "AUTHORITY_REQUIRED");
+  if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal.", "VERSION_CONFLICT");
+  const ok = req.body?.ok !== false, note = text(req.body?.note, 300);
+  const t = now();
+  await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => {
+    if (!cur || ["accepted", "disputed", "cancelled"].includes(cur.fulfilment?.state ?? "")) return null;
+    return { ...cur, fulfilment: { ...(cur.fulfilment ?? { state: "not_started" }), state: ok ? "accepted" : "disputed", acceptedAt: t, ...(note ? { note } : {}) },
+      outcome: { ...(cur.outcome ?? {}), [buyer]: ok ? "happened" : "fell_through" },
+      events: [...cur.events, { at: t, who: buyer, text: ok ? "Received it — all good." : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t };
+  });
+  const seller = e[sellerOf(e)];
+  if (seller.uid) void pushTo(seller.uid, ok ? `Accepted · ${e.title}` : `Problem reported · ${e.title}`, ok ? "The buyer confirmed it arrived as agreed." : "The buyer reported a problem.", `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Paid some other way (cash, UPI outside the app): either side can say so; it counts as the deal having gone ahead.
@@ -739,9 +802,9 @@ app.use(express.static(WEB_DIR, { setHeaders: res => res.set("cache-control", "n
 app.get(/^\/(?!api\/|a2a\/).*/, (_, res) => res.sendFile(`${WEB_DIR}/index.html`));
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
-  if (err instanceof Problem) return res.status(400).json({ error: err.message });
-  if (err instanceof Refused) return res.status(403).json({ error: err.message });
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code });
+  if (err instanceof Problem) return res.status(400).json({ error: err.message, code: "INVALID_INPUT" });
+  if (err instanceof Refused) return res.status(403).json({ error: err.message, code: "AUTHORITY_REQUIRED" });
   log.error("unhandled", err, { path: _req.path });
   res.status(500).json({ error: "something went wrong" });
 });

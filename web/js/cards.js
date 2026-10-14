@@ -263,12 +263,24 @@ function dealBlock(e, mine) {
   else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.negotiation.deal.price}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
       <span class="small faint">AP2 test mode: your agent signs a payment against the cart ${them}'s agent signed. No money moves.</span>`;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
+  // After payment: handover / delivery, then the buyer's acceptance — tracked apart from the payment.
+  const f = e.fulfilment?.state ?? (p?.status === "paid" || p?.status === "outside" ? "not_started" : null);
+  let fulfil = "";
+  if (f === "accepted") fulfil = `<span class="small" style="color:var(--fresh)">✓ ${mine === buyer ? "You" : them} confirmed it arrived as agreed</span>`;
+  else if (f === "disputed") fulfil = `<span class="small" style="color:var(--danger)">⚠ ${mine === buyer ? "You" : them} reported a problem${e.fulfilment?.note ? `: “${esc(e.fulfilment.note)}”` : ""}</span>`;
+  else if (f === "delivered") fulfil = mine === buyer
+    ? `<div class="row"><span class="small muted">${them} handed it over.</span><button class="btn accent compact" data-act="eng-received" data-id="${id}" data-ok="1">Received it ✓</button><button class="btn quiet compact" data-act="eng-received" data-id="${id}" data-ok="0">Report a problem</button></div>`
+    : `<span class="small muted">✓ Delivered · waiting for ${them} to confirm</span>`;
+  else if (f === "not_started") fulfil = mine === seller
+    ? `<div class="row"><span class="small muted">Hand it over with the pickup pass, or</span><button class="btn secondary compact" data-act="eng-delivered" data-id="${id}">Mark delivered</button></div>`
+    : `<span class="small muted">Waiting for ${them} to hand it over — show your pickup pass.</span>`;
   const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
     : p?.status === "paid" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
     <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you sell" : "you buy"}</span></div>
     ${pay}
-    ${p?.status === "paid" ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">Pickup pass</button></div>` : ""}
+    ${fulfil}
+    ${p?.status === "paid" && !["accepted", "disputed"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">Pickup pass</button></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
   </div>`;
 }

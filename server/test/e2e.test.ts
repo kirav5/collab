@@ -170,8 +170,20 @@ test('shop QR destination → ask → follow-up → offer → confirm → pay �
   e = await as('retail-shop', `/api/engagements/${e.id}/ask`, { text: "I'll sell the steel bottle for ₹100" });
   const confirmation = (await as('retail-buyer', '/api/inbox')).find((i: any) => i.engagementId === e.id && i.kind === 'confirm');
   assert.ok(confirmation); await as('retail-buyer', `/api/inbox/${confirmation.id}`, { confirm: true });
-  e = await as('retail-buyer', `/api/engagements/${e.id}/pay`, {});
+  // Two different taps at once: exactly one pays; the same tap again returns the same payment; the seller can't pay.
+  const payRaw = (uid: string, key: string) => fetch(B + `/api/engagements/${e.id}/pay`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer dev:${uid}` }, body: JSON.stringify({ idempotencyKey: key }) });
+  assert.equal((await payRaw('retail-shop', 'seller-tap')).status, 403);
+  const taps = await Promise.all([payRaw('retail-buyer', 'tap-a'), payRaw('retail-buyer', 'tap-b')]);
+  assert.deepEqual(taps.map(r => r.status).sort(), [200, 409]);
+  const winner = taps[0].status === 200 ? 'tap-a' : 'tap-b';
+  const first = await as('retail-buyer', `/api/engagements/${e.id}`);
+  const again = await (await payRaw('retail-buyer', winner)).json();
+  assert.equal(again.payment.paymentId, first.payment.paymentId, 'same tap, same payment');
+  e = first;
   assert.equal(e.payment.status, 'paid');
+  // Paid is not delivered: fulfilment waits for the handover, and nobody's outcome is decided by payment.
+  assert.equal(e.fulfilment.state, 'not_started');
+  assert.equal(e.outcome, undefined);
   const pass = await as('retail-buyer', `/api/engagements/${e.id}/pickup`);
   const code = pass.path.split('.html#')[1].split('.')[1];
   const publicPath = `/public/pickup/${e.id}?code=${code}`;
@@ -185,6 +197,13 @@ test('shop QR destination → ask → follow-up → offer → confirm → pay �
   assert.deepEqual(simultaneous.map(r => r.status).sort(), [200, 409]);
   checked = await (await fetch(B + publicPath)).json(); assert.ok(checked.collectedAt);
   assert.equal((await collect('retail-shop')).status, 409);
+  // Handover marks it delivered (the seller's side); the buyer's acceptance completes it.
+  let after = await as('retail-buyer', `/api/engagements/${e.id}`);
+  assert.equal(after.fulfilment.state, 'delivered');
+  await assert.rejects(as('retail-shop', `/api/engagements/${e.id}/received`, { ok: true }));
+  after = await as('retail-buyer', `/api/engagements/${e.id}/received`, { ok: true });
+  assert.equal(after.fulfilment.state, 'accepted');
+  assert.deepEqual(after.outcome, { requester: 'happened', provider: 'happened' });
   const r = await as('retail-buyer', `/api/engagements/${e.id}/receipt`);
   const receiptCode = r.verifyPath.split('.html#')[1].split('.')[1];
   const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${receiptCode}`)).json();
