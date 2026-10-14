@@ -58,6 +58,10 @@ export async function load(db: Docs, id: string): Promise<Engagement> {
   return e;
 }
 
+// Model Armor's check on answers about to be shared (set by the server; absent in tests and offline).
+let outgoingScreen: ((text: string) => Promise<{ flagged: boolean; reason?: string }>) | null = null;
+export const setOutgoingScreen = (fn: typeof outgoingScreen) => { outgoingScreen = fn; };
+
 // The agents' signing key (set by the server at start): AP2 mandates are signed per agent, like deal receipts.
 let signer: ((uid: string, hash: string) => string) | null = null;
 export const setSigner = (fn: (uid: string, hash: string) => string) => { signer = fn; };
@@ -169,6 +173,8 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
   const toName = s === "provider" ? e.requester.name : e.provider.name;
   for (const q of e.qa.filter(q => q.from === other(s) && q.status === "open")) {
     const a = await answerAs(db, model, e, s, q);
+    // An answer Model Armor finds sensitive data in isn't sent: the owner checks it first.
+    if (a && !a.review && outgoingScreen && (await outgoingScreen(a.text)).flagged) a.review = true;
     if (a && !a.review) {
       q.answer = clean(a.text, names, [toName]);
       q.source = a.src;

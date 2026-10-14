@@ -1,6 +1,6 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
-const FB = "https://www.gstatic.com/firebasejs/12.4.0";
+const FB = "https://www.gstatic.com/firebasejs/12.14.0";
 export const session = { pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
@@ -73,12 +73,12 @@ export async function signIn() {
     // App Check (reCAPTCHA Enterprise): the server can tell its own web app from scripts calling the API. It runs on
     // its own Firebase app instance so sign-in doesn't wait for reCAPTCHA (Auth would otherwise attach a token to
     // every call): the two run side by side, and API calls wait for the token only if it isn't ready yet.
-    const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken }) => {
+    const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, getLimitedUseToken }) => {
       const ac = initializeAppCheck(initializeApp(config, `check-${as ?? "main"}`), { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
       getToken(ac, false).catch(() => {});
-      return async () => (await getToken(ac, false)).token;
+      return async (limited = false) => (await (limited ? getLimitedUseToken(ac) : getToken(ac, false))).token;
     }).catch(() => null) : null;
-    if (appCheck) session.appCheck = async () => { const get = await appCheck; return get ? get() : null; };
+    if (appCheck) session.appCheck = async (limited = false) => { const get = await appCheck; return get ? get(limited) : null; };
     const auth = getAuth(app);
     // Returning from a Google redirect (used where pop-ups don't work, like some installed apps).
     await getRedirectResult(auth).catch(async e => {
@@ -137,7 +137,17 @@ export async function signIn() {
 export async function api(path, body) {
   const headers = { "content-type": "application/json" };
   if (session.token) headers.authorization = `Bearer ${await session.token()}`;
-  if (session.appCheck) { try { const t = await session.appCheck(); if (t) headers["x-firebase-appcheck"] = t; } catch { /* sent without */ } }
+  const limited = body !== undefined && (path === "/api/price-check"
+    || /^\/api\/engagements\/[^/]+\/pay$/.test(path)
+    || /^\/api\/pickup\/[^/]+\/collect$/.test(path));
+  if (session.appCheck) {
+    try {
+      const t = await session.appCheck(limited);
+      if (!t && limited) throw new Error("No limited-use token was returned.");
+      if (t) headers["x-firebase-appcheck"] = t;
+    }
+    catch (e) { if (limited) throw new Error("Could not verify this app for the action. Please try again.", { cause: e }); }
+  }
   const res = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; throw e; }

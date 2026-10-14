@@ -42,7 +42,7 @@ for group in rate leases; do
 done
 
 # A new service account takes a few seconds to be usable in policies: retry until it is.
-for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin; do
+for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin roles/firebaseappcheck.tokenVerifier; do
   for try in 1 2 3 4 5 6; do
     gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null 2>&1 && break
     [ "$try" = 6 ] && { echo "Couldn't grant $role to $SA"; exit 1; }

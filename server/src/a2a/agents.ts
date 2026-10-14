@@ -5,10 +5,10 @@
 // The provider side is an AgentExecutor (providerTurn). The requester side is an A2A client (requesterTurn): our
 // users' agents talk to each other over real A2A calls, and any other A2A agent can talk to ours — an agent that
 // doesn't sign in is a stranger and gets Public facts only.
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual, type KeyObject } from "node:crypto";
 import express, { type Router } from "express";
-import { AgentCard, Message, Task, TaskState } from "@a2a-js/sdk";
-import { AgentEvent, DefaultRequestHandler, type AgentExecutor, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
+import { AgentCard, Message, Task, TaskState, generateAgentCardSignature, type TaskPushNotificationConfig } from "@a2a-js/sdk";
+import { AgentEvent, DefaultPushNotificationSender, DefaultRequestHandler, type AgentExecutor, type PushNotificationStore, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
 import { agentCardHandler, jsonRpcHandler } from "@a2a-js/sdk/server/express";
 import { ClientFactory, JsonRpcTransportFactory, type Client } from "@a2a-js/sdk/client";
 import type { Model } from "../ai/gemini.ts";
@@ -24,7 +24,12 @@ import { pushTo } from "../core/push.ts";
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
 
-export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; secret: string; receiptKey?: object; receiptSubject?: (uid: string) => string; verifyIdToken: (t: string) => Promise<string> }
+export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; secret: string; receiptKey?: object; receiptSubject?: (uid: string) => string;
+  /** Signs every agent card (A2A §8.4: JWS over the JCS-canonical card); the public key is published at /public/keys. */
+  cardKey?: { privateKey: KeyObject; kid: string };
+  /** Screens text arriving from other agents before any model sees it (Model Armor). */
+  screen?: (text: string) => Promise<{ flagged: boolean; reason?: string }>;
+  verifyIdToken: (t: string) => Promise<string> }
 
 // MARK: - Who is calling
 
@@ -71,6 +76,41 @@ class FirestoreTaskStore implements TaskStore {
   async list() { return { tasks: [], nextPageToken: "", pageSize: 0, totalSize: 0 } as any; }
 }
 
+// MARK: - Push notifications (A2A)
+
+const PUSH_CONFIGS = "a2a_push";
+
+/** Webhooks must be public https URLs: no IP literals, localhost or internal names (the server must not be used to
+ *  reach its own network). */
+export function safeWebhook(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" || u.username || u.password) return false;
+    const h = u.hostname.toLowerCase();
+    if (/^\[?[0-9a-f:.]+\]?$/.test(h) || !h.includes(".")) return false;
+    return !/(^|\.)(localhost|internal|local|localdomain|metadata\.google\.internal|goog)$/.test(h);
+  } catch { return false; }
+}
+
+/** Push configs in Firestore, scoped to the caller that registered them (every instance can send them). */
+class FirestorePushStore implements PushNotificationStore {
+  db: Docs;
+  constructor(db: Docs) { this.db = db; }
+  async save(taskId: string, context: ServerCallContext, c: TaskPushNotificationConfig) {
+    if (!safeWebhook(c.url)) throw new Error("Push webhook must be a public https URL.");
+    if (!c.id) c.id = randomUUID();
+    await this.db.set(PUSH_CONFIGS, `${taskId}:${c.id}`.slice(0, 200), { taskId, caller: callerOf(context), config: { ...c, taskId }, at: Date.now() });
+  }
+  async load(taskId: string, context: ServerCallContext): Promise<TaskPushNotificationConfig[]> {
+    const rows = (await this.db.find(PUSH_CONFIGS, [["taskId", "==", taskId]], 20)) as { caller: string | null; config: TaskPushNotificationConfig }[];
+    return rows.filter(r => r.caller === callerOf(context)).map(r => r.config).filter(c => safeWebhook(c.url));
+  }
+  async delete(taskId: string, context: ServerCallContext, configId?: string) {
+    for (const c of await this.load(taskId, context)) if (!configId || c.id === configId) await this.db.delete(PUSH_CONFIGS, `${taskId}:${c.id}`.slice(0, 200));
+  }
+}
+let pushSender: DefaultPushNotificationSender | null = null;
+
 // MARK: - Agent cards
 
 async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
@@ -81,7 +121,9 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     version: "1.0.0",
     supportedInterfaces: [{ url: `${cfg.publicUrl}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }],
     provider: { organization: "Collab Market", url: cfg.publicUrl },
-    capabilities: { streaming: false, pushNotifications: false,
+    // Streaming: SendStreamingMessage / SubscribeToTask over SSE. Push: an outside agent registers an https webhook and
+    // hears when this agent's owner answers, which can be hours later.
+    capabilities: { streaming: true, pushNotifications: true,
       extensions: [{ uri: "https://github.com/google-agentic-commerce/AP2/tree/v0.1",
         description: "Agentic Payments Protocol roles: merchant (this agent's Public offerings) and shopper (requests it sends). After a deal both owners confirmed, the seller's agent issues a signed Cart Mandate and the buyer's agent sends a signed Payment Mandate for it in a collab.turn/v1 data part (test mode: no money moves).",
         required: false, params: { roles: ["merchant", "shopper"], mode: "test", conformance: "AP2-inspired custom v0.1 flow", publicKey: cfg.receiptKey, subject: cfg.receiptSubject?.(p.uid) } }] },
@@ -167,6 +209,19 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
       }
       e.taskId = ctx.taskId;
       e.contextId = ctx.contextId;
+      // A streaming caller sees this at once; the answer follows when the agent has worked it out.
+      if (!ctx.task) bus.publish(AgentEvent.task({ id: ctx.taskId, contextId: ctx.contextId, status: { state: TaskState.TASK_STATE_SUBMITTED, message: undefined, timestamp: new Date().toISOString() }, artifacts: [], history: [ctx.userMessage], metadata: { engagementId: e.id } }));
+      bus.publish(AgentEvent.statusUpdate({ taskId: ctx.taskId, contextId: ctx.contextId,
+        status: { state: TaskState.TASK_STATE_WORKING, message: message("ROLE_AGENT", { kind: TURN, from: "provider", engagementId: e.id }, { taskId: ctx.taskId, contextId: ctx.contextId }), timestamp: new Date().toISOString() }, metadata: { engagementId: e.id } } as any));
+      // Model Armor: text from the other agent is screened before any model sees it. A flagged question is not
+      // answered (it's declined and logged); a flagged request is reduced to its title.
+      const flagged: string[] = [];
+      if (cfg.screen && t) {
+        for (const q of t.questions ?? []) if ((await cfg.screen(q.question)).flagged) flagged.push(q.question);
+        if (flagged.length) t.questions = (t.questions ?? []).filter(q => !flagged.includes(q.question));
+        if (t.brief && (await cfg.screen(`${t.brief.title}\n${t.brief.summary}`)).flagged) { flagged.push(t.brief.summary); t.brief = { ...t.brief, summary: t.brief.title, questions: [] }; }
+        for (const a of t.answers ?? []) if ((await cfg.screen(a.answer)).flagged) { flagged.push(a.answer); a.answer = "(withheld: flagged by Model Armor)"; }
+      }
       // One provider turn at a time per conversation, across every instance.
       const current = e;
       const reply = await withLease(cfg.db, `eng:${e.id}:provider`, 50_000, async () => {
@@ -175,7 +230,11 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
         return r;
       });
       if (!reply) throw new Error("This conversation is busy — try again in a moment.");
-      if (!ctx.task) bus.publish(AgentEvent.task({ id: ctx.taskId, contextId: ctx.contextId, status: { state: TaskState.TASK_STATE_SUBMITTED, message: undefined, timestamp: new Date().toISOString() }, artifacts: [], history: [ctx.userMessage], metadata: { engagementId: e.id } }));
+      if (flagged.length) {
+        (reply.declined ??= []).push(...flagged.filter(f => (t?.questions ?? []).every(q => q.question !== f)).slice(0, 4));
+        current.events.push({ at: Math.floor(Date.now() / 1000), who: "system", text: `Model Armor flagged ${flagged.length} message${flagged.length === 1 ? "" : "s"} from ${current.requester.name}'s agent as a prompt-injection attempt; ${flagged.length === 1 ? "it was" : "they were"} not answered.` });
+        await save(cfg.db, current);
+      }
       bus.publish(AgentEvent.statusUpdate({ taskId: ctx.taskId, contextId: ctx.contextId,
         status: { state: stateOf(e), message: message("ROLE_AGENT", reply, { taskId: ctx.taskId, contextId: ctx.contextId }), timestamp: new Date().toISOString() }, metadata: { engagementId: e.id } } as any));
       bus.finished();
@@ -190,6 +249,10 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
 export function a2aRouter(cfg: A2AConfig): { router: Router; store: TaskStore } {
   const store = new FirestoreTaskStore(cfg.db);
   const handlers = new Map<string, DefaultRequestHandler>();
+  const pushStore = new FirestorePushStore(cfg.db);
+  pushSender = new DefaultPushNotificationSender(pushStore, { timeout: 5000 });
+  const signCard = cfg.cardKey ? generateAgentCardSignature(cfg.cardKey.privateKey, { alg: "EdDSA", kid: cfg.cardKey.kid, typ: "JOSE", jku: `${cfg.publicUrl}/public/keys` }) : null;
+  const signedCard = async (p: Profile) => { const c = await cardFor(cfg, p); return signCard ? signCard(c) : c; };
   const router = express.Router({ mergeParams: true });
   const userBuilder = async (req: express.Request) => {
     const ip = clientIp(req);
@@ -209,10 +272,10 @@ export function a2aRouter(cfg: A2AConfig): { router: Router; store: TaskStore } 
     const p = await byHandle(cfg.db, req.params.handle).catch(() => null);
     if (!p) { res.status(404).json({ error: "no such agent" }); return; }
     let h = handlers.get(p.uid);
-    if (!h) handlers.set(p.uid, h = new DefaultRequestHandler(await cardFor(cfg, p), store, executorFor(cfg, p)));
+    if (!h) handlers.set(p.uid, h = new DefaultRequestHandler(await signedCard(p), store, executorFor(cfg, p), undefined, pushStore, pushSender!, undefined, signCard ?? undefined));
     const inner = express.Router();
     // The handler sends what the provider returns as is: the card in its wire (ProtoJSON) form.
-    inner.use("/.well-known/agent-card.json", agentCardHandler({ agentCardProvider: async () => AgentCard.toJSON(await cardFor(cfg, p)) as any, cache: { maxAge: 60 } }));
+    inner.use("/.well-known/agent-card.json", agentCardHandler({ agentCardProvider: async () => AgentCard.toJSON(await signedCard(p)) as any, cache: { maxAge: 60 } }));
     inner.use("/", jsonRpcHandler({ requestHandler: h, userBuilder }));
     inner(req, res, next);
   });
@@ -278,6 +341,8 @@ export async function deliverProviderTurn(cfg: A2AConfig, store: TaskStore, enga
   task.history = [...task.history, ...(task.status?.message ? [task.status.message] : [])];
   task.status = { state: stateOf(e), message: msg, timestamp: new Date().toISOString() };
   await store.save(task, ctx);
+  // An outside agent that registered a webhook hears about it now (our own agents read the task below).
+  void pushSender?.send({ payload: { $case: "statusUpdate", value: { taskId: e.taskId, contextId: e.contextId ?? "", status: task.status, metadata: { engagementId: e.id } } } } as any, ctx, task).catch(() => {});
   if (!e.requester.uid) return;
   const client = await clientFor(cfg, e.provider.handle, e.requester.uid);
   const fresh = (await client.getTask({ id: e.taskId } as any)) as Task;

@@ -1,6 +1,6 @@
 // Collab's service worker: the app shell works offline (pages and code are cached; the API and A2A never are), and
 // Firebase Cloud Messaging delivers "your agent needs you" while the app is closed.
-const SHELL = "collab-shell-v3";
+const SHELL = "collab-shell-v4";
 const FILES = ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/icon-192.png",
   "/js/app.js", "/js/api.js", "/js/agent.js", "/js/cards.js", "/js/live.js", "/js/local.js", "/js/screens.js", "/js/ui.js", "/js/version.js"];
 
@@ -28,7 +28,7 @@ self.addEventListener("fetch", e => {
 
 // Push: Firebase Hosting serves the SDK and this project's config at /__/firebase/…; elsewhere (local) push is off.
 try {
-  importScripts("/__/firebase/12.4.0/firebase-app-compat.js", "/__/firebase/12.4.0/firebase-messaging-compat.js", "/__/firebase/init.js");
+  importScripts("/__/firebase/12.14.0/firebase-app-compat.js", "/__/firebase/12.14.0/firebase-messaging-compat.js", "/__/firebase/init.js");
   firebase.messaging();
 } catch { /* no push here */ }
 

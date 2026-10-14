@@ -22,8 +22,10 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setSigner, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
+import { modelArmor } from "./core/armor.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
+import { replayProtected, verifyAppCheckToken } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, pay, sellerOf } from "./core/pay.ts";
@@ -68,7 +70,10 @@ async function verifyIdToken(token: string): Promise<string> {
 
 const signing = signer(env.RECEIPT_KEY, env.STORE === "memory");
 const verifySigned = (uid: string, hash: string, sig: string) => sig.startsWith("ed25519.") ? signing.verify(uid, hash, sig) : signReceipt(cfg.secret, uid, hash) === sig;
-const cfg = { db, model, receiptKey: signing.publicKey, receiptSubject: signing.subject, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
+const armor = modelArmor(env.GOOGLE_CLOUD_PROJECT, env.MODEL_ARMOR_LOCATION ?? "asia-south1", env.MODEL_ARMOR_INCOMING, env.MODEL_ARMOR_OUTGOING);
+setOutgoingScreen(armor ? armor.outgoing : null);
+const cfg = { db, model, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },
+  screen: armor ? armor.incoming : undefined, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
 setSigner(signing.sign);
 initPush(db, env.STORE !== "memory");
@@ -159,10 +164,14 @@ app.use("/api", express.json({ limit: "128kb" }));
 // App Check: calls to the API come from our own web app. "monitor" logs what would be refused; "enforce" refuses.
 // (A2A at /a2a stays open to any agent — that's the point of it — and is rate-limited instead.)
 const APPCHECK = env.APPCHECK ?? "off";
-let appCheck: ((t: string) => Promise<unknown>) | null = null;
+let consumeUnavailable = false;
+let appCheck: ((t: string, options?: { consume: boolean }) => Promise<{ alreadyConsumed?: boolean }>) | null = null;
 app.use("/api", async (req, res, next) => {
   if (APPCHECK === "off" || req.path === "/config") return next();
   const token = req.headers["x-firebase-appcheck"];
+  // Consuming a token needs a network call and the Token Verifier IAM role. Do it only for sensitive writes when
+  // enforcement is on; monitor mode keeps working with ordinary cached tokens.
+  const consume = APPCHECK === "enforce" && replayProtected(req.method, req.path);
   let ok = false;
   if (typeof token === "string" && token) {
     try {
@@ -170,19 +179,27 @@ app.use("/api", async (req, res, next) => {
         const { initializeApp, getApps } = await import("firebase-admin/app");
         const { getAppCheck } = await import("firebase-admin/app-check");
         if (!getApps().length) initializeApp();
-        appCheck = t => getAppCheck().verifyToken(t);
+        appCheck = (t, options) => getAppCheck().verifyToken(t, options);
       }
-      await appCheck(token);
-      ok = true;
+      try { ok = await verifyAppCheckToken(token, consume && !consumeUnavailable, appCheck); }
+      catch (e) {
+        // Without roles/firebaseappcheck.tokenVerifier tokens can't be consumed: check them the normal way rather
+        // than refusing every payment, and say so once in the log.
+        if (!consume || !/permission|PERMISSION_DENIED|403|forbidden/i.test(String(e))) throw e;
+        consumeUnavailable = true;
+        log.error("app check replay protection unavailable: grant roles/firebaseappcheck.tokenVerifier", { error: String(e).slice(0, 160) });
+        ok = await verifyAppCheckToken(token, false, appCheck);
+      }
     } catch { ok = false; }
   }
   if (ok) return next();
-  log.warn("app check failed", { path: req.path, mode: APPCHECK, hadToken: typeof token === "string" });
-  if (APPCHECK === "enforce") return res.status(401).json({ error: "Please use the Collab app (app check failed)." });
+  log.warn("app check failed", { path: req.path, mode: APPCHECK, hadToken: typeof token === "string", replayProtected: consume });
+  if (APPCHECK === "enforce") return res.status(401).json({ error: consume ? "This action needs a fresh app check. Please try again." : "Please use the Collab app (app check failed)." });
   next();
 });
 
-app.get("/health", route(async () => ({ ok: true, model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>` }), false));
+app.get("/health", route(async () => ({ ok: true, model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
+  modelArmor: armor ? { on: true, ...armor.stats } : { on: false } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
