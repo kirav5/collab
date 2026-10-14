@@ -24,6 +24,8 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { advancePlan, planGoal } from "./core/plans.ts";
+import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
 import { getSafe } from "./a2a/webhooks.ts";
 import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
@@ -226,8 +228,10 @@ app.get("/api/goals", route(async req => {
   return Promise.all(gs.map(g => goalView(db, g)));
 }));
 app.get("/api/goals/:id", route(async req => {
-  const g = (await db.get(GOALS, String(req.params.id))) as Goal | null;
+  let g = (await db.get(GOALS, String(req.params.id))) as Goal | null;
   if (!g || g.owner !== req.uid) throw new HttpError(404, "goal not found");
+  if (g.plan?.length) { await advancePlan(db, model, g, ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null, now()); g = (await db.get(GOALS, g.id)) as Goal; }
+  if (g.allOrNothing && !g.compensation && (await compensate(db, g, now()))) g = (await db.get(GOALS, g.id)) as Goal;
   return goalView(db, g);
 }));
 app.post("/api/goals", route(async req => {
@@ -238,6 +242,38 @@ app.post("/api/goals", route(async req => {
   const amount = num(req.body?.budget?.amount, 1, 1e9), currency = text(req.body?.budget?.currency, 3).toUpperCase() || policy().money.defaultCurrency;
   if (amount && !policy().money.currencies.includes(currency)) throw new HttpError(400, `Budgets in ${currency} aren't supported.`, "UNSUPPORTED_CURRENCY");
   return goalView(db, await createGoal(db, req.uid, outcome, kind, amount ? { amount, currency } : null, now()));
+}));
+// Plans: split a goal into steps (several providers, in order); ready steps search, the owner chooses whom to ask.
+app.post("/api/goals/:id/plan", route(async req => {
+  const g = (await db.get(GOALS, String(req.params.id))) as Goal | null;
+  if (!g || g.owner !== req.uid) throw new HttpError(404, "goal not found");
+  await spend(req.uid, 4);
+  await planGoal(db, model, g, now());
+  const here = ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
+  await advancePlan(db, model, (await db.get(GOALS, g.id)) as Goal, here, now());
+  return goalView(db, (await db.get(GOALS, g.id)) as Goal);
+}));
+app.get("/api/goals/:id/steps/:step/matches", route(async req => {
+  const g = (await db.get(GOALS, String(req.params.id))) as Goal | null;
+  const step = g?.owner === req.uid ? g.plan?.find(s => s.id === String(req.params.step)) : null;
+  if (!step?.briefId) throw new HttpError(404, "That step hasn't searched yet.", "NOT_FOUND");
+  const b = (await db.get(BRIEFS, step.briefId)) as Brief | null;
+  if (!b) throw new HttpError(404, "request not found");
+  return { briefId: b.id, ...(await search(db, model, b, req.uid)) };
+}));
+// Recurring goals and all-or-nothing settings.
+app.post("/api/goals/:id/recurrence", route(async req => {
+  const every = num(req.body?.everyDays, 1, 90), days = num(req.body?.days, 1, 365) ?? 90;
+  const g = await db.update(GOALS, String(req.params.id), (cur: Goal | null) => (cur && cur.owner === req.uid
+    ? { ...cur, recurrence: every ? { everyDays: every, nextAt: now() + every * 86_400, until: now() + days * 86_400, rounds: 0, stopped: null } : null, revision: cur.revision + 1, updatedAt: now() } : null));
+  if (!g) throw new HttpError(404, "goal not found");
+  return goalView(db, g);
+}));
+app.post("/api/goals/:id/settings", route(async req => {
+  const g = await db.update(GOALS, String(req.params.id), (cur: Goal | null) => (cur && cur.owner === req.uid
+    ? { ...cur, allOrNothing: !!req.body?.allOrNothing, revision: cur.revision + 1, updatedAt: now() } : null));
+  if (!g) throw new HttpError(404, "goal not found");
+  return goalView(db, g);
 }));
 // A goal's budget across all its deals; it can't be set below what's already committed.
 app.post("/api/goals/:id/budget", route(async req => {
@@ -990,7 +1026,20 @@ app.post("/cron/run", async (req, res, next) => {
     // Connected calendars refresh every run; a feed that fails leaves its grant degraded and its data going stale.
     const calendars = ((await db.find(GRANTS, [["provider", "==", "ical"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked");
     const synced = (await Promise.all(calendars.map(g => syncIcal(db, g, url => getSafe(url), now())))).filter(x => x.synced).length;
-    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced } });
+    // Planned goals move on when a step's dependency is done (searching only — nothing is committed).
+    const planned = ((await db.find(GOALS, [["closed", "==", null]], 100)) as Goal[]).filter(g => g.plan?.some(st => st.state !== "done" && st.state !== "failed")).slice(0, 25);
+    for (const g of planned) await advancePlan(db, model, g, ((await db.get(PROFILES, g.owner)) as Profile | null)?.area ?? null, now()).catch(err => log.warn("plan advance failed", { goal: g.id, error: String(err).slice(0, 120) }));
+    // Recurring goals (search, notify — never buy) and all-or-nothing compensation.
+    const open_ = (await db.find(GOALS, [["closed", "==", null]], 200)) as Goal[];
+    let rounds = 0, compensated = 0;
+    for (const g of open_) {
+      if (g.recurrence && !g.recurrence.stopped && g.recurrence.nextAt <= now()) {
+        const here = ((await db.get(PROFILES, g.owner)) as Profile | null)?.area ?? null;
+        if ((await runRecurrence(db, model, g, here, now(), (goal, text) => pushTo(goal.owner, `Time for: ${goal.outcome}`, text, "/?screen=requests").then(() => {}))).ran) rounds++;
+      }
+      if (g.allOrNothing && !g.compensation && (await compensate(db, g, now()))) compensated++;
+    }
+    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, plans: planned.length, rounds, compensated });
     res.json({ ...r, recovered, calendars: { total: calendars.length, synced } });
   } catch (e) { next(e); }
 });

@@ -22,6 +22,14 @@ export interface Goal {
   taskIds: string[];
   /** Money committed against the budget, one entry per confirmed deal (released if the deal lapses or ends). */
   allocations?: { engagementId: string; amount: number; currency: string; at: number }[];
+  /** Repeat the search each period (never buying on its own), within the goal's budget, until `until`. */
+  recurrence?: { everyDays: number; nextAt: number; until: number; rounds: number; stopped: string | null } | null;
+  /** All-or-nothing: if any part fails, the others' holds and unpaid deals are released (see compensate). */
+  allOrNothing?: boolean;
+  /** What compensation did, once. */
+  compensation?: { at: number; released: string[]; cancelled: string[]; paidNeedsOwner: string[] } | null;
+  /** Several providers in order (see core/plans.ts). */
+  plan?: import("./plans.ts").PlanStep[];
   /** Set by the owner; a goal they closed stays closed. */
   closed: "cancelled" | null;
   createdAt: number; updatedAt: number;
@@ -67,6 +75,14 @@ export function taskOf(e: Engagement, ownerUid: string): TaskView {
 /** A goal's state from its tasks (and the owner's own decision to close it). */
 export function goalState(g: Goal, tasks: TaskView[]): GoalState {
   if (g.closed) return g.closed;
+  // A planned goal is done when every step is; some done and the rest failed is partial.
+  if (g.plan?.length) {
+    const st = g.plan.map(s => s.state);
+    if (st.every(x => x === "done")) return "completed";
+    if (st.every(x => x === "done" || x === "failed")) return st.some(x => x === "done") ? "partially_completed" : "failed";
+    if (st.includes("searched") || tasks.some(t => t.waitingOn === "you")) return "waiting";
+    return "active";
+  }
   if (!tasks.length) return "draft";
   const done = (t: TaskView) => ["succeeded", "failed", "cancelled"].includes(t.state);
   if (tasks.every(done)) {
