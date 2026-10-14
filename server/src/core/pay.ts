@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { sealed } from "./deals.ts";
 import type { Engagement, Side } from "./model.ts";
 import { newId } from "../market/types.ts";
+import { policy } from "../config/policy.ts";
 
 export interface CartMandate {
   type: "ap2.CartMandate"; id: string; dealHash: string;
@@ -49,7 +50,7 @@ export function cartFor(e: Engagement, sign: (uid: string, hash: string) => stri
   const body = { type: "ap2.CartMandate" as const, id: newId(), dealHash: sealed(e).hash,
     merchant: { handle: seller.handle, name: seller.name }, buyer: { handle: buyer.handle, name: buyer.name },
     items: [{ label: e.offer.title || e.title, amount: e.negotiation.deal.price }], total: { currency: "INR" as const, value: e.negotiation.deal.price },
-    createdAt: now, expiresAt: now + 7 * 86_400 };
+    createdAt: now, expiresAt: now + policy().timing.cartValidityDays * 86_400 };
   const hash = digest(body);
   return { ...body, hash, merchantSignature: sign(seller.uid, hash) };
 }

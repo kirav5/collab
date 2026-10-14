@@ -24,12 +24,13 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
 import { recoverOutbox } from "./core/recovery.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
-import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
+import { checkPrice, PriceCheckError, PRICE_CHECKS, quotaStatus } from "./core/price-check.ts";
 import { appCheckDecision, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
@@ -75,6 +76,9 @@ async function verifyIdToken(token: string): Promise<string> {
 
 const signing = signer(env.RECEIPT_KEY, env.STORE === "memory");
 const verifySigned = (uid: string, hash: string, sig: string) => sig.startsWith("ed25519.") ? signing.verify(uid, hash, sig) : signReceipt(cfg.secret, uid, hash) === sig;
+// Operational policy: validated at start (an invalid policy stops the server), hashed for /health and task records.
+setPolicy(loadPolicy(env));
+const POLICY_HASH = policyHash(policy());
 const armor = modelArmor(env.GOOGLE_CLOUD_PROJECT, env.MODEL_ARMOR_LOCATION ?? "asia-south1", env.MODEL_ARMOR_INCOMING, env.MODEL_ARMOR_OUTGOING,
   env.MODEL_ARMOR_FAIL_MODE === "closed" ? "closed" : "open");
 setOutgoingScreen(armor ? armor.outgoing : null);
@@ -203,12 +207,20 @@ app.use("/api", async (req, res, next) => {
   next();
 });
 
-app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local", model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
+app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local", policy: POLICY_HASH, model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
   modelArmor: armor ? { on: true, ...armor.stats } : { on: false },
   security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on" } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
+// What the app may show about the policy it runs under: quotas with today's remaining use and reset time, currencies,
+// features and versions. Never private limits or anything per-owner beyond the caller's own quota use.
+app.get("/api/policy", route(async req => {
+  const p = policy(), t = now();
+  return { version: POLICY_HASH, currencies: p.money.currencies, defaultCurrency: p.money.defaultCurrency, features: p.features,
+    negotiation: { maxRounds: p.negotiation.maxRounds }, checkoutValiditySec: p.timing.checkoutValiditySec,
+    quotas: { priceCheck: await quotaStatus(db, "price-check", req.uid, p.quotas.priceChecksPerDay, t), nearby: await quotaStatus(db, "nearby", req.uid, p.quotas.nearbyPerDay, t) } };
+}));
 app.get("/api/insights", route(async req => {
   const i = await insights(db, { category: text(req.query.category, 40), area: text(req.query.area, 120) || null, item: text(req.query.item, 120) || null,
     unit: req.query.unit === undefined ? undefined : text(req.query.unit, 20) || null });
@@ -616,7 +628,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   // Exactly one tap claims the payment (a transaction moves awaiting → paying); a claim stuck for two minutes (a
   // crashed request) can be taken over.
   const t0 = now();
-  const claimable = (p: any) => p?.status === "awaiting" || (p?.status === "paying" && t0 - (p.claim?.at ?? 0) > 120);
+  const claimable = (p: any) => p?.status === "awaiting" || (p?.status === "paying" && t0 - (p.claim?.at ?? 0) > policy().timing.paymentClaimStaleSec);
   const claimed = (await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur && cur.phase === "agreed" && claimable(cur.payment)
     ? { ...cur, payment: { ...cur.payment!, status: "paying", claim: { key, at: t0 } } } : null))) as Engagement | null;
   if (!claimed) {

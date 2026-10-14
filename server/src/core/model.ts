@@ -135,6 +135,8 @@ export interface Engagement {
   payment?: import("./pay.ts").Payment;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
+  /** The operational policy version this conversation started under (see config/policy.ts). */
+  policy?: string;
   /** Set with every save: a turn is waiting (`outbox`), and since when — what the recovery scan looks for. */
   outboxPending?: boolean; outboxAt?: number | null;
   createdAt: number;

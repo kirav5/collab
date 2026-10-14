@@ -6,6 +6,7 @@
 // Collab's agents recorded, not a signature made on the person's own device.
 import { createHash, type KeyObject } from "node:crypto";
 import { CompactSign, compactVerify, flattenedVerify, importJWK, type JWK } from "jose";
+import { policy } from "../config/policy.ts";
 
 export interface Ap2Checkout {
   id: string; status: "ready_for_complete" | "completed";
@@ -49,13 +50,13 @@ export async function ap2Pay(i: Ap2Input): Promise<Ap2Bundle> {
     line_items: [{ id: "item_1", title: i.item, quantity: 1, price: { currency: "INR", value: i.amount } }],
     totals: { total: { currency: "INR", value: i.amount } },
     merchant: { handle: i.merchant.handle, agent: agent(i.merchant.handle) }, buyer: { handle: i.buyer.handle, agent: agent(i.buyer.handle) },
-    deal_hash: i.dealHash, created_at: i.now, expires_at: i.now + 600 };
+    deal_hash: i.dealHash, created_at: i.now, expires_at: i.now + policy().timing.checkoutValiditySec };
   const canonical = jcs(checkout), checkout_hash = sha(canonical);
   // The seller's agent authorises the checkout (detached: the checkout itself travels as JSON).
   const full = await new CompactSign(enc.encode(canonical)).setProtectedHeader({ alg: "EdDSA", kid: i.kid, typ: "JOSE" }).sign(i.key);
   const [h, , s] = full.split(".");
   const merchant_authorization = `${h}..${s}`;
-  const common = { iss: agent(i.buyer.handle), iat: i.now, exp: i.now + 600, _sd_alg: "sha-256" };
+  const common = { iss: agent(i.buyer.handle), iat: i.now, exp: i.now + policy().timing.checkoutValiditySec, _sd_alg: "sha-256" };
   const checkout_mandate = `${await jwt(i.key, i.kid, "dc+sd-jwt", { ...common, vct: "ap2.CheckoutMandate", checkout_hash, checkout_id: checkout.id, merchant: checkout.merchant.agent })}~`;
   const payment_mandate = `${await jwt(i.key, i.kid, "dc+sd-jwt", { ...common, vct: "ap2.PaymentMandate", transaction_id: checkout_hash,
     payee: checkout.merchant.agent, payment_amount: checkout.totals.total, payment_instrument: i.instrument, idempotency_key: i.idempotencyKey })}~`;

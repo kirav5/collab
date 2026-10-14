@@ -3,6 +3,7 @@
 // needs beyond its category (DemandFiltersTask). The model only fills fields; code checks them against the text (the
 // place must be written there and exist in the gazetteer, every number must appear in the text, only the category's
 // own terms are kept) and builds the draft the owner reviews. Nothing is published or sent until the owner says so.
+import { policy } from "../config/policy.ts";
 import { type Model } from "../ai/gemini.ts";
 import { type Task, decide, num, str } from "../ai/decide.ts";
 import { DOMAINS, type Domain, domain as domainOf, negotiable, term } from "./domains.ts";
@@ -260,7 +261,7 @@ export function build(f: Fields, text: string, d: Domain, side: ReadSide, now: n
   const period = isProperty ? (rent ? "month" : null) : unit;
   if (side === "sell") {
     if (f.price === null) return null;
-    const mandate: Mandate = { price: { opening: f.price, limit: f.limit !== null && f.limit < f.price ? f.limit : f.price }, terms: termBounds(attributes, d, "seller"), maxRounds: 5 };
+    const mandate: Mandate = { price: { opening: f.price, limit: f.limit !== null && f.limit < f.price ? f.limit : f.price }, terms: termBounds(attributes, d, "seller"), maxRounds: policy().negotiation.maxRounds };
     const title = isProperty
       ? `${attributes.bedrooms ? `${attributes.bedrooms}BHK` : "Home"} ${rent ? "for rent" : "for sale"} in ${place.name}`
       : `${f.item.replace(/\b\p{L}/gu, c => c.toUpperCase())} · ${d.label.toLowerCase()} · ${shortPlace}`;
@@ -296,8 +297,8 @@ export function build(f: Fields, text: string, d: Domain, side: ReadSide, now: n
   }
   const stated = f.price ?? f.limit;
   const mandate: Mandate | null = stated !== null
-    ? { price: { opening: f.limit === null ? Math.round(stated * 0.9) : stated, limit: f.limit ?? stated }, terms: termBounds(attributes, d, "buyer"), maxRounds: 5 }
-    : maxPrice !== null ? { price: { opening: Math.round(maxPrice * 0.9), limit: maxPrice }, terms: {}, maxRounds: 5 } : null;
+    ? { price: { opening: f.limit === null ? Math.round(stated * 0.9) : stated, limit: f.limit ?? stated }, terms: termBounds(attributes, d, "buyer"), maxRounds: policy().negotiation.maxRounds }
+    : maxPrice !== null ? { price: { opening: Math.round(maxPrice * 0.9), limit: maxPrice }, terms: {}, maxRounds: policy().negotiation.maxRounds } : null;
   return { kind: "need", need: { id: newId(), category: d.id, text, place, radiusKm, maxPrice, attributes, mustAsk, unit: period,
     mode: plan.mode, filters, mandate } };
 }

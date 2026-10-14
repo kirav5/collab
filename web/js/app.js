@@ -69,6 +69,7 @@ async function boot() {
   detectNano().then(() => paintSidebar());
   // Offline: a banner, cached conversations, and (with the on-device model) answers from the notes on this device.
   refreshNotesCache();
+  loadPolicy();
   addEventListener("online", () => { toast("Back online."); refreshNotesCache(); paint(); });
   addEventListener("offline", () => { toast(engine.nano ? "Offline — questions about your notes are answered on this device." : "Offline — showing what's saved on this device."); paint(); });
   S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -324,7 +325,7 @@ function onEdit(e) {
     if (k === "title" || k === "summary") f.c.draft.shared[k] = v;
     if (k === "limit") {
       const n = Number(v);
-      f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: 5 } : null;
+      f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 } : null;
       f.c.draft.need.maxPrice = n > 0 ? n : null;
       if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null, unit: f.c.draft.need.unit, item: itemOf(f.c.draft) })
         .then(ls => { f.c.insights = ls; saveSession(f.s); paintContent(true); });
@@ -377,8 +378,9 @@ async function onClick(e) {
       try {
         const r = await api("/api/nearby", { item: el.dataset.item, area: el.dataset.area });
         box.innerHTML = r.places.length ? `<div class="stack" style="gap:6px">${r.places.map(p => `<a class="small" href="${esc(p.uri)}" target="_blank" rel="noopener noreferrer">📍 ${esc(p.title)}</a>`).join("")}
-          <span class="small faint">${esc(r.note)} · Source: Google Maps · ${r.remaining} lookups left today</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
+          <span class="small faint">${esc(r.note)} · Source: Google Maps · ${r.remaining} left today</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
       } finally { busy(el, false); }
+      loadPolicy();
       return;
     }
     if (a === "price-check") {
@@ -389,6 +391,7 @@ async function onClick(e) {
         box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · typical ${money(r.typical)}/${esc(r.unit)}` : "Not enough comparable evidence"}</b><span class="small">${esc(r.note)}</span>${r.items.map(i => `<p class="small">${esc(i.label)} · ${money(i.price)}/${esc(i.unit)} ${i.sources.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" · ")}</p>`).join("")}<span class="small faint">Only you see this · ${r.remaining} checks left today · ${new Date(r.checkedAt * 1000).toLocaleString()}</span></div>`;
         if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = r.searchEntryPoint; frame.style.cssText = "width:100%;border:0;min-height:110px"; box.append(frame); }
       } finally { busy(el, false); }
+      loadPolicy();
       return;
     }
     if (a === "eng-pickup") {
@@ -485,7 +488,7 @@ async function cardAction(a, el, { s, m, c }) {
     busy(el, true, "Publishing");
     const fact = await api("/api/facts", { tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount) });
     if (c.offer && c.floor) {
-      const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: 5 };
+      const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: c.autonomy ?? "ask", days: c.days ?? 7 });
     }
     c.step = "published"; c.publicText = fact.text;
@@ -546,6 +549,9 @@ async function run(engagementId) {
     }
   } catch (err) { toast(err.message); } finally { running.delete(engagementId); refresh(openScreen); }
 }
+
+/** The server's policy for this account (quotas left today, currencies, features), shown instead of fixed numbers. */
+async function loadPolicy() { try { session.policy = await api("/api/policy"); paintContent(true); } catch {} }
 
 /** Whether this owner has a deal waiting for their payment (Google Pay's script is then loaded ahead of the tap). */
 function toPay() {

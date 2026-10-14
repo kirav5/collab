@@ -15,6 +15,7 @@ import { catalog, domain as domainOf } from "../market/domains.ts";
 import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
 import { type Mandate, type Proposal, moneyText, newId } from "../market/types.ts";
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
+import { policy, policyHash } from "../config/policy.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
@@ -490,7 +491,7 @@ export function fresh(args: { id?: string; briefId: string | null; brief: Shared
   offer: Engagement["offer"] }): Engagement {
   return { id: args.id ?? newId(), taskId: null, contextId: null, briefId: args.briefId, requester: args.requester, provider: args.provider,
     participants: [args.requester.uid, args.provider.uid].filter(Boolean) as string[], title: args.brief.title, brief: args.brief, offer: args.offer,
-    phase: "asking", waiting: { requester: null, provider: null }, gathered: false,
+    phase: "asking", waiting: { requester: null, provider: null }, gathered: false, policy: policyHash(policy()),
     qa: args.brief.questions.map(q => ({ id: newId(), from: "requester" as Side, question: q, status: "open" as const, required: true })),
     negotiation: { requester: [], provider: [], deal: null, dealBy: null, confirmed: { requester: false, provider: false } },
     events: [], createdAt: now(), updatedAt: now() };

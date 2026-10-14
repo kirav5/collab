@@ -1,16 +1,25 @@
 import type { Docs } from "../docs.ts";
 import type { GroundedResult, Model } from "../ai/gemini.ts";
+import { policy } from "../config/policy.ts";
 
 export const PRICE_CHECKS = "price_checks";
 export class PriceCheckError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export async function reserveCheck(db: Docs, uid: string, now: number) {
+  const limit = policy().quotas.priceChecksPerDay;
   const day = new Date(now * 1000).toISOString().slice(0, 10);
   const row = await db.update("rate", `price-check:${uid}:${day}`, cur => {
-    if ((cur?.used ?? 0) >= 5) return null;
+    if ((cur?.used ?? 0) >= limit) return null;
     return { used: (cur?.used ?? 0) + 1, expireAt: new Date((now + 172800) * 1000) };
   });
-  if (!row) throw new PriceCheckError(429, "Five price checks used today. Resets at 00:00 UTC.");
-  return 5 - row.used;
+  if (!row) throw new PriceCheckError(429, `All ${limit} price checks used today. Resets at 00:00 UTC.`);
+  return limit - row.used;
+}
+
+/** Today's use of a per-day quota, for the app to show (the server enforces the same numbers). */
+export async function quotaStatus(db: Docs, key: string, uid: string, limit: number, now: number) {
+  const day = new Date(now * 1000).toISOString().slice(0, 10);
+  const used = ((await db.get("rate", `${key}:${uid}:${day}`)) as { used?: number } | null)?.used ?? 0;
+  return { limit, remaining: Math.max(0, limit - used), resetsAt: Math.floor(Date.parse(`${day}T00:00:00Z`) / 1000) + 86_400 };
 }
 
 export function priceEvidence(g: GroundedResult) {
@@ -47,6 +56,7 @@ export function priceEvidence(g: GroundedResult) {
 }
 
 export async function checkPrice(db: Docs, model: Model | null, uid: string, item: string, area: string, now: number) {
+  if (!policy().features.priceCheck) throw new PriceCheckError(503, "Price checks are turned off.");
   if (!item.trim()) throw new PriceCheckError(400, "Describe the item first.");
   if (!model?.grounded) throw new PriceCheckError(503, "Grounded search is not available in this environment.");
   const remaining = await reserveCheck(db, uid, now);

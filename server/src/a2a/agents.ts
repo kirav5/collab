@@ -21,6 +21,7 @@ import { type Turn, fresh, load, providerTurn, requesterTurn, save } from "../co
 import { take, withLease } from "../core/limits.ts";
 import { pushTo } from "../core/push.ts";
 import { outboxKey } from "../core/recovery.ts";
+import { policy } from "../config/policy.ts";
 import { SafePushSender } from "./webhooks.ts";
 
 const TASKS = "a2a_tasks";
@@ -54,7 +55,7 @@ function anonUid(secret: string, token: string): string | null {
   const m = token.match(/^anon:([a-z0-9]{6,40})\.(.+)$/);
   if (!m) return null;
   const issued = parseInt(m[1].slice(0, 8), 36) * 1000;
-  if (!issued || Date.now() - issued > 7 * 86_400_000) return null;
+  if (!issued || Date.now() - issued > policy().timing.anonymousTokenDays * 86_400_000) return null;
   const want = Buffer.from(anonToken(secret, m[1]).split(".").pop()!), got = Buffer.from(m[2]);
   return want.length === got.length && timingSafeEqual(want, got) ? `anon:${m[1]}` : null;
 }
@@ -311,7 +312,7 @@ export function a2aRouter(cfg: A2AConfig): { router: Router; store: TaskStore } 
   router.post("/anonymous", async (req, res) => {
     if (!(await take(cfg.db, `a2a-anon:${clientIp(req)}`, 1, 10, 10 / 3600))) { res.status(429).json({ error: "Too many anonymous identities — try later." }); return; }
     const id = Date.now().toString(36).padStart(8, "0") + randomUUID().replace(/-/g, "").slice(0, 16);
-    res.json({ token: anonToken(cfg.secret, id), expiresIn: 7 * 86_400, use: "Send as 'Authorization: Bearer <token>' to continue conversations and read your tasks." });
+    res.json({ token: anonToken(cfg.secret, id), expiresIn: policy().timing.anonymousTokenDays * 86_400, use: "Send as 'Authorization: Bearer <token>' to continue conversations and read your tasks." });
   });
   router.use("/:handle", async (req, res, next) => {
     // Outside callers are limited per IP (our own agents sign their calls and are limited per account upstream).
@@ -360,7 +361,7 @@ async function runTurns(cfg: A2AConfig, engagementId: string, first: Turn | null
       const e = await load(cfg.db, engagementId);
       if (!e.requester.uid) return;
       // A request behind Firebase Hosting has 60 s: past ~35 s the next turn waits in the outbox for the next run.
-      if (Date.now() - started > 35_000) { e.outbox = turn; await save(cfg.db, e); await cfg.enqueue?.(engagementId, 2, outboxKey(turn)); return; }
+      if (Date.now() - started > policy().timing.a2aTurnBudgetMs) { e.outbox = turn; await save(cfg.db, e); await cfg.enqueue?.(engagementId, 2, outboxKey(turn)); return; }
       if (e.outbox) { e.outbox = null; await save(cfg.db, e); }
       const client = await clientFor(cfg, e.provider.handle, e.requester.uid);
       const task = (await client.sendMessage({ message: message("ROLE_USER", turn, { taskId: e.taskId ?? undefined, contextId: e.contextId ?? undefined }) } as any)) as Task;
