@@ -4,7 +4,7 @@
 // (/api/think, /api/route) use it for one model call and keep nothing.
 //
 // STORE=memory and DEV_AUTH=1 run it with no Google project (tests, local development).
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { type Docs, firestoreDocs, memoryDocs } from "./docs.ts";
@@ -24,6 +24,7 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
 import { replayProtected, verifyAppCheckToken } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
@@ -544,7 +545,8 @@ async function receiptBundle(e: Engagement) {
   if (!check.registered || !check.matches) throw new HttpError(409, "The agreement does not match its registered receipt.");
   const registered = await db.get(RECEIPTS, e.id);
   const r = registered.receipt ?? receipt(e, signing.sign);
-  const payment = e.payment ? { ...e.payment, buyer: buyerOf(e), seller: sellerOf(e), check: checkPayment(e, verifySigned) } : null;
+  const ap2Check = e.payment?.ap2 ? await verifyAp2(e.payment.ap2, signing.publicKey as any, e.payment.cart.dealHash) : null;
+  const payment = e.payment ? { ...e.payment, buyer: buyerOf(e), seller: sellerOf(e), check: { ...checkPayment(e, verifySigned), ap2: ap2Check } } : null;
   return { ...r, ...check, payment, publicKey: signing.publicKey,
     subjects: { requester: e.requester.uid ? signing.subject(e.requester.uid) : null, provider: signing.subject(e.provider.uid) },
     legacyAttestation: !registered.receipt, signatureAuthority: "Collab server, on behalf of its agents",
@@ -596,12 +598,25 @@ app.get("/api/engagements/:id/verify", route(async req => {
 app.post("/api/engagements/:id/pay", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   const side = e.requester.uid === req.uid ? "requester" : "provider";
+  // Idempotent: the same tap (same key) sent twice returns the payment already made.
+  const key = text(req.body?.idempotencyKey, 80).replace(/[^\w-]/g, "") || randomUUID();
+  if (e.payment?.status === "paid" && e.payment.ap2?.idempotency_key === key) return e;
   await spend(req.uid, 1);
   let mandate;
   try { mandate = pay(e, side, signing.sign, now()); } catch (err) { throw new HttpError(400, (err as Error).message); }
+  // AP2 v0.2 shapes: a 10-minute checkout authorised by the seller's agent, and the buyer agent's Checkout and Payment
+  // Mandates (SD-JWT) bound to its hash. Google Pay (TEST environment) supplies the instrument when the buyer used it.
+  const gp = req.body?.googlePay;
+  const instrument: Ap2Instrument = gp && typeof gp.token === "string"
+    ? { id: "instr_1", type: "google_pay", environment: "TEST", network: text(gp.network, 20) || undefined, description: text(gp.description, 60) || undefined,
+        token_sha256: createHash("sha256").update(gp.token).digest("base64url") }
+    : { id: "instr_1", type: "test", environment: "TEST" };
+  const seller_ = sellerOf(e) === "requester" ? e.requester : e.provider, buyer_ = sellerOf(e) === "requester" ? e.provider : e.requester;
+  e.payment!.ap2 = await ap2Pay({ key: signing.privateKey, kid: signing.kid, base: cfg.publicUrl, now: now(), dealHash: e.payment!.cart.dealHash, idempotencyKey: key,
+    item: e.payment!.cart.items[0]?.label ?? e.title, amount: e.payment!.cart.total.value, merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
   e.events.push({ at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" });
   await saveEngagement(db, e);
-  const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate };
+  const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate, ap2: { checkout_mandate: e.payment!.ap2.checkout_mandate, payment_mandate: e.payment!.ap2.payment_mandate, checkout_hash: e.payment!.ap2.checkout_hash } };
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;

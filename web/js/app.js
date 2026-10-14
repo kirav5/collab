@@ -8,6 +8,7 @@ import { chat, detectNano, engine, itemOf, startDevice, drafts } from "./agent.j
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
 import { engagementCard, messageHTML } from "./cards.js";
+import { payWithGoogle, preload as preloadGooglePay } from "./gpay.js";
 import { screens } from "./screens.js";
 import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
 
@@ -86,7 +87,7 @@ async function boot() {
   });
   start(openScreen);
   startDevice();
-  onChange(() => { paintSidebar(); paintContent(true); driveRequester(); });
+  onChange(() => { paintSidebar(); paintContent(true); driveRequester(); if (toPay()) preloadGooglePay(); });
   // Notifications: a device that already allowed them registers again quietly (asking needs a tap — see Settings).
   session.push?.(false).then(() => paintSidebar()).catch(() => {});
   addEventListener("collab-installable", () => paintSidebar());
@@ -355,8 +356,13 @@ async function onClick(e) {
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
     if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
     if (a === "eng-pay" || a === "eng-paid-outside") {
+      // Google Pay (TEST) first, inside the tap; then the AP2 step. One idempotency key per tap: a retry of the same
+      // request can't pay twice.
+      let googlePay;
+      if (el.dataset.gpay) { googlePay = await payWithGoogle(Number(el.dataset.amount), el.dataset.label ?? "Collab"); if (!googlePay) return; }
       busy(el, true, a === "eng-pay" ? "Paying" : "Saving");
-      const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, {});
+      const body = a === "eng-pay" ? { idempotencyKey: el.dataset.key ??= crypto.randomUUID(), ...(googlePay ? { googlePay } : {}) } : {};
+      const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);
       live.engagements.set(e.id, e);
       toast(a === "eng-pay" ? "Paid — test mode, no money moved. Their agent has the payment." : "Marked as paid outside the app.");
       return refresh(openScreen);
@@ -399,6 +405,9 @@ async function onClick(e) {
             <dt>Cart Mandate</dt><dd>${money(r.payment.cart.total.value, r.terms.unit)} · issued by @${esc(r.payment.cart.merchant.handle)}'s agent · ${r.payment.check?.cartOk ? tag("✓ signature valid, matches the deal", "fresh") : tag("doesn't match", "danger")}</dd>
             ${r.payment.mandate ? `<dt>Payment Mandate</dt><dd>signed by @${esc(r.payment.mandate.payer)}'s agent, for that cart · ${r.payment.check?.paymentOk ? tag("✓ signature valid", "fresh") : tag("doesn't match", "danger")}</dd>
             <dt>Payment</dt><dd>${esc(r.payment.paymentId)} · test mode, no money moved</dd>` : ""}
+            ${r.payment.ap2 ? `<dt>AP2 v0.2 checkout</dt><dd>${esc(r.payment.ap2.checkout.id)} · authorised by @${esc(r.payment.ap2.checkout.merchant.handle)}'s agent (detached JWS) · ${r.payment.check?.ap2?.merchantOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
+            <dt>AP2 mandates</dt><dd>Checkout + Payment Mandates (SD-JWT) by @${esc(r.payment.ap2.checkout.buyer.handle)}'s agent, bound to the checkout hash · ${r.payment.check?.ap2?.mandatesOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
+            <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay (TEST) · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "Test payment"} · no money moved</dd>` : ""}
           </dl>
           <span class="small muted">AP2 (Agent Payments Protocol): the seller's agent signs a cart for exactly the agreed terms; the buyer's agent signs a payment against that cart only after the buyer taps Pay. The payment goes to the seller's agent over A2A.</span></details>` : ""}</div>`;
       return;
@@ -513,6 +522,15 @@ async function run(engagementId) {
       if (!e.outbox) break;
     }
   } catch (err) { toast(err.message); } finally { running.delete(engagementId); refresh(openScreen); }
+}
+
+/** Whether this owner has a deal waiting for their payment (Google Pay's script is then loaded ahead of the tap). */
+function toPay() {
+  for (const e of live.engagements.values()) {
+    const seller = e.seller ?? "provider", mine = e.requester.uid === session.uid ? "requester" : "provider";
+    if (e.payment?.status === "awaiting" && mine !== seller) return true;
+  }
+  return false;
 }
 
 /** A run that stopped mid-way (time limit) left its next turn in the outbox: carry on. */

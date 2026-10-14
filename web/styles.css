@@ -204,3 +204,7 @@ details.more[open] { display: grid; gap: 10px; }
 .row.reply { gap: 6px; flex-wrap: nowrap; }
 .row.reply .field { flex: 1; min-width: 0; }
 .linkish.small { font-size: 12px; color: var(--text3); text-decoration: underline; }
+
+/* Google Pay (TEST) button: Google's dark button style. */
+.btn.gpay { background: #000; color: #fff; border: 1px solid #3c4043; text-transform: none; letter-spacing: 0; }
+.btn.gpay b { font-family: "Product Sans", var(--sans); font-weight: 700; margin-right: 2px; }

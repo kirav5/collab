@@ -41,8 +41,20 @@ for group in rate leases; do
   gcloud firestore fields ttls update expireAt --collection-group="$group" --enable-ttl --async --quiet >/dev/null 2>&1 || true
 done
 
+# Model Armor: one template screens what other agents send (prompt injection / jailbreak), one checks answers before
+# they're shared (sensitive data). asia-south1 doesn't offer the malicious-URL filter.
+ARMOR_LOCATION="${ARMOR_LOCATION:-asia-south1}"
+gcloud services enable modelarmor.googleapis.com --project "$PROJECT" >/dev/null
+ARMOR=(--project "$PROJECT" --location "$ARMOR_LOCATION")
+export CLOUDSDK_API_ENDPOINT_OVERRIDES_MODELARMOR="https://modelarmor.$ARMOR_LOCATION.rep.googleapis.com/"
+gcloud model-armor templates describe collab-incoming "${ARMOR[@]}" >/dev/null 2>&1 || gcloud model-armor templates create collab-incoming "${ARMOR[@]}" \
+  --pi-and-jailbreak-filter-settings-enforcement=enabled --pi-and-jailbreak-filter-settings-confidence-level=medium-and-above --template-metadata-log-sanitize-operations >/dev/null
+gcloud model-armor templates describe collab-outgoing "${ARMOR[@]}" >/dev/null 2>&1 || gcloud model-armor templates create collab-outgoing "${ARMOR[@]}" \
+  --basic-config-filter-enforcement=enabled --template-metadata-log-sanitize-operations >/dev/null
+unset CLOUDSDK_API_ENDPOINT_OVERRIDES_MODELARMOR
+
 # A new service account takes a few seconds to be usable in policies: retry until it is.
-for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin roles/firebaseappcheck.tokenVerifier; do
+for role in roles/aiplatform.user roles/datastore.user roles/firebaseauth.viewer roles/firebasecloudmessaging.admin roles/firebaseappcheck.tokenVerifier roles/modelarmor.user; do
   for try in 1 2 3 4 5 6; do
     gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" --condition None >/dev/null 2>&1 && break
     [ "$try" = 6 ] && { echo "Couldn't grant $role to $SA"; exit 1; }
@@ -64,7 +76,7 @@ gcloud run deploy "$SERVICE" --quiet \
   --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
   --timeout 60 \
   --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
-  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK"
+  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).
 echo "$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)" > web/version.txt

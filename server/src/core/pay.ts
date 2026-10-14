@@ -22,6 +22,8 @@ export interface Payment {
   cart: CartMandate; mandate?: PaymentMandate;
   status: "awaiting" | "paid" | "outside"; mode: "test";
   paymentId?: string; paidAt?: number; by?: Side;
+  /** AP2 v0.2 checkout + mandates (added at Pay). */
+  ap2?: import("./ap2.ts").Ap2Bundle;
 }
 
 const other = (s: Side): Side => (s === "requester" ? "provider" : "requester");
