@@ -8,7 +8,7 @@
 import { createHmac, randomUUID, timingSafeEqual, type KeyObject } from "node:crypto";
 import express, { type Router } from "express";
 import { AgentCard, Message, Task, TaskState, generateAgentCardSignature, type TaskPushNotificationConfig } from "@a2a-js/sdk";
-import { AgentEvent, DefaultPushNotificationSender, DefaultRequestHandler, type AgentExecutor, type PushNotificationStore, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
+import { AgentEvent, DefaultRequestHandler, type AgentExecutor, type PushNotificationStore, type ServerCallContext, type TaskStore } from "@a2a-js/sdk/server";
 import { agentCardHandler, jsonRpcHandler } from "@a2a-js/sdk/server/express";
 import { ClientFactory, JsonRpcTransportFactory, type Client } from "@a2a-js/sdk/client";
 import type { Model } from "../ai/gemini.ts";
@@ -21,6 +21,7 @@ import { type Turn, fresh, load, providerTurn, requesterTurn, save } from "../co
 import { take, withLease } from "../core/limits.ts";
 import { pushTo } from "../core/push.ts";
 import { outboxKey } from "../core/recovery.ts";
+import { SafePushSender } from "./webhooks.ts";
 
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
@@ -138,7 +139,7 @@ class FirestorePushStore implements PushNotificationStore {
     for (const c of await this.load(taskId, context)) if (!configId || c.id === configId) await this.db.delete(PUSH_CONFIGS, `${taskId}:${c.id}`.slice(0, 200));
   }
 }
-let pushSender: DefaultPushNotificationSender | null = null;
+let pushSender: SafePushSender | null = null;
 
 // MARK: - Agent cards
 
@@ -292,7 +293,7 @@ export function a2aRouter(cfg: A2AConfig): { router: Router; store: TaskStore } 
   const store = new FirestoreTaskStore(cfg.db);
   const handlers = new Map<string, DefaultRequestHandler>();
   const pushStore = new FirestorePushStore(cfg.db);
-  pushSender = new DefaultPushNotificationSender(pushStore, { timeout: 5000 });
+  pushSender = new SafePushSender(pushStore);
   const signCard = cfg.cardKey ? generateAgentCardSignature(cfg.cardKey.privateKey, { alg: "EdDSA", kid: cfg.cardKey.kid, typ: "JOSE", jku: `${cfg.publicUrl}/public/keys` }) : null;
   const signedCard = async (p: Profile) => { const c = await cardFor(cfg, p); return signCard ? signCard(c) : c; };
   const router = express.Router({ mergeParams: true });
