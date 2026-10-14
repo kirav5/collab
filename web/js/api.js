@@ -1,6 +1,6 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
-const FB = "https://www.gstatic.com/firebasejs/12.14.0";
+export const FB = "https://www.gstatic.com/firebasejs/12.14.0";
 export const session = { pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
@@ -113,8 +113,11 @@ export async function signIn() {
     };
     session.signOut = async () => { await signOut(auth); location.reload(); };
     // Live updates (Firestore) load after sign-in without holding up the first screen; until then the app polls.
-    session.fsReady = import(`${FB}/firebase-firestore.js`).then(({ getFirestore, collection, doc, query, where, onSnapshot }) => {
-      const db = getFirestore(app);
+    session.fsReady = import(`${FB}/firebase-firestore.js`).then(({ initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, query, where, onSnapshot }) => {
+      // Offline cache: the installed app shows conversations and inbox items with no network, and catches up after.
+      let db;
+      try { db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+      catch { db = getFirestore(app); }
       session.fs = {
         engagements: cb => onSnapshot(query(collection(db, "engagements"), where("participants", "array-contains", session.uid)), s => cb(s.docs.map(d => d.data())), () => {}),
         inbox: cb => onSnapshot(query(collection(db, "inbox"), where("owner", "==", session.uid), where("status", "==", "open")), s => cb(s.docs.map(d => d.data())), () => {}),

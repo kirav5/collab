@@ -5,13 +5,28 @@
 //
 // Model calls over private notes use Gemini Nano in the browser when Chrome has it; otherwise Gemini through the
 // server for that one call, which logs nothing.
-import { api, insightsLines, session } from "./api.js";
+import { FB, api, insightsLines, session } from "./api.js";
 import { relevant } from "./local.js";
 import { live, onChange, poke } from "./live.js";
 
 export const engine = { nano: false };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
 export const needsLimit = new Set(); // move items this device has no limit for (the owner sets one)
+
+// Firebase AI Logic's hybrid inference, held to the device: Gemini Nano in Chrome with a JSON response constraint.
+const ANSWER = { type: "object", properties: { answer: { type: ["string", "null"] }, evidence: { type: "array", items: { type: "string" } } } };
+let deviceModel = null;
+async function onDeviceModel() {
+  if (deviceModel !== null) return deviceModel;
+  deviceModel = false;
+  try {
+    if (!session.app) return false;
+    const { getAI, getGenerativeModel, InferenceMode, VertexAIBackend } = await import(`${FB}/firebase-ai.js`);
+    deviceModel = getGenerativeModel(getAI(session.app, { backend: new VertexAIBackend() }),
+      { mode: InferenceMode.ONLY_ON_DEVICE, onDeviceParams: { promptOptions: { responseConstraint: ANSWER } } });
+  } catch { deviceModel = false; }
+  return deviceModel;
+}
 
 export async function detectNano() {
   try {
@@ -28,15 +43,18 @@ export async function think(question, notes, side = "self") {
   if (!notes.length) return null;
   if (engine.nano) {
     try {
-      const lm = await self.LanguageModel.create({ initialPrompts: [{ role: "system", content: "Answer the question using ONLY the notes. Return JSON {\"answer\":\"...\",\"evidence\":[\"exact text copied from the notes\"]} or {\"answer\":null} if the notes don't answer it." }] });
-      const raw = await lm.prompt(`Notes:\n${notes.map(n => "- " + n.text).join("\n")}\n\nQuestion: ${question}`, { responseConstraint: { type: "object", properties: { answer: { type: ["string", "null"] }, evidence: { type: "array", items: { type: "string" } } } } });
-      lm.destroy?.();
-      const o = JSON.parse(raw);
-      const corpus = norm(notes.map(n => n.text).join("\n"));
-      if (o.answer && (o.evidence ?? []).length && o.evidence.every(e => corpus.includes(norm(e))) && nums(o.answer).every(n => corpus.includes(n))) {
-        return { text: o.answer, evidence: o.evidence, on: "device" };
+      // On device through Firebase AI Logic (only_on_device: these notes never go to the cloud this way). If the
+      // device can't answer, the server's Gemini path below does, with the same checks.
+      const m = await onDeviceModel();
+      if (m) {
+        const res = await m.generateContent(`Answer the question using ONLY the notes. Return JSON {"answer":"...","evidence":["exact text copied from the notes"]} or {"answer":null} if the notes don't answer it.\n\nNotes:\n${notes.map(n => "- " + n.text).join("\n")}\n\nQuestion: ${question}`);
+        const o = JSON.parse(res.response.text());
+        const corpus = norm(notes.map(n => n.text).join("\n"));
+        if (o.answer && (o.evidence ?? []).length && o.evidence.every(e => corpus.includes(norm(e))) && nums(o.answer).every(n => corpus.includes(n))) {
+          return { text: o.answer, evidence: o.evidence, on: "device" };
+        }
+        return null;
       }
-      return null;
     } catch { /* fall through to Gemini */ }
   }
   const r = await api("/api/think", { question, notes: notes.map(n => ({ text: n.text })), side });

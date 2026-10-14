@@ -367,6 +367,16 @@ async function onClick(e) {
       toast(a === "eng-pay" ? "Paid — test mode, no money moved. Their agent has the payment." : "Marked as paid outside the app.");
       return refresh(openScreen);
     }
+    if (a === "nearby") {
+      busy(el, true, "Asking Google Maps");
+      const box = el.closest(".card").querySelector("[data-nearby]");
+      try {
+        const r = await api("/api/nearby", { item: el.dataset.item, area: el.dataset.area });
+        box.innerHTML = r.places.length ? `<div class="stack" style="gap:6px">${r.places.map(p => `<a class="small" href="${esc(p.uri)}" target="_blank" rel="noopener noreferrer">📍 ${esc(p.title)}</a>`).join("")}
+          <span class="small faint">${esc(r.note)} · Source: Google Maps · ${r.remaining} lookups left today</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
+      } finally { busy(el, false); }
+      return;
+    }
     if (a === "price-check") {
       busy(el, true, "Checking sources");
       const box = el.parentElement.querySelector("[data-price-result]");

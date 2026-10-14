@@ -24,6 +24,7 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { NearbyError, nearby } from "./core/nearby.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
 import { replayProtected, verifyAppCheckToken } from "./core/app-check.ts";
@@ -522,6 +523,10 @@ app.post("/api/price-check", route(async req => {
   catch (err) { if (err instanceof PriceCheckError) throw new HttpError(err.status, err.message); throw err; }
 }));
 app.get("/api/price-check", route(async req => db.get(PRICE_CHECKS, req.uid)));
+app.post("/api/nearby", route(async req => {
+  try { return await nearby(db, model, req.uid, text(req.body?.item, 200), text(req.body?.area, 120), now()); }
+  catch (err) { if (err instanceof NearbyError) throw new HttpError(err.status, err.message); throw err; }
+}));
 
 app.get("/api/engagements", route(async req => ((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 200)) as Engagement[]).sort((a, b) => b.updatedAt - a.updatedAt)));
 async function participant(uid: string, id: string): Promise<Engagement> {

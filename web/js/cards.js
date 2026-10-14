@@ -81,7 +81,8 @@ function matchesCard(c, at) {
   const real = found.filter(f => !f.over).length;
   const watch = c.watching ? `<span class="small" style="color:var(--fresh)">● Your agent is watching — checks every hour for 14 days and tells you when someone new fits.</span>`
     : `<button class="btn secondary compact" data-act="watch" ${at}>Keep watching</button>`;
-  if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Try a wider area or fewer requirements — or let your agent keep looking.</p><div class="row">${watch}</div></div>`;
+  if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Try a wider area or fewer requirements — or let your agent keep looking.</p><div class="row">${watch}
+      <button class="btn secondary compact" data-act="nearby" data-item="${esc(c.draft.shared.title)}" data-area="${esc(c.draft.shared.area ?? "")}">Look on Google Maps nearby</button></div><div data-nearby></div></div>`;
   return `<div class="card" ${at}>
     <div class="row">${label(real ? `${real} ${real === 1 ? "match" : "matches"}` : "No exact match", "sq ink")}${c.rankedByModel && real ? `<span class="small faint">ranked by Gemini</span>` : ""}${found.length > real ? `<span class="small faint">· ${found.length - real} above your budget</span>` : ""}</div>
     ${found.map((f, j) => `<label class="match-row">
