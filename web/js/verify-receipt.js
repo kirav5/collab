@@ -2,7 +2,8 @@
 const bytes = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 const utf8 = s => new TextEncoder().encode(s);
 const digest = async value => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(JSON.stringify(value)))), b => b.toString(16).padStart(2, '0')).join('');
-export async function verifyReceiptBundle(r, trustedKey = r.publicKey) {
+export async function verifyReceiptBundle(r, trustedKey) {
+  if (!trustedKey) throw new Error('A trusted public key is required to verify this receipt.');
   const key = await crypto.subtle.importKey('jwk', trustedKey, { name: 'Ed25519' }, false, ['verify']);
   const signature = async (subject, hash, value) => {
     try {

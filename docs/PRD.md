@@ -1,6 +1,6 @@
 # Collab (web) — Product Requirements Document
 
-Status: v1 retail completion implemented locally (15 Oct 2026); deployment verification pending · Hackathon: AI Builder Cup 2026, theme **Retail & Commerce** · Submission
+Status: v1 retail completion deployed (15 Oct 2026); remaining live device and seller collection checks are in [HANDOFF.md](HANDOFF.md) · Hackathon: AI Builder Cup 2026, theme **Retail & Commerce** · Submission
 deadline **18 Oct 2026** · Live: https://collab-55.web.app · Work log and engineering handoff: [HANDOFF.md](HANDOFF.md)
 
 This is the web/Google Cloud edition of **Collab** (the native iOS/macOS app in `~/Projects/Collab`). It shares

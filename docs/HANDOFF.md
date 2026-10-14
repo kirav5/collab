@@ -22,7 +22,7 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 | Secret | Secret Manager `agent-secret` (HMAC A2A authentication) and `receipt-key` (Ed25519 receipts and test mandates); local files under `.deploy/` are ignored by git and Docker |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 57/57 pass before the final docs pass (`npm run check`); full local real-Gemini benchmark: 100/100 privacy canaries, 38/50 agreements, 120/120 repeated intent templates, 50/50 load (see §8) |
+| Tests | 58/58 pass (`npm run check`, 15 Oct); full local real-Gemini benchmark: 100/100 privacy canaries, 38/50 agreements, 120/120 repeated intent templates, 50/50 load (see §8) |
 | Size | ~5.8k lines: server ~4.0k TS, web ~1.8k JS/CSS |
 | Live accounts used for testing | @atishaysrivastava10 (uid `NlVWMHzyk1MqGNrO0jWZQTa9hEC2`, Google), @anu-buyer (uid `GrqThVDukkVtN6yK2DkGvT5usvK2`), @bottle-store (`?as=seller` guest tab in a browser) |
 
@@ -305,12 +305,15 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 - **14 Oct live (two real phones/Macs + a guest tab):** FCM delivery to both devices (direct send and app path);
   "New request" and "Your agent needs you" on real A2A questions; follow-up both ways; ₹100 deal offered by text,
   confirmed on the phone, paid via AP2 (both signatures valid, receipt verified); carts back-filled for older deals
-  (₹410 Anu ↔ bottle-store awaiting payment); seller's 3 chats uploaded to the account. **Not yet confirmed:** the
+  (₹410 Anu ↔ bottle-store, subsequently paid on 15 Oct); seller's 3 chats uploaded to the account. **Not yet confirmed:** the
   two real accounts' chats syncing (their apps were still on cached old code — reopen twice).
 
 - **15 Oct:** pickup passes, Ed25519 receipts (`receipt-key` in Secret Manager, `/public/keys`), the fair-price check,
-  `verify.html` and `pickup.html` deployed; the ₹100 deal re-verifies with Ed25519 and its older payment signatures
-  still check (`legacyAttestation`). **Full benchmark** (real Gemini, in-memory store): privacy 100/100, intent 120/120,
+  `verify.html` and `pickup.html` deployed on Cloud Run; the ₹410 legacy agreement
+  re-verifies with a new server-issued Ed25519 attestation. Its older cart/payment signatures are correctly labelled
+  legacy HMAC on the public verifier. The buyer paid that listing-origin deal in test mode and the pass displays
+  “Not collected yet” publicly. The price check abstained for its vague bottle listing, leaving four checks that day.
+  **Full benchmark** (real Gemini, in-memory store): privacy 100/100, intent 120/120,
   load 50/50, negotiation 38/39 feasible agreed, 38/38 inside both limits, 10/10 infeasible no deal — see
   [bench/REPORT.md](bench/REPORT.md) and its limitations. **Cloud Scheduler verified**: a test watch ran 92 times at
   15-minute intervals (stopped; it belonged to @ahtishay by mistake, 0 alerts). Chat sync verified for
@@ -347,10 +350,10 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 
 ## 10. Status and remaining checks
 
-**Implemented locally (15 Oct):** paid pickup QR and seller-only atomic redemption; Ed25519 receipts and test mandates, public key on agent cards, signed receipt export and logged-out/offline verifier; private Search-grounded fair-price check with five per account per UTC day; retail end-to-end and sync/update regression tests; a benchmark harness, secrets check, and updated README/SUBMISSION/PRD. `docs/HACKATHON-INNOVATION.md` maps these to the hackathon's Retail & Commerce brief. The dashboard was confirmed in the signed-in Chrome session. `npm run check` and `node server/tools/secrets-check.ts` are the final gates.
+**Implemented and deployed (15 Oct):** paid pickup QR and seller-only atomic redemption; Ed25519 receipts and test mandates, public key on agent cards, signed receipt export and logged-out/offline verifier; private Search-grounded fair-price check with five per account per UTC day; retail end-to-end and sync/update regression tests; a benchmark harness, secrets check, and updated README/SUBMISSION/PRD. `docs/HACKATHON-INNOVATION.md` maps these to the signed-in Hack2skill Retail & Commerce brief. `npm run check` passed 58/58 and `node server/tools/secrets-check.ts` found zero candidate credentials.
 
-**Live verified:** Scheduler is enabled and invokes `/cron/run`; a synthetic due watch found a new synthetic listing and wrote one alert (`docs/bench/watch.json`). The full benchmark was run locally with live Vertex Gemini and is saved in `docs/bench/full-local-gemini/`. A saved listing-origin ₹410 deal still awaits payment by its buyer. The main account has three chats in Firestore; the earlier test buyer had zero at the read, so cross-device sync on both real devices remains unproven. The local browser verified pickup redemption/replay and public receipt signatures.
+**Live verified:** Scheduler is enabled and invokes `/cron/run`; a synthetic due watch found a new synthetic listing and wrote one alert (`docs/bench/watch.json`). The full benchmark was run locally with live Vertex Gemini and is saved in `docs/bench/full-local-gemini/`. Signed-in @anu-buyer paid the existing listing-origin ₹410 deal in AP2-inspired test mode; its public pass shows Anu, the item, INR 410 and “Not collected yet.” A logged-out browser verified the receipt's new Ed25519 attestation and identified legacy HMAC payment signatures. `/health`, `/public/keys` and the agent-card key responded from production. The main account has three chats in Firestore; cross-device rendering on both real devices remains unproven. The local browser verified pickup redemption/replay and public receipt signatures.
 
-**Before claiming production complete:** deploy with `APPCHECK=enforce ./deploy.sh`; test the deployed public verify and pickup pages; run a bounded signed-in smoke check. A deployed benchmark needs dedicated Firebase ID and App Check tokens (`BENCH_AUTH_FILE`) or an administrator with `iam.serviceAccounts.signBlob`. The existing @anu-buyer must personally be signed in to complete the ₹410 test payment; do not impersonate that owner. Reopen both physical devices and confirm sync/updates and push delivery. Push to GitHub only after the user's explicit OK.
+**Remaining live checks:** the seller @bottle-store must sign in to redeem the ₹410 pass and show that a second scan reports the original collection time. Reopen both physical devices and confirm chat sync/version update and push delivery for a real watch; the automated sync/update tests and synthetic Scheduler alert are passing. A deployed benchmark needs dedicated Firebase ID and App Check tokens (`BENCH_AUTH_FILE`) or an administrator with `iam.serviceAccounts.signBlob`. Push to GitHub only after the user's explicit OK.
 
 **Optional:** Model Armor on outside-agent text; seller counter list of today's paid uncollected orders. **Out of scope:** real UPI/payment provider, passkeys, voice, Wallet passes, calendar, on-device Gemma, Cloud Tasks.

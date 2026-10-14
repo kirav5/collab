@@ -1,6 +1,6 @@
 # Collab: AI Builder Cup innovation assessment
 
-Reviewed 14 October 2026 against the official public pages. The supplied dashboard link requires login; dashboard-only instructions have not been verified.
+Reviewed 15 October 2026 against the official public pages and the signed-in Hack2skill dashboard. The dashboard's Retail & Commerce brief suggests hyper-personalization, conversational commerce, product discovery, demand forecasting, basket analysis, customer segmentation, and inventory intelligence. Collab fits the conversational and physical-commerce portion; it does not implement forecasting or inventory intelligence.
 
 ## Recommendation
 
@@ -21,10 +21,10 @@ The public timeline gives 18 October 2026 for submission and 14 October for team
 | Priority | Innovation to demonstrate | Repo evidence today | Proof for judges |
 |---|---|---|---|
 | 1 | Two agents negotiate while each owner's exact limit remains unavailable to the other agent | A2A engine, policy filter, numeric negotiation guards exist | Two accounts with different private limits; include a hostile request; show the final amount and information actually disclosed |
-| 2 | A digital agreement leads to a single physical handover | Test payment exists; pickup pass remains planned | Seller collects once; simultaneous/repeated redemption cannot create a second collection; buyer/stranger cannot collect |
-| 3 | A receipt another developer can check | SHA-256 registry and HMAC exist; public-key verification remains planned | Download the receipt and verify using public key only; change amount or party and show rejection |
-| 4 | Private evidence helps an owner decide whether to accept | Similar-deal aggregates exist; Google Search price check remains planned | Comparable items, currency, condition, unit and dated sources; abstain when evidence is weak; result absent from peer-agent payload |
-| 5 | Measured reliability of the agent workflow | Unit/API tests and live-case script exist; full benchmark remains planned | Actual attack pass/fail denominators, limit adherence, completion rate, p50/p95 latency and cost estimate with limitations |
+| 2 | A digital agreement leads to a single physical handover | Paid pickup QR, public status page, and atomic seller-only collection are deployed; one-time behavior passed the retail E2E test. The live listing-origin ₹410 pass is uncollected because the seller was not signed in for this check | Seller collects once; simultaneous/repeated redemption cannot create a second collection; buyer/stranger cannot collect |
+| 3 | A receipt another developer can check | Ed25519 signatures, public key in agent cards, logged-out verifier, offline CLI and tamper tests are implemented; the live ₹410 receipt verified in a logged-out browser. Its original cart and payment are legacy HMAC | Download a newly issued receipt and verify using a pinned public key only; change amount or party and show rejection |
+| 4 | Private evidence helps an owner decide whether to accept | Search-grounded price hint, citations/abstention and five-per-day cap are deployed. The live vague bottle listing correctly returned insufficient comparable evidence | Use a specific SKU for a sourced range; show that the result is absent from peer-agent payload |
+| 5 | Measured reliability of the agent workflow | Full real-Gemini local benchmark is in [bench/REPORT.md](bench/REPORT.md): 100/100 canary privacy runs, 38/50 negotiation runs agreed (38/39 feasible), 120/120 repeated intent routes and 50/50 load conversations. Its failure and cost limits are documented | Present denominators, scope, p50/p95 latency and cost estimate with limitations |
 
 The first four complete the proposed product path. The fifth gives evidence for the largest judging category. Model Armor can add a second injection screen, but it should not replace deterministic access control or delay the end-to-end proof.
 
@@ -62,6 +62,6 @@ Production `/health` counters are per process and may reset or come from differe
 
 Compare the guarded agent to an appropriate baseline using the same scenarios; a small deterministic or manual-flow baseline can establish whether Gemini reduces owner interventions or improves successful completion. Do not fabricate lift, throughput or privacy percentages before measuring them.
 
-## Build order
+## Current handoff
 
-Finish pickup, signed export/public verification and private grounded checks; run full retail and regression tests; add the reproducible benchmark; verify device sync, scheduler delivery and a listing-origin payment; reconcile docs and scan tracked files for secrets. Keep git push subject to the user's approval. Real UPI, passkeys, voice, Wallet passes and calendar remain out of scope.
+The seven must-do implementation areas are in the repo and deployed. Automated tests cover the full retail flow, chat sync/version changes, receipt tampering and one-time collection. The live Scheduler fired a synthetic watch and wrote one alert; the listing-origin ₹410 deal was paid in test mode and produced a public pickup pass. Cross-device chat rendering on both physical devices and seller redemption of that live pass still need the owners' signed-in sessions. The source tree passed 58 tests and the secrets pattern scan. Keep git push subject to the user's approval. Real UPI, passkeys, voice, Wallet passes and calendar remain out of scope.

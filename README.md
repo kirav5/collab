@@ -119,7 +119,7 @@ server/src/
   core/watch.ts        Scheduled agents · core/push.ts web push · core/deals.ts receipts, insights, track record
   market/*             Reading, matching, answering, judging, negotiating
   ai/                  Gemini (Vertex AI) with model fallback, grounding, metering; propose-check-fallback
-server/tools/          bench.ts, verify-receipt.ts, secrets-check.ts, live-cases.ts
+server/tools/          bench.ts, verify-receipt.ts, verify-watch.ts, secrets-check.ts, live-cases.ts
 web/                   Installable web app: chat, Context, People (QR), Sharing, Requests, Activity, Settings;
                        verify.html and pickup.html (no sign-in)
 ```

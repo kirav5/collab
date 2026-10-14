@@ -190,8 +190,8 @@ test('shop QR destination → ask → follow-up → offer → confirm → pay �
   const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${receiptCode}`)).json();
   // @ts-ignore standalone browser module also works with Node WebCrypto.
   const { verifyReceiptBundle } = await import('../../web/js/verify-receipt.js');
-  assert.deepEqual(await verifyReceiptBundle(bundle), { receipt: true, cart: true, payment: true });
-  bundle.terms.price = 1; assert.equal((await verifyReceiptBundle(bundle)).receipt, false);
+  assert.deepEqual(await verifyReceiptBundle(bundle, bundle.publicKey), { receipt: true, cart: true, payment: true });
+  bundle.terms.price = 1; assert.equal((await verifyReceiptBundle(bundle, bundle.publicKey)).receipt, false);
   assert.equal((await fetch(B + `/public/receipts/${e.id}?code=${code}`)).status, 404, 'pickup and receipt capabilities are separate');
 });
 
