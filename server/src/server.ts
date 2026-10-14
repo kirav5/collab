@@ -82,7 +82,8 @@ async function verifyIdToken(token: string): Promise<string> {
   return verifier(token);
 }
 
-const signing = signer(env.RECEIPT_KEY, env.STORE === "memory");
+const previousKeys = (() => { try { return env.RECEIPT_KEYS_PREVIOUS ? JSON.parse(env.RECEIPT_KEYS_PREVIOUS) : []; } catch { throw new Error("RECEIPT_KEYS_PREVIOUS must be a JSON array of public JWKs"); } })();
+const signing = signer(env.RECEIPT_KEY, env.STORE === "memory", previousKeys);
 const verifySigned = (uid: string, hash: string, sig: string) => sig.startsWith("ed25519.") ? signing.verify(uid, hash, sig) : signReceipt(cfg.secret, uid, hash) === sig;
 // Operational policy: validated at start (an invalid policy stops the server), hashed for /health and task records.
 setPolicy(loadPolicy(env));
@@ -678,7 +679,7 @@ async function receiptBundle(e: Engagement) {
 // Bearer receipt links share only the sealed deal, never the conversation, notes or private limits.
 // Versioned capability discovery: what agents here can do and what their requests look like (no sign-in).
 app.get("/public/capabilities", route(async () => ({ schemaVersion: 1, policy: POLICY_HASH, capabilities: capabilities() }), false));
-app.get("/public/keys", route(async () => ({ keys: [signing.publicKey] }), false));
+app.get("/public/keys", route(async () => ({ keys: signing.keys }), false));
 app.get("/public/receipts/:id", route(async req => {
   const id = String(req.params.id);
   if (!validCode(cfg.secret, id, "receipt", req.query.code)) throw new HttpError(404, "receipt not found");

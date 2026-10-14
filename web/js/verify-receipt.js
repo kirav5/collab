@@ -8,8 +8,8 @@ const jcs = x => x === null || typeof x !== 'object' ? JSON.stringify(x) : Array
   : `{${Object.keys(x).filter(k => x[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${jcs(x[k])}`).join(',')}}`;
 
 /** AP2 v0.2: the seller agent's detached JWS over the checkout, and the buyer agent's SD-JWT mandates bound to it. */
-async function verifyAp2(b, key, kid, dealHash) {
-  const header = h => { try { const j = JSON.parse(new TextDecoder().decode(bytes(h))); return j.alg === 'EdDSA' && j.kid === kid; } catch { return false; } };
+async function verifyAp2(b, key, kid, dealHash, aliases = []) {
+  const header = h => { try { const j = JSON.parse(new TextDecoder().decode(bytes(h))); return j.alg === 'EdDSA' && (j.kid === kid || aliases.includes(j.kid)); } catch { return false; } };
   const jws = async (h, p, sig) => header(h) && crypto.subtle.verify('Ed25519', key, bytes(sig), utf8(`${h}.${p}`)).catch(() => false);
   const canonical = jcs({ ...b.checkout, status: 'ready_for_complete' });
   const hash = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(canonical))));
@@ -31,7 +31,9 @@ export async function verifyReceiptBundle(r, trustedKey) {
     try {
       const [prefix, payload, sig, extra] = value.split('.');
       const p = JSON.parse(new TextDecoder().decode(bytes(payload)));
-      return !extra && prefix === 'ed25519' && p.v === 1 && p.alg === 'Ed25519' && p.kid === trustedKey.kid && p.subject === subject && p.hash === hash && await crypto.subtle.verify('Ed25519', key, bytes(sig), utf8(payload));
+      // The key's id is its RFC 7638 thumbprint; records made before that carry one of the key's older labels (aliases).
+      const named = p.kid === trustedKey.kid || (trustedKey.aliases ?? []).includes(p.kid);
+      return !extra && prefix === 'ed25519' && p.v === 1 && p.alg === 'Ed25519' && named && p.subject === subject && p.hash === hash && await crypto.subtle.verify('Ed25519', key, bytes(sig), utf8(payload));
     } catch { return false; }
   };
   const t = r.terms, a = r.parties;
@@ -60,6 +62,6 @@ export async function verifyReceiptBundle(r, trustedKey) {
       payment = cart && mh === m.hash && m.cartHash === ch && m.cartId === c.id && m.amount.currency === c.total.currency && m.amount.value === c.total.value && m.payer === a[buyer].handle && m.payee === a[seller].handle && await signature(r.subjects[buyer], mh, m.payerSignature);
     }
   }
-  const ap2 = r.payment?.ap2 ? await verifyAp2(r.payment.ap2, key, trustedKey.kid, hash) : null;
+  const ap2 = r.payment?.ap2 ? await verifyAp2(r.payment.ap2, key, trustedKey.kid, hash, trustedKey.aliases ?? []) : null;
   return { receipt, cart, payment, ap2 };
 }
