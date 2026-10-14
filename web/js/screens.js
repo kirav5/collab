@@ -33,6 +33,25 @@ export const screens = {
     async html() {
       const facts = await allFacts();
       const n = t => facts.filter(f => f.tier === t).length;
+      // Stock and time slots for public offerings: what reservations hold and payments commit.
+      const ledgers = new Map((await api("/api/resources").catch(() => [])).map(r => [r.factId, r]));
+      const now_ = Date.now() / 1000;
+      const stockRow = f => {
+        if (f.tier !== "public" || !f.offer) return "";
+        const r = ledgers.get(f.id);
+        if (!r) return `<div class="row small stock"><span class="faint">Availability not tracked — agents say you'll confirm.</span>
+          <input class="field" type="number" min="0" style="max-width:90px" data-stock-new="${esc(f.id)}" placeholder="Qty"><button class="btn secondary compact" data-act="stock-track" data-id="${esc(f.id)}">Track stock</button>
+          <button class="btn quiet compact" data-act="slots-track" data-id="${esc(f.id)}">Use time slots</button></div>`;
+        if (r.type === "quantity") {
+          const held = r.holds.filter(h => h.state === "held" && h.expiresAt > now_).reduce((n, h) => n + h.qty, 0);
+          return `<div class="row small stock"><b>Stock ${r.onHand}</b>${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+            <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>`;
+        }
+        const open = r.slots.filter(sl => sl.start > now_);
+        const taken = sl => r.holds.filter(h => h.slotId === sl.id && (h.state === "committed" || (h.state === "held" && h.expiresAt > now_))).reduce((n, h) => n + h.qty, 0);
+        return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
+          <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div></div>`;
+      };
       return frame("Context", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
@@ -41,6 +60,7 @@ export const screens = {
           <button class="btn" data-act="add-fact">Save</button></div></form>
         <div class="stack">${facts.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           <span>${esc(f.text)}</span>
+          ${stockRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
     },
@@ -57,6 +77,28 @@ export const screens = {
         busy(el, true);
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
         if (f) await api("/api/facts", { id: f.id, text: f.text, tier: el.dataset.tier });
+        h.paint(); return true;
+      }
+      if (a === "stock-track" || a === "slots-track") {
+        const qty = Number(document.querySelector(`[data-stock-new="${CSS.escape(el.dataset.id)}"]`)?.value);
+        if (a === "stock-track" && !(Number.isInteger(qty) && qty >= 0)) { h.toast("Enter how many you have."); return true; }
+        busy(el, true);
+        try { await api("/api/resources", a === "stock-track" ? { factId: el.dataset.id, type: "quantity", onHand: qty } : { factId: el.dataset.id, type: "slots", slots: [] }); h.toast(a === "stock-track" ? "Stock tracked — deals now reserve it." : "Add your time slots below."); }
+        catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "stock-set") {
+        const qty = Number(document.querySelector(`[data-stock="${CSS.escape(el.dataset.id)}"]`)?.value);
+        busy(el, true);
+        try { await api(`/api/resources/${el.dataset.id}/stock`, { onHand: qty }); h.toast("Stock updated."); } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "slot-add") {
+        const start = Date.parse(document.querySelector(`[data-slot-start="${CSS.escape(el.dataset.id)}"]`)?.value ?? "") / 1000;
+        const mins = Number(document.querySelector(`[data-slot-mins="${CSS.escape(el.dataset.id)}"]`)?.value) || 60;
+        if (!start || start < Date.now() / 1000) { h.toast("Pick a future date and time."); return true; }
+        busy(el, true);
+        try { await api(`/api/resources/${el.dataset.id}/slots`, { slots: [{ start, end: start + mins * 60, capacity: 1 }] }); h.toast("Slot added."); } catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
       if (a === "fact-delete") {

@@ -403,6 +403,20 @@ async function onClick(e) {
       document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="Pickup QR">${qr}</div><b>${p.collectedAt ? `Already collected at ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : "✓ Paid (test mode) · Not collected yet"}</b><a class="btn secondary" href="${esc(link)}">Open pickup pass</a><span class="small faint">Show this pass to the seller. Keep the link private.</span></div>`;
       return;
     }
+    if (a === "slots-load") {
+      busy(el, true);
+      const r = await api(`/api/engagements/${el.dataset.id}/slots`);
+      const box = document.querySelector(`[data-slots="${CSS.escape(el.dataset.id)}"]`);
+      box.innerHTML = r.slots.length ? `<span class="small">Pick a time (${esc(r.timezone ?? "")}):</span><div class="row" style="flex-wrap:wrap">${r.slots.map(sl => `<button class="btn secondary compact" data-act="slot-pick" data-id="${esc(el.dataset.id)}" data-slot="${esc(sl.id)}">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined })}</button>`).join("")}</div>`
+        : `<span class="small muted">No open slots right now — ask them to add some.</span>`;
+      return;
+    }
+    if (a === "slot-pick") {
+      busy(el, true, "Holding");
+      try { const e = await api(`/api/engagements/${el.dataset.id}/slot`, { slotId: el.dataset.slot }); live.engagements.set(e.id, e); toast("Held for you — pay to book it."); }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
     if (a === "eng-delivered" || a === "eng-received") {
       const ok = el.dataset.ok !== "0";
       const note = a === "eng-received" && !ok ? (prompt("What went wrong? (optional)") ?? "") : "";

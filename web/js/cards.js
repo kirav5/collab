@@ -255,6 +255,21 @@ export function engagementCard(e, id) {
 }
 
 /** The agreed deal: the price, what to do next, and the receipt — plain words first, the cryptography on request. */
+/** Stock or a slot held for this deal: until when, or that it's gone, or that a slot needs picking. */
+function reservationLine(e, mine, buyer) {
+  const r = e.reservation;
+  if (!r || e.payment?.status === "paid" && r.state === "committed" && !r.slot) return "";
+  const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  if (r.state === "choose_slot") return mine === buyer
+    ? `<div class="stack" data-slots="${esc(e.id)}"><span class="small">Pick a time to book it:</span><button class="btn secondary compact" data-act="slots-load" data-id="${esc(e.id)}">Show open slots</button></div>`
+    : `<span class="small muted">Waiting for them to pick a time slot.</span>`;
+  if (r.state === "unavailable") return `<span class="small" style="color:var(--danger)">Out of stock — ${mine === buyer ? "you can't pay until the seller restocks; nothing was charged" : "restock to let them pay"}.</span>`;
+  if (r.state === "held") return `<span class="small muted">${r.slot ? `Slot ${when(r.slot.start)} held` : `${r.qty} reserved`} until ${when(r.expiresAt)}${mine === buyer ? " — pay before then to keep it" : ""}.</span>`;
+  if (r.state === "committed" && r.slot) return `<span class="small" style="color:var(--fresh)">✓ Booked for ${when(r.slot.start)}</span>`;
+  if (r.state === "released") return `<span class="small faint">Reservation released.</span>`;
+  return "";
+}
+
 function dealBlock(e, mine) {
   const p = e.payment, seller = e.seller ?? "provider", buyer = seller === "requester" ? "provider" : "requester";
   const them = esc((mine === "requester" ? e.provider : e.requester).name.split(" ")[0]);
@@ -284,6 +299,7 @@ function dealBlock(e, mine) {
     : p?.status === "paid" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
     <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you sell" : "you buy"}</span></div>
+    ${reservationLine(e, mine, buyer)}
     ${pay}
     ${fulfil}
     ${p?.status === "paid" && !["accepted", "disputed"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">Pickup pass</button></div>` : ""}
