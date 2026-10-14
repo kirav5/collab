@@ -24,6 +24,8 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
+import { getSafe } from "./a2a/webhooks.ts";
 import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, createGoal, goalView, linkTask } from "./core/goals.ts";
@@ -784,6 +786,27 @@ app.post("/api/resources/:id/slots", route(async req => {
   return r;
 }));
 
+// Connectors: an owner links an outside system to one resource, with scopes, an expiry and revocation.
+app.get("/api/connectors", route(async req => ((await db.find(GRANTS, [["owner", "==", req.uid]], 50)) as ConnectorGrant[]).map(g => ({ ...g, title: ADAPTERS[g.provider]?.title }))));
+app.post("/api/connectors", route(async req => {
+  try {
+    const g = await createGrant(db, req.uid, text(req.body?.provider, 40), text(req.body?.resourceId, 40), typeof req.body?.url === "string" ? text(req.body.url, 500) : null, now());
+    if (g.provider === "ical") await syncIcal(db, g, url => getSafe(url), now());
+    // The POS signing key is shown once here; Collab derives it again to check events and never displays it later.
+    return { grant: (await db.get(GRANTS, g.id)) as ConnectorGrant, ...(g.provider === "inventory-webhook" ? { eventsUrl: `${cfg.publicUrl}/connectors/${g.id}/events`, signingKey: grantKey(cfg.secret, g.id),
+      howTo: "POST JSON {id, type: 'stock.set'|'stock.adjust', onHand|delta, observedAt} with header X-Collab-Signature: sha256=<hex HMAC-SHA256 of the body with the signing key>." } : {}) };
+  } catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
+}));
+app.post("/api/connectors/:id/revoke", route(async req => {
+  try { return await revokeGrant(db, req.uid, String(req.params.id), now()); }
+  catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
+}));
+app.post("/api/connectors/:id/sync", route(async req => {
+  const g = (await db.get(GRANTS, String(req.params.id))) as ConnectorGrant | null;
+  if (!g || g.owner !== req.uid) throw new HttpError(404, "No such connector.", "NOT_FOUND");
+  return syncIcal(db, g, url => getSafe(url), now());
+}));
+
 // Stock and slots for an owner's offerings (the ledger the reservations come from).
 app.get("/api/resources", route(async req => db.find(RESOURCES, [["owner", "==", req.uid]], 100)));
 app.post("/api/resources", route(async req => {
@@ -919,6 +942,19 @@ app.post("/api/inbox/:id", route(async req => {
 
 // Cloud Scheduler runs the due watches every 15 minutes. Outside /api (no App Check — it's not the web app);
 // it must carry the cron token derived from the agent secret.
+// A connected POS posts signed stock events here (outside /api: it isn't the web app; the signature is its auth).
+app.post("/connectors/:id/events", express.raw({ type: "*/*", limit: "16kb" }), async (req, res) => {
+  if (!(await take(db, `connector:${String(req.params.id).slice(0, 40)}`, 1, 120, 2))) return res.status(429).json({ error: "Too many events — slow down.", code: "RATE_LIMITED" });
+  try {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+    const r = await ingestInventory(db, cfg.secret, String(req.params.id), raw, req.headers["x-collab-signature"] as string | undefined, now());
+    res.json(r);
+  } catch (err) {
+    if (err instanceof ConnectorError) return res.status(err.status).json({ error: err.message, code: err.code });
+    log.error("connector event failed", err); res.status(500).json({ error: "retry" });
+  }
+});
+
 // Cloud Tasks delivers waiting agent turns here (outside /api: it isn't the web app). Only this service's own
 // account, by OIDC, may call it; it always answers 200 once checked, so a finished conversation isn't retried.
 app.post("/tasks/turns", express.json({ limit: "4kb" }), async (req, res) => {
@@ -935,8 +971,11 @@ app.post("/cron/run", async (req, res, next) => {
     if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
     const r = await runDue(db, model, async a => { await notifyAlert(a); });
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
-    log.info("cron", { ...r, recovered });
-    res.json({ ...r, recovered });
+    // Connected calendars refresh every run; a feed that fails leaves its grant degraded and its data going stale.
+    const calendars = ((await db.find(GRANTS, [["provider", "==", "ical"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked");
+    const synced = (await Promise.all(calendars.map(g => syncIcal(db, g, url => getSafe(url), now())))).filter(x => x.synced).length;
+    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced } });
+    res.json({ ...r, recovered, calendars: { total: calendars.length, synced } });
   } catch (e) { next(e); }
 });
 // Every minute: waiting agent turns that weren't queued (or whose task was lost) are queued again.

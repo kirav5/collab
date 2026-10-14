@@ -7,6 +7,13 @@
     ],
     "rewrites": [
       {
+        "source": "/connectors/**",
+        "run": {
+          "serviceId": "collab-market",
+          "region": "asia-south1"
+        }
+      },
+      {
         "source": "/public/**",
         "run": {
           "serviceId": "collab-market",

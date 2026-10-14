@@ -83,3 +83,22 @@ export class SafePushSender implements PushNotificationSender {
     }
   }
 }
+
+/** A safe GET for connector feeds: https only, public addresses checked at connect time, no redirects, size-capped. */
+export function getSafe(url: string, maxBytes = 1_000_000, timeoutMs = 8000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return reject(new Error("https only"));
+    const req = request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: "GET", lookup: safeLookup as any, timeout: timeoutMs,
+      headers: { accept: "text/calendar, text/plain, */*" } }, res => {
+      if ((res.statusCode ?? 0) < 200 || (res.statusCode ?? 0) >= 300) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+      const chunks: Buffer[] = []; let size = 0;
+      res.on("data", (c: Buffer) => { size += c.length; if (size > maxBytes) { res.destroy(); reject(new Error("feed too large")); } else chunks.push(c); });
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      res.on("error", reject);
+    });
+    req.on("timeout", () => req.destroy(new Error("feed timed out")));
+    req.on("error", reject);
+    req.end();
+  });
+}

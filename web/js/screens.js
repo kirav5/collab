@@ -35,6 +35,9 @@ export const screens = {
       const n = t => facts.filter(f => f.tier === t).length;
       // Stock and time slots for public offerings: what reservations hold and payments commit.
       const ledgers = new Map((await api("/api/resources").catch(() => [])).map(r => [r.factId, r]));
+      const grants = await api("/api/connectors").catch(() => []);
+      const connected = r => grants.filter(g => g.resourceId === r.id && g.status !== "revoked").map(g => `<div class="row small"><span class="faint">${esc(g.title)} · ${g.status === "degraded" ? `<span style="color:var(--danger)">not reporting${g.lastError ? `: ${esc(g.lastError)}` : ""}</span>` : `connected${g.lastEventAt ? `, last ${new Date(g.lastEventAt * 1000).toLocaleString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}</span>
+        ${g.provider === "ical" ? `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>` : ""}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">Revoke</button></div>`).join("");
       const now_ = Date.now() / 1000;
       const stockRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
@@ -45,12 +48,14 @@ export const screens = {
         if (r.type === "quantity") {
           const held = r.holds.filter(h => h.state === "held" && h.expiresAt > now_).reduce((n, h) => n + h.qty, 0);
           return `<div class="row small stock"><b>Stock ${r.onHand}</b>${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
-            <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>`;
+            <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>
+            ${connected(r) || `<div class="row small"><button class="btn quiet compact" data-act="conn-pos" data-id="${esc(r.id)}">Connect a POS</button><span class="faint">its sales update this count</span></div>`}<div data-conn="${esc(r.id)}"></div>`;
         }
         const open = r.slots.filter(sl => sl.start > now_);
         const taken = sl => r.holds.filter(h => h.slotId === sl.id && (h.state === "committed" || (h.state === "held" && h.expiresAt > now_))).reduce((n, h) => n + h.qty, 0);
         return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
-          <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div></div>`;
+          <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div>
+          ${connected(r) || `<div class="row small"><input class="field" type="url" placeholder="Calendar iCal URL (https)" data-ical="${esc(r.id)}"><button class="btn quiet compact" data-act="conn-ical" data-id="${esc(r.id)}">Connect calendar</button></div><span class="faint small">Only busy times are read — event titles stay with your calendar.</span>`}</div>`;
       };
       return frame("Context", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
@@ -86,6 +91,28 @@ export const screens = {
         try { await api("/api/resources", a === "stock-track" ? { factId: el.dataset.id, type: "quantity", onHand: qty } : { factId: el.dataset.id, type: "slots", slots: [] }); h.toast(a === "stock-track" ? "Stock tracked — deals now reserve it." : "Add your time slots below."); }
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
+      }
+      if (a === "conn-pos") {
+        busy(el, true);
+        try {
+          const r = await api("/api/connectors", { provider: "inventory-webhook", resourceId: el.dataset.id });
+          document.querySelector(`[data-conn="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card slim"><b class="small">Give these to your POS (the key is shown once):</b>
+            <code class="small" style="overflow-wrap:anywhere">${esc(r.eventsUrl)}</code><code class="small" style="overflow-wrap:anywhere">${esc(r.signingKey)}</code><span class="small faint">${esc(r.howTo)}</span></div>`;
+        } catch (err) { h.toast(err.message); busy(el, false); }
+        return true;
+      }
+      if (a === "conn-ical") {
+        const url = document.querySelector(`[data-ical="${CSS.escape(el.dataset.id)}"]`)?.value.trim();
+        if (!url) { h.toast("Paste your calendar's iCal (https) address."); return true; }
+        busy(el, true);
+        try { const r = await api("/api/connectors", { provider: "ical", resourceId: el.dataset.id, url }); h.toast(r.grant.status === "degraded" ? `Connected, but the feed couldn't be read: ${r.grant.lastError}` : "Calendar connected — busy times now block slots."); }
+        catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "conn-sync") { busy(el, true); const r = await api(`/api/connectors/${el.dataset.id}/sync`, {}).catch(e => ({ reason: e.message })); h.toast(r.synced ? `Synced — ${r.busy} busy times.` : `Couldn't sync: ${r.reason}`); h.paint(); return true; }
+      if (a === "conn-revoke") {
+        if (!confirm("Revoke this connection? It stops changing your availability; until you recount, availability shows as unconfirmed.")) return true;
+        await api(`/api/connectors/${el.dataset.id}/revoke`, {}); h.toast("Revoked."); h.paint(); return true;
       }
       if (a === "stock-set") {
         const qty = Number(document.querySelector(`[data-stock="${CSS.escape(el.dataset.id)}"]`)?.value);

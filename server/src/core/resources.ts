@@ -22,6 +22,8 @@ export interface Resource {
   /** slots: bookable intervals (epoch seconds) with how many each can take; IANA time zone for display. */
   slots: Slot[]; timezone: string;
   holds: Hold[];
+  /** Busy intervals from a connected calendar: a slot overlapping one isn't bookable. */
+  busy?: { start: number; end: number }[];
   /** Where the numbers come from and when they were last confirmed: a ledger the owner keeps here, a manual
    *  count that goes stale, or a connected system. */
   source: "ledger" | "manual" | "connector"; observedAt: number; staleAfterSec: number;
@@ -41,7 +43,8 @@ function tidy(r: Resource, now: number): Resource {
 
 /** Is the availability known? Ledger and connector counts are; a manual count older than its window is stale. */
 export function certainty(r: Resource, now: number): "confirmed" | "stale" {
-  return r.source === "manual" && now - r.observedAt > r.staleAfterSec ? "stale" : "confirmed";
+  // A manual count, or a connected system that has stopped reporting, goes stale after its window.
+  return r.source !== "ledger" && now - r.observedAt > r.staleAfterSec ? "stale" : "confirmed";
 }
 
 /** Units free for new holds (quantity), or places free in a slot. */
@@ -49,6 +52,7 @@ export function available(r: Resource, now: number, slotId: string | null = null
   if (r.type === "quantity") return Math.max(0, r.onHand - r.holds.filter(h => h.state === "held" && h.expiresAt > now).reduce((n, h) => n + h.qty, 0));
   const slot = r.slots.find(s => s.id === slotId);
   if (!slot) return 0;
+  if ((r.busy ?? []).some(b => b.start < slot.end && b.end > slot.start)) return 0;
   return Math.max(0, slot.capacity - r.holds.filter(h => h.slotId === slotId && live(h, now)).reduce((n, h) => n + h.qty, 0));
 }
 

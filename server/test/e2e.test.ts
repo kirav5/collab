@@ -329,6 +329,24 @@ test('time slots: an agreed lesson asks the buyer to pick a slot; one place goes
   assert.ok(ledger.holds.some((h: any) => h.state === 'committed' && h.slotId === slots[0].id));
 });
 
+test('a connected POS: signed events update stock once, unsigned ones are refused, revocation stops them', async () => {
+  await as('pos-shop', '/api/me', { handle: 'pos-shop', name: 'POS Shop', areaName: 'Bengaluru' });
+  const fact = await as('pos-shop', '/api/facts', { tier: 'public', text: 'Steel tiffin boxes for sale in Bengaluru, ₹350 each.' });
+  const ledger = await as('pos-shop', '/api/resources', { factId: fact.id, type: 'quantity', onHand: 2 });
+  const { grant, eventsUrl, signingKey } = await as('pos-shop', '/api/connectors', { provider: 'inventory-webhook', resourceId: ledger.id });
+  const { createHmac } = await import('node:crypto');
+  const send = (ev: object, key = signingKey) => { const body = JSON.stringify(ev); return fetch(eventsUrl.replace(/^https?:\/\/[^/]+/, B), { method: 'POST', headers: { 'content-type': 'application/json', 'x-collab-signature': `sha256=${createHmac('sha256', key).update(body).digest('hex')}` }, body }); };
+  const t = Math.floor(Date.now() / 1000);
+  assert.equal((await send({ id: 'sale-1', type: 'stock.adjust', delta: -1, observedAt: t })).status, 200);
+  assert.deepEqual(await (await send({ id: 'sale-1', type: 'stock.adjust', delta: -1, observedAt: t })).json(), { applied: false, duplicate: true });
+  assert.equal((await send({ id: 'forged', type: 'stock.set', onHand: 999, observedAt: t }, 'not-the-key')).status, 401);
+  assert.equal((await as('pos-shop', '/api/resources')).find((r: any) => r.id === ledger.id).onHand, 1);
+  await assert.rejects(as('zed', `/api/connectors/${grant.id}/revoke`, {}), 'only the owner revokes');
+  await as('pos-shop', `/api/connectors/${grant.id}/revoke`, {});
+  assert.equal((await send({ id: 'after', type: 'stock.set', onHand: 50, observedAt: t + 1 })).status, 403);
+  assert.equal((await as('pos-shop', '/api/resources')).find((r: any) => r.id === ledger.id).onHand, 1);
+});
+
 test('a listing-origin agreement can be paid and issued a pickup pass', async () => {
   const e = await as('amy', `/api/engagements/${agreedId}/pay`, {});
   assert.equal(e.payment.status, 'paid');
