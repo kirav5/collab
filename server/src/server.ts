@@ -25,6 +25,7 @@ import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { turnQueue } from "./core/queue.ts";
+import { recoverOutbox } from "./core/recovery.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
@@ -788,8 +789,19 @@ app.post("/cron/run", async (req, res, next) => {
     const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
     if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
     const r = await runDue(db, model, async a => { await notifyAlert(a); });
-    log.info("cron", r);
-    res.json(r);
+    const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
+    log.info("cron", { ...r, recovered });
+    res.json({ ...r, recovered });
+  } catch (e) { next(e); }
+});
+// Every minute: waiting agent turns that weren't queued (or whose task was lost) are queued again.
+app.post("/cron/recover", async (req, res, next) => {
+  try {
+    const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
+    if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
+    const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
+    if (recovered.found) log.info("outbox recovery", recovered);
+    res.json(recovered);
   } catch (e) { next(e); }
 });
 

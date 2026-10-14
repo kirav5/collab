@@ -20,6 +20,7 @@ import { byHandle } from "../core/directory.ts";
 import { type Turn, fresh, load, providerTurn, requesterTurn, save } from "../core/engage.ts";
 import { take, withLease } from "../core/limits.ts";
 import { pushTo } from "../core/push.ts";
+import { outboxKey } from "../core/recovery.ts";
 
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
@@ -30,7 +31,7 @@ export interface A2AConfig { db: Docs; model: Model | null; publicUrl: string; s
   /** Cloud Run's own URL: Firebase Hosting buffers server-sent events, so streaming clients are pointed here first. */
   directUrl?: string;
   /** Re-runs a conversation's waiting turn on the server (Cloud Tasks). */
-  enqueue?: (engagementId: string, delaySeconds?: number) => Promise<void>;
+  enqueue?: (engagementId: string, delaySeconds?: number, dedupe?: string) => Promise<boolean>;
   /** Screens text arriving from other agents before any model sees it (Model Armor). */
   screen?: (text: string) => Promise<{ flagged: boolean; reason?: string }>;
   verifyIdToken: (t: string) => Promise<string> }
@@ -302,7 +303,7 @@ export async function sendTurn(cfg: A2AConfig, engagementId: string, first: Turn
   if (ran === null && first) {
     const e = await load(cfg.db, engagementId);
     if (!e.outbox) { e.outbox = first; await save(cfg.db, e); }
-    await cfg.enqueue?.(engagementId, 15);
+    await cfg.enqueue?.(engagementId, 15, outboxKey((await load(cfg.db, engagementId)).outbox));
   }
 }
 
@@ -314,7 +315,7 @@ async function runTurns(cfg: A2AConfig, engagementId: string, first: Turn | null
       const e = await load(cfg.db, engagementId);
       if (!e.requester.uid) return;
       // A request behind Firebase Hosting has 60 s: past ~35 s the next turn waits in the outbox for the next run.
-      if (Date.now() - started > 35_000) { e.outbox = turn; await save(cfg.db, e); await cfg.enqueue?.(engagementId); return; }
+      if (Date.now() - started > 35_000) { e.outbox = turn; await save(cfg.db, e); await cfg.enqueue?.(engagementId, 2, outboxKey(turn)); return; }
       if (e.outbox) { e.outbox = null; await save(cfg.db, e); }
       const client = await clientFor(cfg, e.provider.handle, e.requester.uid);
       const task = (await client.sendMessage({ message: message("ROLE_USER", turn, { taskId: e.taskId ?? undefined, contextId: e.contextId ?? undefined }) } as any)) as Task;

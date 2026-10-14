@@ -70,6 +70,9 @@ export const setSigner = (fn: (uid: string, hash: string) => string) => { signer
 
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
+  // The outbox flag is derived on every save, so a waiting turn can always be found by the recovery scan.
+  e.outboxPending = !!e.outbox;
+  e.outboxAt = e.outbox ? (e.outboxAt ?? now()) : null;
   if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now(), signer ?? undefined); }
   // AP2: once both owners confirmed, the seller's agent issues the cart the buyer pays against.
   if (e.phase === "agreed" && !e.payment && signer) {

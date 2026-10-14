@@ -101,6 +101,12 @@ if gcloud scheduler jobs describe collab-watches --location "$REGION" >/dev/null
 else
   gcloud scheduler jobs create http collab-watches --location "$REGION" --schedule "*/15 * * * *" --uri "$RUN_URL/cron/run" --http-method POST --headers "x-collab-cron=$CRON_TOKEN" --quiet >/dev/null
 fi
+# Outbox recovery every minute: waiting agent turns that weren't queued are queued again.
+if gcloud scheduler jobs describe collab-recovery --location "$REGION" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http collab-recovery --location "$REGION" --schedule "* * * * *" --uri "$RUN_URL/cron/recover" --http-method POST --update-headers "x-collab-cron=$CRON_TOKEN" --quiet >/dev/null
+else
+  gcloud scheduler jobs create http collab-recovery --location "$REGION" --schedule "* * * * *" --uri "$RUN_URL/cron/recover" --http-method POST --headers "x-collab-cron=$CRON_TOKEN" --quiet >/dev/null
+fi
 
 echo
 echo "Web app:     $SITE"
