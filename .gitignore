@@ -6,3 +6,4 @@ node_modules/
 .DS_Store
 .deploy/
 web/version.txt
+deploy/staging.env

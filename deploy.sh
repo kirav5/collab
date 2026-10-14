@@ -3,14 +3,21 @@
 # rules and the vector index to Firebase. Needs `gcloud auth login` and `firebase login` first.
 set -euo pipefail
 
-PROJECT="${PROJECT:-collab-55}"
-REGION="${REGION:-asia-south1}"
-SERVICE="collab-market"
-SA="collab-market@${PROJECT}.iam.gserviceaccount.com"
-SITE="https://${PROJECT}.web.app"
-MODELS="${GEMINI_MODELS:-gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite}"
-
+# Usage: ./deploy.sh <environment>   (reads deploy/<environment>.env — e.g. ./deploy.sh production)
+# Every environment names its project, hostname, demo and security settings explicitly; nothing is inherited.
 cd "$(dirname "$0")"
+ENVIRONMENT="${1:-}"
+if [ -z "$ENVIRONMENT" ] || [ ! -f "deploy/$ENVIRONMENT.env" ]; then
+  echo "Usage: ./deploy.sh <environment>  — one of: $(ls deploy/*.env 2>/dev/null | xargs -n1 basename | sed 's/\.env$//' | tr '\n' ' ')" >&2
+  exit 2
+fi
+set -a; . "deploy/$ENVIRONMENT.env"; set +a
+for v in PROJECT REGION SERVICE SITE APPCHECK SEED_DEMO GEMINI_MODELS; do
+  [ -n "${!v:-}" ] || { echo "deploy/$ENVIRONMENT.env must set $v" >&2; exit 2; }
+done
+SA="${SERVICE}@${PROJECT}.iam.gserviceaccount.com"
+MODELS="$GEMINI_MODELS"
+echo "Deploying $ENVIRONMENT → $PROJECT ($SITE)"
 gcloud config set project "$PROJECT" >/dev/null
 
 # The secret our users' agents sign their A2A calls with lives in Secret Manager (made once; never in git or in the
@@ -26,15 +33,14 @@ if ! gcloud secrets describe receipt-key >/dev/null 2>&1; then
   (umask 077; [ -f .deploy/receipt-key ] || openssl genpkey -algorithm ED25519 -out .deploy/receipt-key)
   gcloud secrets create receipt-key --replication-policy=automatic --data-file=.deploy/receipt-key >/dev/null
 fi
-RECAPTCHA_SITE_KEY="${RECAPTCHA_SITE_KEY:-6LcWVO0tAAAAAGE87CLYa8anCDcS9mnidBl2geJN}"
-APPCHECK="${APPCHECK:-monitor}"
+RECAPTCHA_SITE_KEY="${RECAPTCHA_SITE_KEY:-}"
 
 # The web config is public (Firebase Hosting serves it too); the Cloud Run URL uses it when opened directly.
 FIREBASE_WEB_CONFIG="$(firebase apps:sdkconfig web --project "$PROJECT" 2>/dev/null | sed -n '/^{/,/^}/p' | tr -d '\n' || true)"
 
 # The server runs as its own service account: Gemini through Vertex AI, Firestore, and checking Firebase sign-ins.
 if ! gcloud iam service-accounts describe "$SA" >/dev/null 2>&1; then
-  gcloud iam service-accounts create collab-market --display-name "Collab server"
+  gcloud iam service-accounts create "$SERVICE" --display-name "Collab server"
 fi
 # Rate-limit counters and leases expire on their own (Firestore TTL on expireAt).
 for group in rate leases; do
@@ -43,7 +49,7 @@ done
 
 # Model Armor: one template screens what other agents send (prompt injection / jailbreak), one checks answers before
 # they're shared (sensitive data). asia-south1 doesn't offer the malicious-URL filter.
-ARMOR_LOCATION="${ARMOR_LOCATION:-asia-south1}"
+ARMOR_LOCATION="${ARMOR_LOCATION:-$REGION}"
 gcloud services enable modelarmor.googleapis.com --project "$PROJECT" >/dev/null
 ARMOR=(--project "$PROJECT" --location "$ARMOR_LOCATION")
 export CLOUDSDK_API_ENDPOINT_OVERRIDES_MODELARMOR="https://modelarmor.$ARMOR_LOCATION.rep.googleapis.com/"
@@ -87,7 +93,7 @@ gcloud run deploy "$SERVICE" --quiet \
   --min-instances "${MIN_INSTANCES:-1}" --max-instances 2 --cpu-boost \
   --timeout 60 \
   --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
-  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=1##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW##BUILD_ID=$BUILD_ID"
+  --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=$SEED_DEMO##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##MODEL_ARMOR_FAIL_MODE=${MODEL_ARMOR_FAIL_MODE:-open}##POLICY_JSON=${POLICY_JSON:-{\}}##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW##BUILD_ID=$BUILD_ID"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).
 echo "$BUILD_ID" > web/version.txt
