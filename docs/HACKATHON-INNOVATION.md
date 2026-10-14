@@ -14,7 +14,7 @@ Retail & Commerce explicitly includes discovery, conversational shopping, and im
 
 The public timeline gives 18 October 2026 for submission and 14 October for team formation. Source: [official timeline](https://aibuildercup.com/).
 
-**Eligibility needs clarification.** The [official FAQ](https://aibuildercup.com/Faqs.html) says only fresh projects built during the hackathon timeline qualify and excludes submissions based on pre-existing projects. PRD and HANDOFF disclose ported logic from native Collab. The first web-repo commit is 13 October; that alone does not establish eligibility of reused work. Ask the organizers whether the disclosed reuse is permitted; do not remove provenance or describe it as all-new. The FAQ also requires 2–4 eligible team members, a deployed prototype, public repository, a video under three minutes, and a deck. The public theme page contains unrelated category wording in its submission section, so confirm the actual dashboard category and template before submitting.
+**Eligibility (owner's decision, 15 Oct).** Collab is the team's own product and this web app was built within the project timeline; the ported logic stays disclosed in README and HANDOFF. The FAQ also requires 2–4 eligible team members, a deployed prototype, public repository, a video under three minutes, and a deck. The public theme page contains unrelated category wording in its submission section, so confirm the actual dashboard category and template before submitting.
 
 ## What to finish and how to prove it
 
