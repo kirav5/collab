@@ -29,7 +29,7 @@ import { recoverOutbox } from "./core/recovery.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS } from "./core/price-check.ts";
-import { replayProtected, verifyAppCheckToken } from "./core/app-check.ts";
+import { appCheckDecision, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, pay, sellerOf } from "./core/pay.ts";
@@ -172,7 +172,7 @@ app.use("/api", express.json({ limit: "128kb" }));
 // App Check: calls to the API come from our own web app. "monitor" logs what would be refused; "enforce" refuses.
 // (A2A at /a2a stays open to any agent — that's the point of it — and is rate-limited instead.)
 const APPCHECK = env.APPCHECK ?? "off";
-let consumeUnavailable = false;
+let consumeUnavailable: { at: number; error: string } | null = null;
 let appCheck: ((t: string, options?: { consume: boolean }) => Promise<{ alreadyConsumed?: boolean }>) | null = null;
 app.use("/api", async (req, res, next) => {
   if (APPCHECK === "off" || req.path === "/config") return next();
@@ -180,26 +180,21 @@ app.use("/api", async (req, res, next) => {
   // Consuming a token needs a network call and the Token Verifier IAM role. Do it only for sensitive writes when
   // enforcement is on; monitor mode keeps working with ordinary cached tokens.
   const consume = APPCHECK === "enforce" && replayProtected(req.method, req.path);
-  let ok = false;
-  if (typeof token === "string" && token) {
-    try {
-      if (!appCheck) {
-        const { initializeApp, getApps } = await import("firebase-admin/app");
-        const { getAppCheck } = await import("firebase-admin/app-check");
-        if (!getApps().length) initializeApp();
-        appCheck = (t, options) => getAppCheck().verifyToken(t, options);
-      }
-      try { ok = await verifyAppCheckToken(token, consume && !consumeUnavailable, appCheck); }
-      catch (e) {
-        // Without roles/firebaseappcheck.tokenVerifier tokens can't be consumed: check them the normal way rather
-        // than refusing every payment, and say so once in the log.
-        if (!consume || !/permission|PERMISSION_DENIED|403|forbidden/i.test(String(e))) throw e;
-        consumeUnavailable = true;
-        log.error("app check replay protection unavailable: grant roles/firebaseappcheck.tokenVerifier", { error: String(e).slice(0, 160) });
-        ok = await verifyAppCheckToken(token, false, appCheck);
-      }
-    } catch { ok = false; }
+  if (!appCheck) {
+    const { initializeApp, getApps } = await import("firebase-admin/app");
+    const { getAppCheck } = await import("firebase-admin/app-check");
+    if (!getApps().length) initializeApp();
+    appCheck = (t, options) => getAppCheck().verifyToken(t, options);
   }
+  const decision = await appCheckDecision(typeof token === "string" ? token : undefined, consume, appCheck);
+  // Fail closed: a sensitive action whose single-use token can't be consumed is refused, and /health shows it.
+  if (decision === "unavailable") {
+    consumeUnavailable = { at: now(), error: "token consumption failed" };
+    log.error("app check replay protection unavailable: sensitive actions refused", { path: req.path });
+    return res.status(503).json({ error: "Payments and pickups are paused for a moment while a security check is unavailable. Try again shortly.", code: "SECURITY_CHECK_UNAVAILABLE" });
+  }
+  if (consume && decision === "ok") consumeUnavailable = null;
+  const ok = decision === "ok";
   if (ok) return next();
   log.warn("app check failed", { path: req.path, mode: APPCHECK, hadToken: typeof token === "string", replayProtected: consume });
   if (APPCHECK === "enforce") return res.status(401).json({ error: consume ? "This action needs a fresh app check. Please try again." : "Please use the Collab app (app check failed)." });
@@ -207,7 +202,8 @@ app.use("/api", async (req, res, next) => {
 });
 
 app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local", model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
-  modelArmor: armor ? { on: true, ...armor.stats } : { on: false } }), false));
+  modelArmor: armor ? { on: true, ...armor.stats } : { on: false },
+  security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on" } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
