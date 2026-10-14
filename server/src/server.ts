@@ -25,7 +25,7 @@ import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { capabilities } from "./core/capabilities.ts";
-import { GOALS, type Goal, createGoal, goalView, linkTask } from "./core/goals.ts";
+import { GOALS, type Goal, backfillGoals, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
 import { recoverOutbox } from "./core/recovery.ts";
@@ -218,6 +218,7 @@ app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? 
 
 // Goals: what the owner wants done, with each conversation as a task and a state that follows from them.
 app.get("/api/goals", route(async req => {
+  await backfillGoals(db, req.uid, now());
   const gs = ((await db.find(GOALS, [["owner", "==", req.uid]], 100)) as Goal[]).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50);
   return Promise.all(gs.map(g => goalView(db, g)));
 }));

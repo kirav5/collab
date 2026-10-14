@@ -97,3 +97,24 @@ export async function goalView(db: Docs, g: Goal) {
   const next = tasks.find(t => t.waitingOn === "you")?.next ?? tasks.find(t => t.state === "waiting_for_external" || t.state === "running")?.next ?? null;
   return { ...g, state, tasks, next };
 }
+
+/**
+ * Migration goals-v1 (additive, once per owner): conversations started before goals existed become tasks of goals —
+ * one goal per request (by brief), one per direct question — keeping their ids. Recorded in `migrations`.
+ */
+export async function backfillGoals(db: Docs, owner: string, now: number): Promise<number> {
+  const marker = `goals-v1:${owner}`;
+  if (await db.get("migrations", marker)) return 0;
+  const mine = ((await db.find(ENGAGEMENTS, [["participants", "array-contains", owner]], 300)) as Engagement[])
+    .filter(e => e.requester.uid === owner && !e.goalId);
+  const groups = new Map<string, Engagement[]>();
+  for (const e of mine) { const k = e.briefId && !e.briefId.startsWith("direct-") ? e.briefId : e.id; groups.set(k, [...(groups.get(k) ?? []), e]); }
+  for (const es of groups.values()) {
+    const first = es[0];
+    const kind: GoalKind = first.offer.price == null && !first.negotiation.deal ? "information" : /service|lesson|task/i.test(first.offer.category ?? "") ? "service" : "purchase";
+    const g = await createGoal(db, owner, first.brief?.title ?? first.title, kind, null, Math.min(...es.map(e => e.createdAt)));
+    for (const e of es) { await db.merge(ENGAGEMENTS, e.id, { goalId: g.id }); await linkTask(db, g.id, owner, e.id, now); }
+  }
+  await db.set("migrations", marker, { id: marker, owner, goals: groups.size, conversations: mine.length, at: now });
+  return groups.size;
+}

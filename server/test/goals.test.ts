@@ -2,8 +2,9 @@
 // an information goal that completes with no price, cart or seller.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fresh } from "../src/core/engage.ts";
-import { type Goal, goalState, taskOf } from "../src/core/goals.ts";
+import { ENGAGEMENTS, fresh, save } from "../src/core/engage.ts";
+import { memoryDocs } from "../src/docs.ts";
+import { GOALS, type Goal, backfillGoals, goalState, goalView, taskOf } from "../src/core/goals.ts";
 import type { SharedBrief } from "../src/core/model.ts";
 
 const brief: SharedBrief = { title: "Do you ship?", summary: "Do you ship?", category: "", mode: null, area: null, requirements: [], budget: null, questions: ["Do you ship?"] };
@@ -44,4 +45,21 @@ test("goal states: waiting on you, completed by one deal among several sellers, 
   assert.equal(goalState(goal("information"), [t("succeeded"), t("failed")]), "partially_completed");
   assert.equal(goalState(goal("purchase"), [t("cancelled"), t("cancelled")]), "cancelled");
   assert.equal(goalState({ ...goal("purchase"), closed: "cancelled" }, [t("running")]), "cancelled");
+});
+
+test("migration goals-v1: older conversations become goals once, ids kept, nothing else touched", async () => {
+  const db = memoryDocs();
+  const a = conv(500); a.briefId = "b1"; const b = conv(400); b.briefId = "b1"; const c = conv(null); c.briefId = `direct-${c.id}`;
+  const theirs = conv(300); theirs.requester = { uid: "other", handle: "o", name: "O" }; theirs.participants = ["other", "shop"];
+  for (const e of [a, b, c, theirs]) await save(db, e);
+  assert.equal(await backfillGoals(db, "me", 1), 2, "one goal per request, one per direct question");
+  assert.equal(await backfillGoals(db, "me", 2), 0, "runs once");
+  const goals = (await db.find(GOALS, [["owner", "==", "me"]], 10)) as Goal[];
+  const byTasks = goals.map(g => g.taskIds.length).sort();
+  assert.deepEqual(byTasks, [1, 2]);
+  assert.equal(((await db.get(ENGAGEMENTS, a.id)) as any).goalId, ((await db.get(ENGAGEMENTS, b.id)) as any).goalId);
+  assert.equal(((await db.get(ENGAGEMENTS, theirs.id)) as any).goalId, undefined, "another owner's conversation is untouched");
+  const info = goals.find(g => g.taskIds.includes(c.id))!;
+  assert.equal(info.kind, "information");
+  assert.equal((await goalView(db, info)).tasks[0].id, c.id);
 });
