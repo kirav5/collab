@@ -4,7 +4,7 @@
 // agents are doing (Requests) and what was shared (Activity).
 import { shouldReload } from "./version.js";
 import { api, insightsLines, ios, session, signIn, standalone } from "./api.js";
-import { chat, detectNano, engine, itemOf, startDevice, drafts } from "./agent.js";
+import { chat, detectNano, engine, itemOf, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
 import { engagementCard, messageHTML } from "./cards.js";
@@ -67,6 +67,10 @@ async function setup() {
 
 async function boot() {
   detectNano().then(() => paintSidebar());
+  // Offline: a banner, cached conversations, and (with the on-device model) answers from the notes on this device.
+  refreshNotesCache();
+  addEventListener("online", () => { toast("Back online."); refreshNotesCache(); paint(); });
+  addEventListener("offline", () => { toast(engine.nano ? "Offline — questions about your notes are answered on this device." : "Offline — showing what's saved on this device."); paint(); });
   S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
   syncChats();
@@ -103,8 +107,8 @@ function paintSidebar() {
   if (!el) return;
   const n = needsYou().length;
   const groups = groupSessions(S.sessions);
-  const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${engine.nano ? "peri" : "accent"}" data-act="screen" data-screen="settings"
-      title="Which AI runs your agent — tap for details">✦ ${engine.nano ? "Gemini Nano · on this device" : "Powered by Gemini"}</button></span></header>
+  const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.nano ? "peri" : "accent"}" data-act="screen" data-screen="settings"
+      title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.nano ? " · on-device AI" : ""}` : `✦ ${engine.nano ? "Gemini Nano · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>

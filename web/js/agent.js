@@ -6,10 +6,13 @@
 // Model calls over private notes use Gemini Nano in the browser when Chrome has it; otherwise Gemini through the
 // server for that one call, which logs nothing.
 import { FB, api, insightsLines, session } from "./api.js";
-import { relevant } from "./local.js";
+import { local, relevant } from "./local.js";
 import { live, onChange, poke } from "./live.js";
 
-export const engine = { nano: false };
+// On-device AI (Gemini Nano in Chrome): its state is shown in Settings › AI engine, where the owner can download it
+// and choose whether private-note answers stay on the device. `nano` = ready and chosen.
+const pref = () => { try { return localStorage.getItem("collab.device") !== "off"; } catch { return true; } };
+export const engine = { nano: false, status: "checking", progress: null, prefer: pref() };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
 export const needsLimit = new Set(); // move items this device has no limit for (the owner sets one)
 
@@ -29,17 +32,50 @@ async function onDeviceModel() {
 }
 
 export async function detectNano() {
-  try {
-    if ("LanguageModel" in self && (await self.LanguageModel.availability()) === "available") engine.nano = true;
-  } catch { engine.nano = false; }
+  try { engine.status = "LanguageModel" in self ? await self.LanguageModel.availability() : "unsupported"; }
+  catch { engine.status = "unsupported"; }
+  engine.nano = engine.status === "available" && engine.prefer;
   return engine.nano;
+}
+
+/** Downloads Gemini Nano (Chrome only starts this from a tap); `onProgress` gets 0–1. */
+export async function downloadNano(onProgress) {
+  if (!("LanguageModel" in self)) throw new Error("This browser has no on-device model.");
+  engine.status = "downloading"; engine.progress = 0; onProgress?.(0);
+  const lm = await self.LanguageModel.create({ monitor(m) { m.addEventListener("downloadprogress", e => { engine.progress = e.loaded; onProgress?.(e.loaded); }); } });
+  lm.destroy?.();
+  engine.progress = null;
+  return detectNano();
+}
+
+export function setPreferDevice(on) {
+  engine.prefer = on;
+  try { localStorage.setItem("collab.device", on ? "on" : "off"); } catch {}
+  engine.nano = engine.status === "available" && on;
+}
+
+// A copy of the owner's private notes on this device, so questions about them can be answered offline (on device).
+async function cacheNotes(facts) { try { await local.put("facts", { id: "notes", items: facts.filter(f => f.tier === "private").map(f => ({ id: f.id, text: f.text, tier: f.tier, createdAt: f.createdAt })), at: Date.now() }); } catch {} }
+/** Keeps the device's copy of the private notes current (called while online). */
+export async function refreshNotesCache() { const f = await api("/api/facts").catch(() => null); if (f) await cacheNotes(f); }
+async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
+
+/** No network: questions about the owner's own notes are answered on the device; anything else waits. */
+async function offlineAnswer(text) {
+  if (!engine.nano) return { text: engine.status === "available"
+    ? "You're offline. Turn on “Answer from my notes on this device” in Settings › AI engine to ask about your notes offline."
+    : "You're offline. Download the on-device model in Settings › AI engine to ask about your own notes without a connection. Requests to other people's agents need the network.", cards: [] };
+  const notes = relevant(await cachedNotes(), text);
+  const a = notes.length ? await think(text, notes, "self", true) : null;
+  if (!a) return { text: notes.length ? "Offline — your saved notes don't clearly answer that." : "Offline — nothing in the notes saved on this device matches that.", cards: [] };
+  return { text: a.text, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: "device" }] };
 }
 
 const norm = s => s.toLowerCase().replace(/,/g, "").replace(/\s+/g, " ");
 const nums = s => (s.replace(/(\d),(?=\d)/g, "$1").match(/\d+(?:\.\d+)?/g) ?? []);
 
 /** An answer from these notes only, with the evidence it relied on (checked: quoted from the notes, no new numbers). */
-export async function think(question, notes, side = "self") {
+export async function think(question, notes, side = "self", deviceOnly = false) {
   if (!notes.length) return null;
   if (engine.nano) {
     try {
@@ -57,6 +93,7 @@ export async function think(question, notes, side = "self") {
       }
     } catch { /* fall through to Gemini */ }
   }
+  if (deviceOnly) return null;
   const r = await api("/api/think", { question, notes: notes.map(n => ({ text: n.text })), side });
   return r.action === "answer" ? { text: r.text ?? r.answer, evidence: r.evidence, on: "gemini" } : null;
 }
@@ -68,14 +105,18 @@ export const itemOf = draft => draft.need.attributes?.item ?? draft.shared.requi
 
 /** `open`: the latest request card in this chat ({ draft, autonomy, days }), so follow-ups can change it. */
 export async function chat(text, recent, area, open = null) {
-  const route = await api("/api/route", { text, recent, open: open?.draft.shared.title ?? null });
+  if (!navigator.onLine) return offlineAnswer(text);
+  let route;
+  try { route = await api("/api/route", { text, recent, open: open?.draft.shared.title ?? null }); }
+  catch (e) { if (e instanceof TypeError) return offlineAnswer(text); throw e; }
   switch (route.intent) {
     case "remember": {
       const fact = await api("/api/facts", { text, tier: "private" });
       return { text: "Saved to your context — only your agent can use it; it's never shared.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {
-      const facts = await api("/api/facts").catch(() => []);
+      const facts = await api("/api/facts").catch(() => null) ?? await cachedNotes();
+      if (facts.length) cacheNotes(facts);
       const notes = relevant(facts, text);
       const a = notes.length ? await think(text, notes) : null;
       if (!a) return { text: notes.length ? "Your notes don't clearly answer that." : "I don't have anything about that in your context yet.", cards: [] };

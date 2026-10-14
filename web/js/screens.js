@@ -2,7 +2,7 @@
 // People, Sharing (rules for Protected topics, pause everything), Requests (every conversation between agents, live),
 // Activity (what your agent shared, with whom) and Settings.
 import { api, ios, session, standalone } from "./api.js";
-import { engine } from "./agent.js";
+import { downloadNano, engine, setPreferDevice } from "./agent.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
@@ -13,6 +13,20 @@ const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(
 /** Every fact the owner has — all tiers live on the server under their account; Private is never shared. */
 async function allFacts() {
   return (await api("/api/facts").catch(() => [])).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** Gemini Nano's state on this device, and what the owner can do about it. */
+function deviceAI() {
+  const pct = engine.progress == null ? "" : ` ${Math.round(engine.progress * 100)}%`;
+  switch (engine.status) {
+    case "available": return `<span style="color:var(--fresh)">● Gemini Nano ready on this device</span>
+      <label class="row small" style="gap:6px;margin-top:6px"><input type="checkbox" data-act="device-pref" ${engine.prefer ? "checked" : ""}> Answer from my notes on this device (works offline)</label>`;
+    case "downloadable": return `Gemini Nano can run on this device (Chrome built-in AI). It's a one-time download of about 3–4 GB.
+      <button class="btn secondary compact" data-act="device-download">Download on-device model</button>`;
+    case "downloading": return `<span class="spinner"></span> Downloading Gemini Nano…${pct} <span class="small faint">You can keep using Collab.</span>`;
+    case "checking": return `Checking…`;
+    default: return `Not available in this browser. Gemini Nano runs in Chrome on desktop (Windows, macOS, Linux, ChromeOS) with enough memory; your agent uses Gemini in the cloud here.`;
+  }
 }
 
 export const screens = {
@@ -180,7 +194,8 @@ export const screens = {
           <input class="field" name="bio" value="${esc(S.profile.bio)}" placeholder="One line about you (public)">
           <input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="Your area">
           <button class="btn" data-act="save-profile">Save</button></form>
-        <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>Your notes</dt><dd>${engine.nano ? "Gemini Nano, on this device (Chrome built-in AI via Firebase AI Logic, on-device only)" : "Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
+        <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>On-device AI</dt><dd>${deviceAI()}</dd>
+          <dt>Your notes</dt><dd>${engine.nano ? "Answered by Gemini Nano on this device (Firebase AI Logic, on-device only) — also offline" : "Answered by Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Install Collab to open it like an app. Notifications tell you when your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
@@ -197,6 +212,13 @@ export const screens = {
     },
     async act(a, el, S, h) {
       if (a === "save-profile") { const f = new FormData(el.closest("form")); busy(el, true); S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), bio: f.get("bio"), areaName: f.get("area") }); h.toast("Saved."); h.paint(); return true; }
+      if (a === "device-download") {
+        el.disabled = true;
+        try { await downloadNano(() => h.paint()); h.toast(engine.nano ? "Gemini Nano is ready — your notes are answered on this device, even offline." : "Downloaded."); }
+        catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "device-pref") { setPreferDevice(el.checked); h.toast(el.checked ? "Your notes will be answered on this device." : "Your notes will be answered by Gemini in the cloud."); h.paint(); return true; }
       if (a === "push-test") {
         busy(el, true, "Sending");
         try { const r = await api("/api/push/test", {}); h.toast(r.sent ? `Sent to ${r.sent} device${r.sent === 1 ? "" : "s"} — it should appear in a few seconds.` : "The notification service didn't accept it — try turning notifications off and on."); }
