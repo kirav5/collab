@@ -1,6 +1,6 @@
 # Collab (web) — Product Requirements Document
 
-Status: v1 built and deployed (13 Oct 2026) · Hackathon: AI Builder Cup 2026, theme **Retail & Commerce** · Submission
+Status: v1 retail completion implemented locally (15 Oct 2026); deployment verification pending · Hackathon: AI Builder Cup 2026, theme **Retail & Commerce** · Submission
 deadline **18 Oct 2026** · Live: https://collab-55.web.app · Work log and engineering handoff: [HANDOFF.md](HANDOFF.md)
 
 This is the web/Google Cloud edition of **Collab** (the native iOS/macOS app in `~/Projects/Collab`). It shares
@@ -117,7 +117,7 @@ Gemini), rules in Sharing, an audit of everything your agent shared in Activity.
 | ID | Requirement |
 |---|---|
 | FR1 | Sign-in: Firebase anonymous guest; optional Google sign-in links the account. Profile: handle (unique), name, bio, area |
-| FR2 | Chat sessions kept on device; routing to remember / ask_self / request / offer / chat |
+| FR2 | Chat sessions cached on device and synced in the owner’s account; routing to remember / ask_self / request / offer / chat |
 | FR3 | Facts with three tiers; tier change; Protected topics (Gemini-suggested, editable) |
 | FR4 | Rules: audience (person / anyone), topics, detail level, approval (auto / review), expiry, revoke; pause all |
 | FR5 | Request drafting with filters, shared brief, clarifying questions, private limit (+ optional delegation) |
@@ -136,7 +136,10 @@ Gemini), rules in Sharing, an audit of everything your agent shared in Activity.
 | FR17 | Mandates with an autonomy level — ask me every move / negotiate inside my limit, I confirm / negotiate and close inside my limit — and an expiry (1/7/30 days) |
 | FR18 | Signed deal receipt (hash of the agreed terms and parties, signed per owner, who confirmed: owner or mandate) |
 | FR19 | Outcomes ("went ahead" / "fell through") per side after a deal → public track record on matches and profiles |
-| FR20 | Agent card declares the AP2 extension (merchant / shopper roles); payment itself is out of scope |
+| FR20 | Agent card declares an AP2-inspired test flow; cart and payment mandates are server-signed Ed25519; no money moves |
+| FR21 | Paid deal has a buyer pickup pass; only the seller can mark it collected once; replay shows the collection time |
+| FR22 | Public receipt verification uses the published key without login; legacy HMAC mandates require Collab |
+| FR23 | Google Search grounded fair-price hint is private to the owner and capped at five per account per UTC day |
 
 ## 9. Non-functional requirements
 
@@ -177,7 +180,7 @@ Gemini), rules in Sharing, an audit of everything your agent shared in Activity.
 
 ## 12. Out of scope (v1)
 
-Payments and escrow (AP2 role is declared, no payment mandates yet), identity verification/KYC, free-text reviews
+Real payments and escrow (test mandates only), identity verification/KYC, free-text reviews
 (only went-ahead / fell-through outcomes), native apps (the Collab iOS/macOS app is separate), reading
 the Collab app's AT Protocol/Nostr data.
 

@@ -1,4 +1,4 @@
-# Collab (web) — handoff · 14 October 2026
+# Collab (web) — handoff · 15 October 2026
 
 Read [PRD.md](PRD.md) first for what and why. This file is what exists, how it works, how to run/test/deploy it, what
 is known to be wrong, and what to do next.
@@ -11,18 +11,18 @@ Repo: `git@github.com:kirav5/collab.git` (branch `main`). CI is `.github/workflo
 
 | | |
 |---|---|
-| Live web app | https://collab-55.web.app (Firebase Hosting → Cloud Run rewrites for `/api/**`, `/a2a/**`, `/health`) |
+| Live web app | https://collab-55.web.app (Firebase Hosting → Cloud Run rewrites for `/api/**`, `/a2a/**`, `/public/**`, `/health`) |
 | Cloud Run | service `collab-market`, region `asia-south1`, **min 1 / max 2 instances** (one kept warm: no ~3 s cold start; `MIN_INSTANCES=0 ./deploy.sh` turns it off), startup CPU boost, request-based billing, 1 GiB, timeout 60 s · https://collab-market-mj7d6nwxxq-el.a.run.app |
 | GCP project | `collab-55` (number 611701997508), free trial ₹28,797 until 12 Jan 2027 |
-| Service account | `collab-market@collab-55.iam.gserviceaccount.com` — `aiplatform.user`, `datastore.user`, `firebaseauth.viewer`, `firebasecloudmessaging.admin`, secret accessor on `agent-secret` |
+| Service account | `collab-market@collab-55.iam.gserviceaccount.com` — `aiplatform.user`, `datastore.user`, `firebaseauth.viewer`, `firebasecloudmessaging.admin`, secret accessor on `agent-secret` and `receipt-key` |
 | Scheduler | Cloud Scheduler job `collab-watches`, `*/15 * * * *` → `POST $RUN_URL/cron/run` with header `x-collab-cron` = HMAC-SHA256(agent secret, "collab-cron") base64url (created/updated by `deploy.sh`) |
 | Push | Firebase Cloud Messaging web push (default VAPID key); tokens in `push_tokens`; verified on iPhone (installed app) and Mac Chrome |
 | Firestore | `(default)`, Native, `asia-south1`; vector index on `facts(tier, embedding[768])`; TTL on `rate.expireAt`, `leases.expireAt` |
 | Firebase | web app `1:611701997508:web:149a27edf4e20d9dbd6e91`; Auth: Anonymous + Google enabled; App Check: reCAPTCHA Enterprise key `6LcWVO0tAAAAAGE87CLYa8anCDcS9mnidBl2geJN` (domains: collab-55.web.app, collab-55.firebaseapp.com, localhost) — **enforced** on `/api` |
-| Secret | Secret Manager `agent-secret` (HMAC key our agents sign A2A calls with); local copy `.deploy/agent-secret` (git-ignored) |
+| Secret | Secret Manager `agent-secret` (HMAC A2A authentication) and `receipt-key` (Ed25519 receipts and test mandates); local files under `.deploy/` are ignored by git and Docker |
 | Monitoring | uptime check "collab health" (`/health`, 5 min) → alert policy "Collab is down" → e-mail atishay.srivastava.10@gmail.com |
 | Model | Vertex AI `global`: `gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash-lite` (low thinking); embeddings `gemini-embedding-001` in `asia-south1` |
-| Tests | 49/49 pass (`npm run check` = `tsc --strict` + `node --test`); live 12-case run 12/12 (§8) |
+| Tests | 57/57 pass before the final docs pass (`npm run check`); full local real-Gemini benchmark: 100/100 privacy canaries, 38/50 agreements, 120/120 repeated intent templates, 50/50 load (see §8) |
 | Size | ~5.8k lines: server ~4.0k TS, web ~1.8k JS/CSS |
 | Live accounts used for testing | @atishaysrivastava10 (uid `NlVWMHzyk1MqGNrO0jWZQTa9hEC2`, Google), @anu-buyer (uid `GrqThVDukkVtN6yK2DkGvT5usvK2`), @bottle-store (`?as=seller` guest tab in a browser) |
 
@@ -126,7 +126,7 @@ server/src/
   core/push.ts         FCM web push: saveToken, pushTo → {devices, sent}; dead tokens removed
   core/watch.ts        Scheduled agents: startWatch, runDue (search again, alert on new matches) — run by /cron/run
   core/deals.ts        Deal records (anonymised, written once on "agreed"), insights() medians per category/area,
-                       forRequester/forProvider lines, receipt() (sha256 + per-owner HMAC), stats() track record
+                       forRequester/forProvider lines, receipt() (sha256 + server-issued Ed25519 signatures), stats() track record
   core/policy.ts       allowedFor(owner, asker): Public + Protected via active rules (deny by default); shapeAnswer
   core/directory.ts    saveProfile/handles, saveFact (topics, offer reading, embedding), search()
   core/briefs.ts       draft() (read + SharedBriefTask + ClarifyTask), share(), saveBrief() (band only, no raw text)
@@ -308,6 +308,14 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
   (₹410 Anu ↔ bottle-store awaiting payment); seller's 3 chats uploaded to the account. **Not yet confirmed:** the
   two real accounts' chats syncing (their apps were still on cached old code — reopen twice).
 
+- **15 Oct:** pickup passes, Ed25519 receipts (`receipt-key` in Secret Manager, `/public/keys`), the fair-price check,
+  `verify.html` and `pickup.html` deployed; the ₹100 deal re-verifies with Ed25519 and its older payment signatures
+  still check (`legacyAttestation`). **Full benchmark** (real Gemini, in-memory store): privacy 100/100, intent 120/120,
+  load 50/50, negotiation 38/39 feasible agreed, 38/38 inside both limits, 10/10 infeasible no deal — see
+  [bench/REPORT.md](bench/REPORT.md) and its limitations. **Cloud Scheduler verified**: a test watch ran 92 times at
+  15-minute intervals (stopped; it belonged to @ahtishay by mistake, 0 alerts). Chat sync verified for
+  @atishaysrivastava10 (3 chats); @anu-buyer had none yet.
+
 ## 9. Known issues / rough edges
 
 1. **Offers chart**: when one side has many points and the other one, the x-axis scale makes the lone side look wrong
@@ -324,64 +332,25 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4�
 8. **Agent turns run inside requests** (bounded, with outbox) — move to Cloud Tasks (PRD R7).
 9. **Firestore reads per question**: `allowedFor` loads up to 500 facts of the owner; `inboxFor` scans the user's
    engagements for demo items (N+1); `search()` runs `stats()` per found provider (N+1). Fine for a pilot.
-13. **Receipt signatures** are HMACs with the server secret, so they prove "Collab recorded this", not independent
-    owner keys; `deals.ts` ↔ `engage.ts` is an ESM import cycle (safe: all uses are inside functions).
+13. **Receipt signing authority** remains Collab: Ed25519 lets anyone check a signature with the public key, but people do not hold the private key. Legacy receipts/mandates remain HMAC and are identified as such on export. Key rotation requires retaining old public keys. The write-once registry is an application rule, not a separate immutable ledger.
 14. `GET /api/insights` has no spend charge (no model call) but is unthrottled beyond App Check.
 10. Private facts and chat history sit in Firestore (plaintext at rest — GCP encrypted, but readable by anyone with
     DB access); no per-user encryption.
 15. `offeredPrice` is a regex: "can you do 350?" is a question, not an offer (no selling word); unusual phrasings may
     be missed — the owner can always restate with ₹.
-16. The pickup proof doesn't exist yet: a paid receipt can be shown twice (see next tasks).
-17. `SUBMISSION.md` is out of date (says Private stays on the device; misses AP2, QR chats, push, watches, PWA,
-    Google sign-in).
-18. Cloud Scheduler watches are deployed and the job is ENABLED, but a real alert end-to-end hasn't been observed.
+16. A static bearer pickup QR prevents a second collection, but a copied pass could be shown first. The seller sees the buyer's name and must check it. Collection is atomic in a separate Firestore document.
+17. Old app tabs may need two foreground visits or a reload to receive the new version; the two real accounts' cross-device chat view has not yet been observed on both devices.
+18. Scheduler-to-alert is verified with a synthetic watch (`docs/bench/watch.json`); delivery to a physical device for that watch remains untested.
+19. Full local real-Gemini benchmark: the 10 deliberately non-overlapping limit pairs stayed unresolved in `negotiating` (no outside-limit agreement); one overlapping pair stayed at `asking`, and one request draft failed. These are recorded as 11 failures and one error, not hidden. Benchmark account and template repetition limit generality. The live deployed-service benchmark remains blocked because local ADC lacks `iam.serviceAccounts.signBlob` to mint App Check credentials; a dedicated test credential file is supported.
 11. The deployed site's old tabs (pre-App-Check JS) get 401s until reloaded.
 12. `firebase deploy` used to prompt about TTL field overrides; now declared in `firestore.indexes.json`.
 
-## 10. Next tasks — code scope to completion (in order)
+## 10. Status and remaining checks
 
-Deadline 18 Oct 2026. Deck/video are out of this list. Keep `npm run check` green and deploy with
-`APPCHECK=enforce ./deploy.sh` (from the `collab-market` folder).
+**Implemented locally (15 Oct):** paid pickup QR and seller-only atomic redemption; Ed25519 receipts and test mandates, public key on agent cards, signed receipt export and logged-out/offline verifier; private Search-grounded fair-price check with five per account per UTC day; retail end-to-end and sync/update regression tests; a benchmark harness, secrets check, and updated README/SUBMISSION/PRD. `docs/HACKATHON-INNOVATION.md` maps these to the hackathon's Retail & Commerce brief. The dashboard was confirmed in the signed-in Chrome session. `npm run check` and `node server/tools/secrets-check.ts` are the final gates.
 
-**Must**
+**Live verified:** Scheduler is enabled and invokes `/cron/run`; a synthetic due watch found a new synthetic listing and wrote one alert (`docs/bench/watch.json`). The full benchmark was run locally with live Vertex Gemini and is saved in `docs/bench/full-local-gemini/`. A saved listing-origin ₹410 deal still awaits payment by its buyer. The main account has three chats in Firestore; the earlier test buyer had zero at the read, so cross-device sync on both real devices remains unproven. The local browser verified pickup redemption/replay and public receipt signatures.
 
-1. **Pickup pass (skip the queue).** A paid deal shows the buyer a QR (`/?pickup=<engagementId>.<code>`; code = short
-   HMAC of the id so ids alone can't be guessed into passes). The seller scans (People › Scan a QR already uses
-   `BarcodeDetector`) or opens the link → a card with item, amount, buyer, "✓ Paid · not collected" and **Mark
-   collected** (seller only, one-time, transaction on the engagement: `payment.collectedAt`); a second scan shows
-   "Already collected at …". Server: `GET /api/pickup/:id?code=` (participants + seller), `POST /api/pickup/:id/collect`.
-   Push the buyer "Collected". Files: `server.ts`, `core/pay.ts`, `web/js/cards.js dealBlock`, `app.js` deep links.
-2. **Public-key signatures (make "verifiable" true).** Replace the HMAC receipt/mandate signatures with Ed25519
-   (`node:crypto` `generateKeyPairSync("ed25519")`, private key in Secret Manager `receipt-key`, loaded like
-   `AGENT_SECRET`). Publish the public key in every agent card (AP2 extension `params.publicKey` or a
-   `/.well-known/collab-keys.json`) and sign `{uid, hash}`. Add a **public verify page** (no login) at
-   `/verify/<engagementId>` showing yes/no, terms and both mandates, checkable offline with the published key.
-   Keep the append-only `receipts` hash. Files: `a2a/agents.ts signReceipt`, `core/pay.ts`, `core/deals.ts`,
-   `server.ts`, a small static page.
-3. **Fair-price check (Google Search grounding).** `POST /api/price-check {item, area}` → Gemini with
-   `tools: [{ googleSearch: {} }]` on Vertex (`ai/gemini.ts`: add a `grounded` option), JSON out
-   `{low, high, typical, sources:[{title,url}]}` validated (numbers must appear in the grounded text; drop otherwise).
-   Button "Check fair price" on the brief card and the deal-offer prompt; shown only to its owner, never sent to the
-   other agent. Cap 5/day per uid via `limits.ts take()`; meter it (`ai/meter.ts`).
-4. **End-to-end test of the retail path** in `test/e2e.test.ts`: shop QR (`/api/people/:handle/ask`) → follow-up both
-   ways → price offer → confirm → `/pay` → pickup → collect (and double-collect refused). Unit tests for chat sync
-   endpoints and `offeredPrice` edge cases you hit.
-5. **Benchmark script** `server/tools/bench.ts` (BASE=… against the live service, real Gemini), writing
-   `docs/bench/results.json` + a markdown table: privacy red-team (~100 attempts at Private notes/limits incl.
-   prompt injection and Hinglish → leaks, target 0), negotiation (~50 seeded pairs → deal rate, % inside both limits =
-   100%, rounds, surplus split), routing accuracy (~120 labelled messages), match precision@3, latency p50/p95 per
-   step, ₹ per request/deal (from `/health model.costUSD`), and a 50-concurrent-conversation load run.
-   `tools/live-cases.ts` is the starting point.
-6. **Verify live**: the real accounts' chat sync (reopen apps twice, then check `chats` for both uids); a watch alert
-   via Cloud Scheduler (create a watch, add a matching Public offering from another account, wait ≤15 min, expect the
-   alert + push); pay the ₹410 listing deal from @anu-buyer.
-7. **Docs**: update `SUBMISSION.md` (issue 17), README (features, run, deploy), PRD status.
+**Before claiming production complete:** deploy with `APPCHECK=enforce ./deploy.sh`; test the deployed public verify and pickup pages; run a bounded signed-in smoke check. A deployed benchmark needs dedicated Firebase ID and App Check tokens (`BENCH_AUTH_FILE`) or an administrator with `iam.serviceAccounts.signBlob`. The existing @anu-buyer must personally be signed in to complete the ₹410 test payment; do not impersonate that owner. Reopen both physical devices and confirm sync/updates and push delivery. Push to GitHub only after the user's explicit OK.
 
-**Should (if time)**
-
-8. **Model Armor** on text from other agents and on outgoing answers (API already enabled): sanitize before
-   `AnswerTask`/`JudgeTask`, log verdicts, refuse on high-confidence injection.
-9. **Shop counter screen**: today's paid, not-collected orders for a seller, built on the pickup pass.
-
-**Out of scope for the hackathon**: real UPI / payment provider, passkey-signed mandates, voice, Wallet passes,
-calendar, on-device Gemma (PRD R1), Cloud Tasks (R7).
+**Optional:** Model Armor on outside-agent text; seller counter list of today's paid uncollected orders. **Out of scope:** real UPI/payment provider, passkeys, voice, Wallet passes, calendar, on-device Gemma, Cloud Tasks.

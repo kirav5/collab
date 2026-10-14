@@ -2,27 +2,33 @@
 
 **Theme:** Retail & Commerce — Intelligent Customer and Business Experiences
 
-**Collab** gives everyone a personal agent that can ask anyone's agent for anything — a flat, a tutor, a ride, a
-repair — and negotiate for them, while their private context never leaves their device. You say what you need;
-Gemini shapes it into a request with you (asking what's missing, with tap-to-answer options); your agent finds the
-people whose public offerings fit and talks to their agents over Google's A2A protocol. Their agents answer from what
-their owners chose to share, ask what they need to know, and negotiate inside each owner's private limit. Owners are
-notified only when needed — a question only they can answer, a deal to confirm — through live, interactive cards.
+**Collab: personal agents for neighbourhood commerce — scan a shop, agree within private limits, collect once.**
 
-Information has three levels: **Private** (stored only on the device), **Protected** (shared with the people a rule
-names, on its topics), and **Public** (discoverable). The always-on agent holds only Protected and Public facts, and a
-deterministic policy decides what each asker may see before anything reaches the model — so private context cannot be
-drawn out by any question. Limits stay on the device: the agent uses them one move at a time and never states them.
+Everyone gets a personal agent. A shopper scans a shop's QR code (or describes what they need) and their agent talks
+to the shop's agent over Google's **A2A protocol**: it asks questions, the shop's agent answers from what the owner
+chose to share, and the two agents negotiate — each inside its owner's private limit, which the other side never
+sees. Owners are asked only when it matters (a question only they can answer, a deal to confirm), through live
+interactive cards and push notifications. When both confirm, the shop's agent issues a signed cart, the shopper pays
+(an AP2-inspired **test** payment — no money moves), and gets a **pickup pass** the shop scans to hand over the item
+exactly once. Anyone can check the deal record against Collab's published Ed25519 public key.
 
-**How we use Google Cloud:**
+Information has three levels: **Private** (stored in the owner's account, never shared with the other party),
+**Protected** (shared only with people a rule names, on its topics) and **Public** (discoverable). A deterministic
+policy decides what each asker may see before anything reaches the model.
 
-- **Gemini (Vertex AI):** reads requests and offerings in any language (category, fields, the request's own filters),
-  writes the brief providers see (no money, no limit), asks clarifying questions, ranks matches with reasons, answers
-  only from allowed facts with quoted evidence, judges answers, gathers requirements for providers, and chooses
-  negotiation moves from numbers only. Every output is checked by code before use. **Gemini embeddings** power search
-  by meaning; **Gemini Nano** answers from private notes on the device in Chrome.
-- **Cloud Run:** the server — one A2A agent per person (Agent Card + JSON-RPC, official A2A SDK), the web API, the
-  directory and the engagement engine.
-- **Firestore:** profiles, Protected and Public facts with a **vector index**, sharing rules, conversations between
-  agents (streamed live to both people), device inboxes, A2A tasks and the audit log of what each agent shared.
-- **Firebase:** Hosting for the web app (with rewrites to Cloud Run) and Authentication (anonymous guests or Google).
+**Google Cloud:**
+
+- **Gemini (Vertex AI):** routes what the user types, drafts requests and asks clarifying questions, ranks matches,
+  answers only from allowed facts with quoted evidence, judges answers, gathers a seller's questions, chooses
+  negotiation moves from numbers only, and checks fair prices with **Google Search grounding** (every price must
+  trace to a search source). Code validates every output. **Gemini embeddings** + Firestore vector search power the
+  directory.
+- **Cloud Run:** the server — one A2A agent per person (Agent Card + JSON-RPC, official A2A SDK), the API and the
+  negotiation engine.
+- **Firestore:** profiles, facts with a vector index, sharing rules, live conversations, inboxes, A2A tasks, deal
+  receipts, pickups and an audit log.
+- **Firebase:** Hosting (an installable web app), Authentication (Google or guest), App Check (reCAPTCHA
+  Enterprise) and **Cloud Messaging** for push. Also **Cloud Scheduler** (agents that keep watching a request),
+  **Secret Manager** and **Cloud Monitoring**.
+
+Test payments only; signatures are issued by Collab's server on behalf of its agents.
