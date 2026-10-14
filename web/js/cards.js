@@ -149,7 +149,7 @@ function offersChart(e) {
   };
   const deal = e.negotiation.deal ? `<line x1="60" x2="560" y1="${y(e.negotiation.deal.price)}" y2="${y(e.negotiation.deal.price)}" stroke="var(--fresh)" stroke-dasharray="3 3"/>` : "";
   return `<div class="chart"><svg viewBox="0 0 580 110" role="img" aria-label="Offers by turn">${deal}${line("provider", "var(--stale)")}${line("requester", "var(--accent)")}
-    <text x="0" y="${y(hi) + 4}">${esc(money(hi))}</text><text x="0" y="${y(lo) + 4}">${esc(money(lo))}</text></svg>
+    <text x="0" y="${y(hi) + 4}">${esc(money(hi, null, e.offer.currency))}</text><text x="0" y="${y(lo) + 4}">${esc(money(lo, null, e.offer.currency))}</text></svg>
     <span class="small faint"><span style="color:var(--accent)">■</span> requester · <span style="color:var(--stale)">■</span> provider · dashed: deal</span></div>`;
 }
 
@@ -184,13 +184,13 @@ function statusLine(e, mine, them, items, talking) {
   const first = them.name.split(" ")[0];
   const mineOffers = mine === "requester" ? e.negotiation.requester : e.negotiation.provider;
   const theirOffers = mine === "requester" ? e.negotiation.provider : e.negotiation.requester;
-  if (e.phase === "agreed") return `Deal agreed at <b>${money(e.negotiation.deal.price, e.offer.unit)}</b>.`;
+  if (e.phase === "agreed") return `Deal agreed at <b>${money(e.negotiation.deal.price, e.offer.unit, e.offer.currency)}</b>.`;
   if (e.phase === "closed" || e.phase === "declined") return esc(e.events.filter(x => x.who !== "system").at(-1)?.text ?? "This conversation ended.");
   if (items.length) return "Your agent needs you — see below.";
-  if (e.phase === "deal") return `Deal at <b>${money(e.negotiation.deal.price, e.offer.unit)}</b> — waiting for ${esc(first)} to confirm.`;
+  if (e.phase === "deal") return `Deal at <b>${money(e.negotiation.deal.price, e.offer.unit, e.offer.currency)}</b> — waiting for ${esc(first)} to confirm.`;
   if (theirOffers.length || mineOffers.length) {
     const t = theirOffers.at(-1), m = mineOffers.at(-1);
-    return `${talking ? "Negotiating · " : ""}${m ? `you ${money(m.price, e.offer.unit)}` : ""}${m && t ? " · " : ""}${t ? `${esc(first)} ${money(t.price, e.offer.unit)}` : ""}`;
+    return `${talking ? "Negotiating · " : ""}${m ? `you ${money(m.price, e.offer.unit, e.offer.currency)}` : ""}${m && t ? " · " : ""}${t ? `${esc(first)} ${money(t.price, e.offer.unit, e.offer.currency)}` : ""}`;
   }
   const answered = e.qa.filter(q => q.answer).length;
   if (talking) return e.qa.length ? `Asking questions · ${answered} of ${e.qa.length} answered` : `Talking to ${esc(first)}'s agent…`;
@@ -258,7 +258,7 @@ export function engagementCard(e, id) {
 function dealBlock(e, mine) {
   const p = e.payment, seller = e.seller ?? "provider", buyer = seller === "requester" ? "provider" : "requester";
   const them = esc((mine === "requester" ? e.provider : e.requester).name.split(" ")[0]);
-  const amount = money(e.negotiation.deal.price, e.offer.unit);
+  const amount = money(e.negotiation.deal.price, e.offer.unit, e.offer.currency);
   const id = esc(e.id);
   // AP2: the seller's agent signed a cart for the agreed terms; the buyer pays against it (test mode: no money moves).
   // A payment settles whether it went ahead — nobody is asked separately.
@@ -266,7 +266,7 @@ function dealBlock(e, mine) {
   if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
   else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span><span class="small faint">AP2 · test mode, no money moved</span>`;
   else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
-  else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.negotiation.deal.price}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
+  else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.payment?.cart?.total?.value ?? e.negotiation.deal.price}" data-currency="${esc(e.offer.currency ?? "INR")}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
       <span class="small faint">AP2 test mode: your agent signs a payment against the cart ${them}'s agent signed. No money moves.</span>`;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
   // After payment: handover / delivery, then the buyer's acceptance — tracked apart from the payment.
@@ -322,7 +322,7 @@ function inboxBlock(i) {
   if (i.kind === "confirm") {
     const e = live.engagements.get(i.engagementId);
     const deal = e?.negotiation.deal;
-    return box("Confirm the deal?", `<span class="small">${deal ? `<b>${money(deal.price, e.offer.unit)}</b> for “${esc(e.title)}”.` : ""} Nothing is final until both of you confirm.</span>
+    return box("Confirm the deal?", `<span class="small">${deal ? `<b>${money(deal.price, e.offer.unit, e.offer.currency)}</b> for “${esc(e.title)}”.` : ""} Nothing is final until both of you confirm.</span>
       <div class="row"><button class="btn accent compact" data-act="inbox-confirm" data-id="${esc(i.id)}">Confirm</button><button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`);
   }
   return "";

@@ -34,8 +34,8 @@ import { checkPrice, PriceCheckError, PRICE_CHECKS, quotaStatus } from "./core/p
 import { appCheckDecision, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
-import { buyerOf, checkPayment, pay, sellerOf } from "./core/pay.ts";
-import { offeredPrice } from "./core/direct.ts";
+import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
+import { offeredMoney } from "./core/direct.ts";
 import { moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
@@ -282,8 +282,17 @@ app.post("/api/engagements/:id/ask", route(async req => {
   if (q.length < 2) throw new HttpError(400, "Ask something.");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   // Naming a price in a chat with no listed price offers a deal: the other person confirms or says no.
-  const price = e.offer.price == null && e.phase !== "deal" ? offeredPrice(q) : null;
-  if (price) { await offerDeal(db, e, side, price, q); return load(db, e.id); }
+  // A named price offers a deal — in a currency this deployment supports, and the one the conversation already uses.
+  const offered = e.offer.price == null && e.phase !== "deal" ? offeredMoney(q, e.offer.currency ?? policy().money.defaultCurrency) : null;
+  if (offered) {
+    if (!policy().money.currencies.includes(offered.currency))
+      throw new HttpError(400, `Payments in ${offered.currency} aren't supported yet — use ${policy().money.currencies.join(" or ")}.`, "UNSUPPORTED_CURRENCY");
+    if (e.offer.currency && e.offer.currency !== offered.currency)
+      throw new HttpError(400, `This conversation is in ${e.offer.currency}; offer in ${e.offer.currency}.`, "UNSUPPORTED_CURRENCY");
+    e.offer.currency = offered.currency;
+    await offerDeal(db, e, side, offered.amount, q);
+    return load(db, e.id);
+  }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });
   await saveEngagement(db, e);
   const turn: Turn = { kind: TURN, from: side, engagementId: e.id, questions: [{ id: Math.random().toString(36).slice(2, 12), question: q }] };
@@ -654,9 +663,9 @@ app.post("/api/engagements/:id/pay", route(async req => {
       : { id: "instr_1", type: "test", environment: "TEST" };
     const seller_ = sellerOf(e) === "requester" ? e.requester : e.provider, buyer_ = sellerOf(e) === "requester" ? e.provider : e.requester;
     e.payment!.ap2 = await ap2Pay({ key: signing.privateKey, kid: signing.kid, base: cfg.publicUrl, now: now(), dealHash: e.payment!.cart.dealHash, idempotencyKey: key,
-      item: e.payment!.cart.items[0]?.label ?? e.title, amount: e.payment!.cart.total.value, merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
+      currency: e.payment!.cart.total.currency, lines: linesOf(e), merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
   } catch (err) { await release(); throw new HttpError(400, (err as Error).message); }
-  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" as const };
+  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" as const };
   // Commit only while this tap still holds the claim.
   const committed = await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.payment?.status === "paying" && cur.payment.claim?.key === key
     ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, events: [...cur.events, paidEvent], updatedAt: now() } : null));
@@ -665,7 +674,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
-  if (seller.uid) void pushTo(seller.uid, `Payment received · ${e.title}`, `${moneyText({ amount: mandate.amount.value, currency: "INR", period: e.offer.unit })} (test mode)`, `/?engagement=${e.id}`);
+  if (seller.uid) void pushTo(seller.uid, `Payment received · ${e.title}`, `${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} (test mode)`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Deals agreed before AP2 carts existed get theirs when a participant opens them (saving issues it).
@@ -773,10 +782,13 @@ app.post("/api/inbox/:id", route(async req => {
     else await deliverProviderTurn(cfg, a2a.store, e.id, r.turn);
   }
   // An answer that names a price ("ok, I'll take it for 80rs") in a chat with no listed price offers that deal.
-  const named = item.kind === "answer" && typeof b.text === "string" ? offeredPrice(b.text) : null;
-  if (named) {
+  const named = item.kind === "answer" && typeof b.text === "string" ? offeredMoney(b.text, e.offer.currency ?? policy().money.defaultCurrency) : null;
+  if (named && policy().money.currencies.includes(named.currency)) {
     const now_ = await load(db, e.id);
-    if (now_.offer.price == null && ["asking", "negotiating"].includes(now_.phase)) await offerDeal(db, now_, item.side, named, null, b.text);
+    if (now_.offer.price == null && ["asking", "negotiating"].includes(now_.phase) && (!now_.offer.currency || now_.offer.currency === named.currency)) {
+      now_.offer.currency = named.currency;
+      await offerDeal(db, now_, item.side, named.amount, null, b.text);
+    }
   }
   return load(db, e.id);
 }));

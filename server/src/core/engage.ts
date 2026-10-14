@@ -13,7 +13,7 @@ import { type Docs, docId } from "../docs.ts";
 import { AnswerTask, type Fact as AnswerFact, JudgeTask, offerFacts, savedKey } from "../market/answer.ts";
 import { catalog, domain as domainOf } from "../market/domains.ts";
 import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
-import { type Mandate, type Proposal, moneyText, newId } from "../market/types.ts";
+import { type Mandate, type Proposal, currencyOf, moneyText, newId } from "../market/types.ts";
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
 import { policy, policyHash } from "../config/policy.ts";
 import { dealItem } from "./direct.ts";
@@ -79,7 +79,7 @@ export async function save(db: Docs, e: Engagement) {
   if (e.phase === "agreed" && !e.payment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
     const cart = cartFor(e, signer, now());
-    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; say(e, agentOf(sellerOf(e)), `Cart Mandate issued for ${moneyText({ amount: cart.total.value, currency: "INR", period: e.offer.unit })} (AP2, test mode).`, "rules"); }
+    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; say(e, agentOf(sellerOf(e)), `Cart Mandate issued for ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })} (AP2, test mode).`, "rules"); }
   }
   await db.set(ENGAGEMENTS, e.id, e);
 }
@@ -433,7 +433,7 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
   } else if (item.kind === "confirm") {
     if (r.decline && e.offer.price == null) {
       // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
-      say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: "INR", period: e.offer.unit })}.`, "owner");
+      say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: currencyOf(e), period: e.offer.unit })}.`, "owner");
       e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false };
     } else if (r.decline) { e.phase = "closed"; out.decline = "My owner decided not to go ahead. Thank you."; say(e, s, "Walked away.", "owner"); }
     else { e.negotiation.confirmed[s] = true; out.confirm = true; say(e, s, "Confirmed.", "owner"); settle(e); }
@@ -467,7 +467,7 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   e.negotiation.confirmed = { requester: s === "requester", provider: s === "provider" };
   (e.negotiation.confirmedBy ??= {})[s] = "owner";
   if (text) say(e, s, text, "owner");
-  say(e, "system", `Deal offered at ${moneyText({ amount: price, currency: "INR", period: e.offer.unit })}. Nothing is final until both confirm.`);
+  say(e, "system", `Deal offered at ${moneyText({ amount: price, currency: currencyOf(e), period: e.offer.unit })}. Nothing is final until both confirm.`);
   const o = other(s);
   // An earlier offer still waiting on them is replaced by this one; questions they haven't answered stay.
   const stale: string[] = [];
@@ -483,7 +483,7 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
 
 export function summary(e: Engagement): string {
   const last = e.events.at(-1)?.text ?? "";
-  const deal = e.negotiation.deal ? ` · ${moneyText({ amount: e.negotiation.deal.price, currency: "INR", period: e.offer.unit })}` : "";
+  const deal = e.negotiation.deal ? ` · ${moneyText({ amount: e.negotiation.deal.price, currency: currencyOf(e), period: e.offer.unit })}` : "";
   return `${e.phase}${deal} · ${last.slice(0, 80)}`;
 }
 

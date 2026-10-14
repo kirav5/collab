@@ -36,7 +36,7 @@ export async function verifyReceiptBundle(r, trustedKey) {
   };
   const t = r.terms, a = r.parties;
   const hash = await digest({ engagementId: r.engagementId, taskId: r.taskId,
-    terms: { title: t.title, price: t.price, unit: t.unit, category: t.category, terms: t.terms },
+    terms: { title: t.title, price: t.price, unit: t.unit, category: t.category, terms: t.terms, ...(t.currency ? { currency: t.currency } : {}) },
     parties: { requester: { handle: a.requester.handle, name: a.requester.name }, provider: { handle: a.provider.handle, name: a.provider.name } }, at: r.at });
   const receipt = hash === r.hash && await signature(r.subjects.requester, hash, r.signatures.requester) && await signature(r.subjects.provider, hash, r.signatures.provider);
   let cart = null, payment = null;
@@ -46,8 +46,14 @@ export async function verifyReceiptBundle(r, trustedKey) {
     if (!['requester','provider'].includes(seller) || buyer !== (seller === 'requester' ? 'provider' : 'requester')) return { receipt, cart: false, payment: false };
     const ch = await digest({ type: c.type, id: c.id, dealHash: c.dealHash,
       merchant: { handle: c.merchant.handle, name: c.merchant.name }, buyer: { handle: c.buyer.handle, name: c.buyer.name },
-      items: c.items.map(i => ({ label: i.label, amount: i.amount })), total: { currency: c.total.currency, value: c.total.value }, createdAt: c.createdAt, expiresAt: c.expiresAt });
-    cart = receipt && ch === c.hash && c.dealHash === hash && c.merchant.handle === a[seller].handle && c.buyer.handle === a[buyer].handle && c.total.currency === 'INR' && c.total.value === t.price && await signature(r.subjects[seller], ch, c.merchantSignature);
+      items: c.items.map(i => ({ label: i.label, amount: i.amount, ...(i.quantity !== undefined ? { quantity: i.quantity, unitPrice: i.unitPrice } : {}) })), total: { currency: c.total.currency, value: c.total.value }, createdAt: c.createdAt, expiresAt: c.expiresAt });
+    // The cart's total is its lines; with no quantities it's the agreed price, with one quantified line it's that
+    // price per unit, and with several lines the agreed price is their total.
+    const sum = c.items.reduce((n, i) => n + i.amount, 0);
+    const linesOk = c.items.every(i => i.quantity === undefined || i.amount === i.quantity * i.unitPrice);
+    const priced = c.items.length === 1 && c.items[0].quantity !== undefined ? c.items[0].unitPrice === t.price : sum === t.price;
+    cart = receipt && ch === c.hash && c.dealHash === hash && c.merchant.handle === a[seller].handle && c.buyer.handle === a[buyer].handle
+      && c.total.currency === (t.currency ?? 'INR') && c.total.value === sum && linesOk && priced && await signature(r.subjects[seller], ch, c.merchantSignature);
     if (m) {
       const mh = await digest({ type: m.type, id: m.id, cartId: m.cartId, cartHash: m.cartHash,
         amount: { currency: m.amount.currency, value: m.amount.value }, method: m.method, payer: m.payer, payee: m.payee, userPresent: m.userPresent, createdAt: m.createdAt });

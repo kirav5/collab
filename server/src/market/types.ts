@@ -64,15 +64,22 @@ export interface Need {
   mandate?: Mandate | null;
 }
 
-export interface Proposal { id: string; price: number; terms: Record<string, number>; round: number }
+/** `items`: several lines or quantities agreed together; then `price` is their total. Without it, `price` is per the
+ *  offer's unit, and `terms.quantity` (when above 1) multiplies it. */
+export interface Proposal { id: string; price: number; terms: Record<string, number>; round: number; items?: LineItem[] }
+export interface LineItem { id: string; title: string; quantity: number; unitPrice: number }
 
 export type Side = "seller" | "buyer";
 
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 
 /** "₹80 L", "₹1.2 Cr", "₹35,000/month". */
+const SYMBOLS: Record<string, string> = { INR: "₹", USD: "$" };
+/** The currency a conversation's amounts are in (absent: INR, the original single currency). */
+export const currencyOf = (e: { offer: { currency?: string } }) => e.offer.currency ?? "INR";
+
 export function moneyText(m: Money): string {
-  const symbol = m.currency === "INR" ? "₹" : m.currency + " ";
+  const symbol = SYMBOLS[m.currency] ?? m.currency + " ";
   const suffix = m.period ? `/${m.period}` : "";
   const trim = (v: number) => v.toFixed(2).replace(/\.?0+$/, "");
   if (m.currency === "INR") {

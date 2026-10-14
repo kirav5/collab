@@ -5,8 +5,9 @@ export const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const now = () => Math.floor(Date.now() / 1000);
 export const id = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-export function money(amount, period) {
+export function money(amount, period, currency = "INR") {
   if (amount == null) return "";
+  if (currency !== "INR") return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount) + (period ? `/${period}` : "");
   const v = Math.round(amount);
   const s = v >= 1e7 ? `₹${+(v / 1e7).toFixed(2)} Cr` : v >= 1e5 ? `₹${+(v / 1e5).toFixed(2)} L` : "₹" + v.toLocaleString("en-IN");
   return s + (period ? `/${period}` : "");

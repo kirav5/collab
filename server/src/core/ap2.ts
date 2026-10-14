@@ -10,8 +10,8 @@ import { policy } from "../config/policy.ts";
 
 export interface Ap2Checkout {
   id: string; status: "ready_for_complete" | "completed";
-  line_items: { id: string; title: string; quantity: number; price: { currency: "INR"; value: number } }[];
-  totals: { total: { currency: "INR"; value: number } };
+  line_items: { id: string; title: string; quantity: number; price: { currency: string; value: number } }[];
+  totals: { total: { currency: string; value: number } };
   merchant: { handle: string; agent: string }; buyer: { handle: string; agent: string };
   deal_hash: string; created_at: number; expires_at: number;
 }
@@ -41,14 +41,15 @@ async function jwt(key: KeyObject, kid: string, typ: string, claims: object) {
 
 export interface Ap2Input {
   key: KeyObject; kid: string; base: string; now: number; dealHash: string; idempotencyKey: string;
-  item: string; amount: number; merchant: { handle: string }; buyer: { handle: string }; checkoutId: string; instrument: Ap2Instrument;
+  currency: string; lines: { id: string; title: string; quantity: number; unitPrice: number }[];
+  merchant: { handle: string }; buyer: { handle: string }; checkoutId: string; instrument: Ap2Instrument;
 }
 
 export async function ap2Pay(i: Ap2Input): Promise<Ap2Bundle> {
   const agent = (h: string) => `${i.base}/a2a/${h}`;
   const checkout: Ap2Checkout = { id: i.checkoutId, status: "ready_for_complete",
-    line_items: [{ id: "item_1", title: i.item, quantity: 1, price: { currency: "INR", value: i.amount } }],
-    totals: { total: { currency: "INR", value: i.amount } },
+    line_items: i.lines.map(l => ({ id: l.id, title: l.title, quantity: l.quantity, price: { currency: i.currency, value: l.unitPrice } })),
+    totals: { total: { currency: i.currency, value: i.lines.reduce((n, l) => n + l.quantity * l.unitPrice, 0) } },
     merchant: { handle: i.merchant.handle, agent: agent(i.merchant.handle) }, buyer: { handle: i.buyer.handle, agent: agent(i.buyer.handle) },
     deal_hash: i.dealHash, created_at: i.now, expires_at: i.now + policy().timing.checkoutValiditySec };
   const canonical = jcs(checkout), checkout_hash = sha(canonical);

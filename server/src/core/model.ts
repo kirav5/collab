@@ -108,7 +108,8 @@ export interface Engagement {
   title: string;
   brief: SharedBrief;
   /** The provider's Public offering this started from. */
-  offer: { factId: string | null; title: string; price: number | null; unit: string | null; category: string | null } ;
+  /** `currency`: set for deals made after currencies were introduced (absent means INR, and keeps old receipts' hashes). */
+  offer: { factId: string | null; title: string; price: number | null; unit: string | null; category: string | null; currency?: string } ;
   phase: "asking" | "negotiating" | "deal" | "agreed" | "declined" | "closed";
   /** What each side's owner is being asked (both can be waiting at once). */
   waiting: Record<Side, { kind: "answer" | "move" | "confirm" | "approve"; inbox: string[]; text: string } | null>;

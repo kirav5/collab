@@ -234,6 +234,34 @@ test('shop QR destination → ask → follow-up → offer → confirm → pay �
   assert.equal((await fetch(B + `/public/receipts/${e.id}?code=${code}`)).status, 404, 'pickup and receipt capabilities are separate');
 });
 
+test('currencies: a USD chat deal is agreed, paid and verified in USD; an unsupported currency is refused clearly', async () => {
+  await as('usd-shop', '/api/me', { handle: 'usd-shop', name: 'USD Shop', areaName: 'Bengaluru' });
+  await as('usd-buyer', '/api/me', { handle: 'usd-buyer', name: 'USD Buyer', areaName: 'Bengaluru' });
+  let e = await as('usd-buyer', '/api/people/usd-shop/ask', { text: 'Do you ship a travel mug?' });
+  e = await as('usd-buyer', `/api/engagements/${e.id}/run`, {});
+  const q = (await as('usd-shop', '/api/inbox')).find((i: any) => i.engagementId === e.id && i.kind === 'answer');
+  await as('usd-shop', `/api/inbox/${q.id}`, { text: 'Yes, a steel travel mug.' });
+  const euro = await fetch(B + `/api/engagements/${e.id}/ask`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer dev:usd-shop' }, body: JSON.stringify({ text: "I'll sell the travel mug for €30" }) });
+  assert.equal(euro.status, 400);
+  assert.equal((await euro.json()).code, 'UNSUPPORTED_CURRENCY');
+  e = await as('usd-shop', `/api/engagements/${e.id}/ask`, { text: "I'll sell the travel mug for $20" });
+  assert.equal(e.offer.currency, 'USD'); assert.equal(e.negotiation.deal.price, 20);
+  const c = (await as('usd-buyer', '/api/inbox')).find((i: any) => i.engagementId === e.id && i.kind === 'confirm');
+  await as('usd-buyer', `/api/inbox/${c.id}`, { confirm: true });
+  e = await as('usd-buyer', `/api/engagements/${e.id}/pay`, { idempotencyKey: 'usd-tap' });
+  assert.deepEqual(e.payment.cart.total, { currency: 'USD', value: 20 });
+  assert.deepEqual(e.payment.ap2.checkout.totals.total, { currency: 'USD', value: 20 });
+  const r = await as('usd-buyer', `/api/engagements/${e.id}/receipt`);
+  assert.equal(r.terms.currency, 'USD');
+  const code = r.verifyPath.split('.html#')[1].split('.')[1];
+  const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${code}`)).json();
+  // @ts-ignore standalone browser module also works with Node WebCrypto.
+  const { verifyReceiptBundle } = await import('../../web/js/verify-receipt.js');
+  assert.deepEqual(await verifyReceiptBundle(bundle, bundle.publicKey), { receipt: true, cart: true, payment: true, ap2: { merchant: true, mandates: true } });
+  bundle.terms.currency = 'INR';
+  assert.equal((await verifyReceiptBundle(bundle, bundle.publicKey)).receipt, false, 'changing the currency breaks the receipt');
+});
+
 test('a listing-origin agreement can be paid and issued a pickup pass', async () => {
   const e = await as('amy', `/api/engagements/${agreedId}/pay`, {});
   assert.equal(e.payment.status, 'paid');

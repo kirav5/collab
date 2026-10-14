@@ -26,12 +26,12 @@ const CARD = { type: "CARD", parameters: { allowedAuthMethods: ["PAN_ONLY", "CRY
   tokenizationSpecification: { type: "PAYMENT_GATEWAY", parameters: { gateway: "example", gatewayMerchantId: "exampleGatewayMerchantId" } } };
 
 /** Opens the Google Pay sheet; resolves with what the Payment Mandate needs, or null if the buyer closed it. */
-export async function payWithGoogle(amount, label) {
+export async function payWithGoogle(amount, label, currency = "INR") {
   if (!(await preload())) throw new Error("Google Pay isn't available in this browser.");
   try {
     const d = await client.loadPaymentData({ apiVersion: 2, apiVersionMinor: 0, allowedPaymentMethods: [CARD],
       merchantInfo: { merchantName: "Collab (test)" },
-      transactionInfo: { totalPriceStatus: "FINAL", totalPriceLabel: label.slice(0, 40), totalPrice: amount.toFixed(2), currencyCode: "INR", countryCode: "IN" } });
+      transactionInfo: { totalPriceStatus: "FINAL", totalPriceLabel: label.slice(0, 40), totalPrice: amount.toFixed(2), currencyCode: currency, countryCode: currency === "USD" ? "US" : "IN" } });
     const m = d.paymentMethodData;
     return { token: m.tokenizationData.token, network: m.info?.cardNetwork, description: m.description };
   } catch (e) {

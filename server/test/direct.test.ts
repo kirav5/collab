@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { dealItem, offeredPrice } from "../src/core/direct.ts";
+import { dealItem, offeredMoney, offeredPrice } from "../src/core/direct.ts";
 
 test("a price named in a chat is read as an offer", () => {
   assert.equal(offeredPrice("ok i will sell for 100rs"), 100);
@@ -26,4 +26,14 @@ test("a chat deal is named after what it's for", () => {
   assert.equal(dealItem("I can pay ₹350 for the steel bottle"), "steel bottle");
   assert.equal(dealItem("Deal at 2.5 lakh for the bike"), "bike");
   assert.equal(dealItem("Milton 1 litre flask, ₹450"), "Milton 1 litre flask");
+});
+
+test("the currency of an offer is read, not assumed", () => {
+  assert.deepEqual(offeredMoney("I'll sell it for $20", "INR"), { amount: 20, currency: "USD" });
+  assert.deepEqual(offeredMoney("I'll sell it for 20 dollars", "INR"), { amount: 20, currency: "USD" });
+  assert.deepEqual(offeredMoney("I'll sell it for ₹100", "USD"), { amount: 100, currency: "INR" });
+  assert.deepEqual(offeredMoney("ok i will sell for 100rs", "USD"), { amount: 100, currency: "INR" });
+  assert.deepEqual(offeredMoney("I'll sell it for €30", "INR"), { amount: 30, currency: "EUR" });
+  assert.deepEqual(offeredMoney("I can pay 400 for it", "USD"), { amount: 400, currency: "USD" }, "no currency written: the conversation's");
+  assert.equal(offeredMoney("Do you have the 1 litre one?", "INR"), null);
 });

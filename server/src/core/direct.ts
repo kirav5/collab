@@ -45,3 +45,14 @@ export function dealItem(text: string): string | null {
     .replace(/\s+/g, " ").replace(/[\s,.?!-]+$/, "").trim();
   return t.length >= 3 ? t.slice(0, 80) : null;
 }
+
+const CURRENCY: [RegExp, string][] = [[/₹|\brs\.?(?=\s*\d)|\b(inr|rupees?)\b|\d\s*rs\b|\/-/i, "INR"], [/\$|\b(usd|dollars?)\b/i, "USD"],
+  [/€|\b(eur|euros?)\b/i, "EUR"], [/£|\b(gbp|pounds?)\b/i, "GBP"], [/¥|\b(jpy|yen)\b/i, "JPY"], [/\b(aed|dirhams?)\b/i, "AED"]];
+
+/** The amount and currency a chat message offers. `fallback` applies when no currency is written (e.g. "for 400"). */
+export function offeredMoney(text: string, fallback: string): { amount: number; currency: string } | null {
+  const named = CURRENCY.find(([re]) => re.test(text))?.[1];
+  const t = named && named !== "INR" ? text.replace(/[$€£¥]\s*/g, "₹").replace(/\b(usd|dollars?|eur|euros?|gbp|pounds?|jpy|yen|aed|dirhams?)\b/gi, "rupees") : text;
+  const amount = offeredPrice(t);
+  return amount === null ? null : { amount, currency: named ?? fallback };
+}

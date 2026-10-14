@@ -5,18 +5,18 @@
 import { createHash } from "node:crypto";
 import { sealed } from "./deals.ts";
 import type { Engagement, Side } from "./model.ts";
-import { newId } from "../market/types.ts";
+import { type LineItem, currencyOf, newId } from "../market/types.ts";
 import { policy } from "../config/policy.ts";
 
 export interface CartMandate {
   type: "ap2.CartMandate"; id: string; dealHash: string;
   merchant: { handle: string; name: string }; buyer: { handle: string; name: string };
-  items: { label: string; amount: number }[]; total: { currency: "INR"; value: number };
+  items: { label: string; amount: number; quantity?: number; unitPrice?: number }[]; total: { currency: string; value: number };
   createdAt: number; expiresAt: number; hash: string; merchantSignature: string;
 }
 export interface PaymentMandate {
   type: "ap2.PaymentMandate"; id: string; cartId: string; cartHash: string;
-  amount: { currency: "INR"; value: number }; method: "test";
+  amount: { currency: string; value: number }; method: "test";
   payer: string; payee: string; userPresent: true; createdAt: number; hash: string; payerSignature: string;
 }
 export interface Payment {
@@ -42,14 +42,26 @@ export function sellerFrom(text: string, offeredBy: Side): Side | null {
   return null;
 }
 
+/** The lines of an agreed deal: its items, else one line of the offer with the agreed quantity (default 1). */
+export function linesOf(e: Engagement): LineItem[] {
+  const d = e.negotiation.deal!;
+  if (d.items?.length) return d.items;
+  const q = d.terms?.quantity;
+  return [{ id: "item_1", title: e.offer.title || e.title, quantity: Number.isInteger(q) && q > 1 ? q : 1, unitPrice: d.price }];
+}
+export const totalOf = (lines: LineItem[]) => lines.reduce((n, l) => n + l.quantity * l.unitPrice, 0);
+
 /** The seller's agent signs a cart for exactly the agreed terms (once the deal is agreed). */
 export function cartFor(e: Engagement, sign: (uid: string, hash: string) => string, now: number): CartMandate | null {
   if (e.phase !== "agreed" || !e.negotiation.deal) return null;
   const seller = party(e, sellerOf(e)), buyer = party(e, buyerOf(e));
   if (!seller.uid) return null;
+  const lines = linesOf(e);
   const body = { type: "ap2.CartMandate" as const, id: newId(), dealHash: sealed(e).hash,
     merchant: { handle: seller.handle, name: seller.name }, buyer: { handle: buyer.handle, name: buyer.name },
-    items: [{ label: e.offer.title || e.title, amount: e.negotiation.deal.price }], total: { currency: "INR" as const, value: e.negotiation.deal.price },
+    // A single line of one keeps the original {label, amount} shape (and so older carts' hashes).
+    items: lines.map(l => ({ label: l.title, amount: l.quantity * l.unitPrice, ...(lines.length > 1 || l.quantity !== 1 ? { quantity: l.quantity, unitPrice: l.unitPrice } : {}) })),
+    total: { currency: currencyOf(e), value: totalOf(lines) },
     createdAt: now, expiresAt: now + policy().timing.cartValidityDays * 86_400 };
   const hash = digest(body);
   return { ...body, hash, merchantSignature: sign(seller.uid, hash) };
@@ -77,7 +89,7 @@ function stripCart(c: CartMandate) {
   // Explicit order survives Firestore's map reordering.
   return { type: c.type, id: c.id, dealHash: c.dealHash,
     merchant: { handle: c.merchant.handle, name: c.merchant.name }, buyer: { handle: c.buyer.handle, name: c.buyer.name },
-    items: c.items.map(i => ({ label: i.label, amount: i.amount })), total: { currency: c.total.currency, value: c.total.value },
+    items: c.items.map(i => ({ label: i.label, amount: i.amount, ...(i.quantity !== undefined ? { quantity: i.quantity, unitPrice: i.unitPrice } : {}) })), total: { currency: c.total.currency, value: c.total.value },
     createdAt: c.createdAt, expiresAt: c.expiresAt };
 }
 

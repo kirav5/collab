@@ -122,7 +122,9 @@ export const RECEIPTS = "receipts";
 
 /** The agreed terms, both parties and the time, hashed (SHA-256): any later change to them changes the hash. */
 export function sealed(e: Engagement) {
-  const terms = { title: e.offer.title, price: e.negotiation.deal!.price, unit: e.offer.unit, category: e.offer.category, terms: e.negotiation.deal!.terms };
+  // `currency` joins the sealed terms only for deals that have one, so receipts registered before it still verify.
+  const terms = { title: e.offer.title, price: e.negotiation.deal!.price, unit: e.offer.unit, category: e.offer.category, terms: e.negotiation.deal!.terms,
+    ...(e.offer.currency ? { currency: e.offer.currency } : {}) };
   const parties = { requester: { handle: e.requester.handle, name: e.requester.name }, provider: { handle: e.provider.handle, name: e.provider.name } };
   const at = e.agreedAt ?? e.events.find(ev => ev.who === "system" && ev.text.startsWith("Deal agreed"))?.at ?? e.createdAt;
   const hash = createHash("sha256").update(JSON.stringify({ engagementId: e.id, taskId: e.taskId, terms, parties, at })).digest("hex");
