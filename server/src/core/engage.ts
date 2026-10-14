@@ -39,6 +39,8 @@ export interface Turn {
   answers?: { id: string; question: string; answer: string }[];
   /** AP2: the buyer's signed payment mandate, delivered to the seller's agent. */
   payment?: PaymentMandate;
+  /** Which capability (and version) this turn is for; an unsupported one gets a structured refusal. */
+  capability?: { id: string; version?: string };
   /** AP2 v0.2: the buyer agent's Checkout and Payment Mandates (SD-JWT) for the seller agent's checkout. */
   ap2?: { checkout_mandate: string; payment_mandate: string; checkout_hash: string };
   /** Questions the other side's owner is being asked (the conversation waits for them). */

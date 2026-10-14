@@ -22,6 +22,7 @@ import { take, withLease } from "../core/limits.ts";
 import { pushTo } from "../core/push.ts";
 import { outboxKey } from "../core/recovery.ts";
 import { policy } from "../config/policy.ts";
+import { capabilities, unsupported } from "../core/capabilities.ts";
 import { SafePushSender } from "./webhooks.ts";
 
 const TASKS = "a2a_tasks";
@@ -158,7 +159,9 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     capabilities: { streaming: true, pushNotifications: true,
       extensions: [{ uri: "https://github.com/google-agentic-commerce/AP2/tree/v0.1",
         description: "AP2-inspired payment step, test mode only (no money moves). After both owners confirm a deal, the seller's agent authorises a checkout (detached JWS over RFC 8785 JSON) and the buyer's agent sends Checkout and Payment Mandates (SD-JWT-shaped, custom claims) bound to its hash, in a collab.turn/v1 data part. Signed by Collab's server on behalf of its agents; not conformance-tested against the AP2 specification.",
-        required: false, params: { roles: ["merchant", "shopper"], mode: "test", conformance: "AP2-inspired; v0.2-shaped custom mandates; not verified against the AP2 specification", publicKey: cfg.receiptKey, subject: cfg.receiptSubject?.(p.uid) } }] },
+        required: false, params: { roles: ["merchant", "shopper"], mode: "test", conformance: "AP2-inspired; v0.2-shaped custom mandates; not verified against the AP2 specification", publicKey: cfg.receiptKey, subject: cfg.receiptSubject?.(p.uid) } },
+        { uri: `${cfg.publicUrl}/public/capabilities`, description: "Collab capabilities this agent supports, versioned. Name one as `capability: {id, version}` in a collab.turn/v1 data part; an unsupported one is refused with UNSUPPORTED_CAPABILITY and the supported list. Full schemas at this URL.",
+          required: false, params: { capabilities: capabilities().map(c => ({ id: c.id, version: c.version })) } }] },
     securitySchemes: { firebase: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Firebase ID token", description: "Optional. Without it you're a stranger: Public facts only." } },
       anonymous: { httpAuthSecurityScheme: { scheme: "bearer", bearerFormat: "Collab anonymous token", description: `Optional. POST ${cfg.publicUrl}/a2a/anonymous for one: still a stranger (Public facts only), but your tasks are bound to it so you can continue a conversation or read it later. Without any token, a task can't be reopened.` } } },
     defaultInputModes: ["text/plain", "application/json"],
@@ -217,6 +220,16 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
   return {
     async execute(ctx, bus) {
       const t = turnOf(ctx.userMessage);
+      // A capability this agent doesn't support (or a version it doesn't speak) gets a structured refusal listing
+      // what is supported — the caller can retry with one of those.
+      const refusal = unsupported(t?.capability);
+      if (refusal) {
+        const msg = Message.fromJSON({ messageId: randomUUID(), role: "ROLE_AGENT", taskId: ctx.taskId, contextId: ctx.contextId,
+          parts: [{ text: `Unsupported capability ${JSON.stringify(refusal.requested)}. Supported: ${refusal.supported.map(c => `${c.id}@${c.versions.join("/")}`).join(", ")}.` }, { data: { kind: "collab.error/v1", ...refusal } }] });
+        bus.publish(AgentEvent.task({ id: ctx.taskId, contextId: ctx.contextId, status: { state: TaskState.TASK_STATE_REJECTED, message: msg, timestamp: new Date().toISOString() }, artifacts: [], history: [ctx.userMessage], metadata: {} }));
+        bus.finished();
+        return;
+      }
       const caller = callerOf(ctx.context);
       let e: Engagement | null = null;
       let choices: Fact[] = [];

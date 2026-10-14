@@ -24,6 +24,7 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
@@ -619,6 +620,8 @@ async function receiptBundle(e: Engagement) {
     verifyPath: `/verify.html#${e.id}.${passCode(cfg.secret, e.id, "receipt")}` };
 }
 // Bearer receipt links share only the sealed deal, never the conversation, notes or private limits.
+// Versioned capability discovery: what agents here can do and what their requests look like (no sign-in).
+app.get("/public/capabilities", route(async () => ({ schemaVersion: 1, policy: POLICY_HASH, capabilities: capabilities() }), false));
 app.get("/public/keys", route(async () => ({ keys: [signing.publicKey] }), false));
 app.get("/public/receipts/:id", route(async req => {
   const id = String(req.params.id);

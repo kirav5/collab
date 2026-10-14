@@ -108,6 +108,16 @@ test("outside agents: an anonymous token owns its tasks, others can't read them,
   assert.equal(((await c1.getTask({ id: task.id } as any)) as any).id, task.id, "the token's owner can read its task");
   await assert.rejects((await clientWith(t2)).getTask({ id: task.id } as any), "another anonymous identity can't");
   await assert.rejects((await clientWith()).getTask({ id: task.id } as any), "no identity can't");
+  // An unsupported capability version is refused with the supported list; discovery is public.
+  const caps = await (await fetch(`${B}/public/capabilities`)).json();
+  assert.ok(caps.capabilities.some((c: any) => c.id === "collab.goods" && c.version === "1"));
+  const card = await (await fetch(`${B}/a2a/dee/.well-known/agent-card.json`)).json();
+  assert.ok(card.capabilities.extensions.some((x: any) => (x.params?.capabilities ?? []).some((c: any) => c.id === "collab.information")));
+  const refused: any = await c1.sendMessage({ message: Message.fromJSON({ messageId: crypto.randomUUID(), role: "ROLE_USER",
+    parts: [{ data: { kind: "collab.turn/v1", from: "requester", engagementId: "", capability: { id: "collab.goods", version: "9" }, brief: { title: "Bottle", summary: "A bottle", category: "", mode: null, area: null, requirements: [], budget: null, questions: [] } } }] }) } as any);
+  assert.equal(refused.status.state, TaskState.TASK_STATE_REJECTED);
+  const err = (Message.toJSON(refused.status.message) as any).parts.find((p: any) => p.data)?.data;
+  assert.equal(err.code, "UNSUPPORTED_CAPABILITY"); assert.deepEqual(err.supported, [{ id: "collab.goods", versions: ["1"] }]);
   const forged = t1.slice(0, -2) + (t1.endsWith("AA") ? "BB" : "AA");
   await assert.rejects((await clientWith(forged)).getTask({ id: task.id } as any), "a forged token is no identity");
 });
