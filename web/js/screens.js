@@ -152,6 +152,10 @@ export const screens = {
         h.paint(); return true;
       }
       if (a === "alert-done") { await api(`/api/alerts/${el.dataset.id}/done`, {}); live.alerts = live.alerts.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
+      if (a === "goal-cancel") {
+        if (!confirm("Cancel this goal? Conversations without a deal end; agreed deals keep their obligations.")) return true;
+        await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
+      }
       if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
     },
     async html() {
@@ -161,7 +165,16 @@ export const screens = {
       });
       const incoming = list.filter(e => e.provider.uid === session.uid), outgoing = list.filter(e => e.provider.uid !== session.uid);
       const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+      // Goals first: what you wanted, where it stands, and what happens next (each conversation is one of its tasks).
+      const goals = await api("/api/goals").catch(() => []);
+      const STATE = { draft: ["Draft", ""], active: ["In progress", "accent"], waiting: ["Needs you", "accent"], completed: ["Done", "fresh"],
+        partially_completed: ["Partly done", "peri"], cancelled: ["Cancelled", ""], failed: ["Didn't work out", "danger"] };
+      const open = goals.filter(g => !["completed", "cancelled", "failed"].includes(g.state)), done = goals.filter(g => !open.includes(g)).slice(0, 5);
+      const goalRow = g => `<div class="card slim goal ${g.state === "waiting" ? "needs-card" : ""}"><div class="row"><b class="small">${esc(g.outcome)}</b><span class="end">${tag(...(STATE[g.state] ?? [g.state, ""]))}</span></div>
+        <span class="small muted">${g.tasks.length ? `${g.tasks.length} conversation${g.tasks.length === 1 ? "" : "s"}${g.next ? ` · ${esc(g.next)}` : ""}` : "No conversations yet"}</span>
+        ${g.state !== "cancelled" && open.includes(g) ? `<div class="row"><button class="linkish small faint end" data-act="goal-cancel" data-id="${esc(g.id)}">Cancel goal</button></div>` : ""}</div>`;
       return frame("Requests", "What your agents are doing", `
+        ${goals.length ? `${label(`Your goals · ${open.length} open`, "sq ink")}${open.map(goalRow).join("")}${done.length ? `<details class="more"><summary>Finished · ${done.length}</summary>${done.map(goalRow).join("")}</details>` : ""}` : ""}
         ${live.alerts.length ? `${label(`New matches · ${live.alerts.length}`, "sq accent")}${live.alerts.map(a => `<div class="card slim needs-card">
           <div class="row"><span class="avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(a.name)}</b><span class="small faint">fits “${esc(a.title)}” · found by your scheduled agent</span></div>${a.price ? `<span class="end"><b>${money(a.price, a.unit)}</b></span>` : ""}</div>
           <span class="small muted">${esc(a.text)}</span>

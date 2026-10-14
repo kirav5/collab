@@ -224,6 +224,10 @@ test('shop QR destination → ask → follow-up → offer → confirm → pay �
   after = await as('retail-buyer', `/api/engagements/${e.id}/received`, { ok: true });
   assert.equal(after.fulfilment.state, 'accepted');
   assert.deepEqual(after.outcome, { requester: 'happened', provider: 'happened' });
+  // The QR question became the buyer's goal; with the item received, it's completed.
+  const goal = await as('retail-buyer', `/api/goals/${after.goalId}`);
+  assert.equal(goal.state, 'completed'); assert.equal(goal.tasks[0].state, 'succeeded');
+  await assert.rejects(as('retail-shop', `/api/goals/${after.goalId}`), 'only its owner sees a goal');
   const r = await as('retail-buyer', `/api/engagements/${e.id}/receipt`);
   const receiptCode = r.verifyPath.split('.html#')[1].split('.')[1];
   const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${receiptCode}`)).json();

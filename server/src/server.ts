@@ -24,6 +24,7 @@ import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directo
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { GOALS, type Goal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
 import { recoverOutbox } from "./core/recovery.ts";
@@ -213,6 +214,35 @@ app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local"
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 
+// Goals: what the owner wants done, with each conversation as a task and a state that follows from them.
+app.get("/api/goals", route(async req => {
+  const gs = ((await db.find(GOALS, [["owner", "==", req.uid]], 100)) as Goal[]).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50);
+  return Promise.all(gs.map(g => goalView(db, g)));
+}));
+app.get("/api/goals/:id", route(async req => {
+  const g = (await db.get(GOALS, String(req.params.id))) as Goal | null;
+  if (!g || g.owner !== req.uid) throw new HttpError(404, "goal not found");
+  return goalView(db, g);
+}));
+app.post("/api/goals", route(async req => {
+  await me(req.uid);
+  const outcome = text(req.body?.outcome, 200).trim();
+  if (outcome.length < 2) throw new HttpError(400, "Say what you want done.");
+  const kind = ["purchase", "service", "information", "other"].includes(req.body?.kind) ? req.body.kind : "other";
+  const amount = num(req.body?.budget?.amount, 1, 1e9), currency = text(req.body?.budget?.currency, 3).toUpperCase() || policy().money.defaultCurrency;
+  if (amount && !policy().money.currencies.includes(currency)) throw new HttpError(400, `Budgets in ${currency} aren't supported.`, "UNSUPPORTED_CURRENCY");
+  return goalView(db, await createGoal(db, req.uid, outcome, kind, amount ? { amount, currency } : null, now()));
+}));
+app.post("/api/goals/:id/cancel", route(async req => {
+  const r = await db.update(GOALS, String(req.params.id), (g: Goal | null) => (g && g.owner === req.uid ? { ...g, closed: "cancelled", revision: g.revision + 1, updatedAt: now() } : null));
+  if (!r) throw new HttpError(404, "goal not found");
+  // Its conversations that haven't reached a deal end too; agreed deals keep their obligations.
+  for (const id of r.taskIds) await db.update(ENGAGEMENTS, id, (e: Engagement | null) => (e && ["asking", "negotiating", "deal"].includes(e.phase)
+    ? { ...e, phase: e.requester.uid === req.uid ? "closed" : "declined", waiting: { requester: null, provider: null }, outbox: null, outboxPending: false,
+        events: [...e.events, { at: now(), who: e.requester.uid === req.uid ? "requester" : "provider", text: "Goal cancelled — conversation ended.", by: "owner" }], updatedAt: now() } : null));
+  return goalView(db, r);
+}));
+
 // What the app may show about the policy it runs under: quotas with today's remaining use and reset time, currencies,
 // features and versions. Never private limits or anything per-owner beyond the caller's own quota use.
 app.get("/api/policy", route(async req => {
@@ -268,6 +298,9 @@ app.post("/api/people/:handle/ask", route(async req => {
     offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
   e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
   e.events.push({ at: now(), who: "system", text: `You asked ${p.name}'s agent directly.` });
+  // A direct question is its own goal: information until a price is involved.
+  const goal = await createGoal(db, req.uid, t, f?.offer ? "purchase" : "information", null, now());
+  e.goalId = goal.id; await linkTask(db, goal.id, req.uid, e.id, now());
   e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };
   await saveEngagement(db, e);
   return e;
@@ -485,11 +518,14 @@ app.post("/api/briefs", route(async req => {
   await spend(req.uid, 2);
   const need = needFrom(req.body?.need);
   const b = await saveBrief(db, req.uid, need, sharedFrom(req.body?.shared, need), now());
+  // Every request is a goal; the conversations it starts are that goal's tasks.
+  const goal = await createGoal(db, req.uid, b.shared.title, /service|lesson|task|repair|clean/i.test(need.category ?? "") ? "service" : "purchase", null, now());
+  await db.merge(BRIEFS, b.id, { goalId: goal.id }); b.goalId = goal.id;
   const del = req.body?.delegate;
   const m = mandateFrom(del?.mandate ?? del);
   if (m) { const days = num(del?.days, 1, 365);
     await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() }); }
-  return { brief: b, ...(await search(db, model, b, req.uid)) };
+  return { brief: b, goal, ...(await search(db, model, b, req.uid)) };
 }));
 app.post("/api/briefs/:id/engage", route(async req => {
   const owner = await me(req.uid);
@@ -504,6 +540,7 @@ app.post("/api/briefs/:id/engage", route(async req => {
     const e = fresh({ briefId: brief.id, brief: brief.shared, requester: { uid: owner.uid, handle: owner.handle, name: owner.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
       offer: f.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: f.id, title: f.text.slice(0, 80), price: null, unit: null, category: null } });
     e.events.push({ at: now(), who: "system", text: `Your agent is contacting ${p.name}'s agent over A2A.` });
+    if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
     // The first turn waits in the outbox; the device starts it with /run (each run is one bounded request).
     e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief: brief.shared, offerFactId: f.id };
     await saveEngagement(db, e);

@@ -1,0 +1,99 @@
+// Goals and tasks. A goal is what the owner wants done ("a 500 ml steel bottle", "find out if the shop ships"); each
+// conversation between agents is one task under it. Goals are stored; a task is a view of its conversation, so every
+// existing conversation keeps working and gains a task state without migration. A goal's state follows from its
+// tasks — it can complete with no price, cart or seller (an information goal), or partly when only some tasks did.
+import type { Docs } from "../docs.ts";
+import type { Engagement, Side } from "./model.ts";
+import { ENGAGEMENTS } from "./engage.ts";
+import { newId } from "../market/types.ts";
+import { buyerOf } from "./pay.ts";
+
+export const GOALS = "goals";
+
+export type GoalState = "draft" | "active" | "waiting" | "completed" | "partially_completed" | "cancelled" | "failed";
+export type TaskState = "pending" | "running" | "waiting_for_input" | "waiting_for_external" | "succeeded" | "failed" | "cancelled";
+export type GoalKind = "purchase" | "service" | "information" | "other";
+
+export interface Goal {
+  id: string; schemaVersion: 1; revision: number; owner: string;
+  outcome: string; kind: GoalKind;
+  /** Optional ceiling across all the goal's tasks (checked when a deal is confirmed). */
+  budget: { amount: number; currency: string } | null;
+  taskIds: string[];
+  /** Set by the owner; a goal they closed stays closed. */
+  closed: "cancelled" | null;
+  createdAt: number; updatedAt: number;
+}
+
+export interface TaskView {
+  id: string; goalId: string | null; state: TaskState; counterparty: string; title: string;
+  capability: string; waitingOn: "you" | "them" | null; next: string;
+}
+
+const other = (s: Side): Side => (s === "requester" ? "provider" : "requester");
+
+/** One conversation seen as a task, from its owner's side. */
+export function taskOf(e: Engagement, ownerUid: string): TaskView {
+  const mine: Side = e.requester.uid === ownerUid ? "requester" : "provider";
+  const them = other(mine);
+  const counterparty = (mine === "requester" ? e.provider : e.requester).name;
+  const base = { id: e.id, goalId: e.goalId ?? null, counterparty, title: e.title, capability: `collab.${e.offer.category || (e.offer.price == null ? "information" : "other")}.v1` };
+  const myQuestions = e.qa.filter(q => q.from === mine);
+  const answered = myQuestions.length > 0 && myQuestions.every(q => q.status === "answered" || q.status === "declined");
+  if (e.phase === "declined") return { ...base, state: "failed", waitingOn: null, next: "They declined." };
+  if (e.phase === "closed") {
+    // A conversation with nothing to buy succeeds when its questions were answered and the owner was done.
+    return e.offer.price == null && !e.negotiation.deal && answered
+      ? { ...base, state: "succeeded", waitingOn: null, next: "Answered." }
+      : { ...base, state: "cancelled", waitingOn: null, next: "Ended." };
+  }
+  if (e.phase === "agreed") {
+    const f = e.fulfilment?.state, paid = e.payment?.status === "paid" || e.payment?.status === "outside";
+    if (f === "accepted") return { ...base, state: "succeeded", waitingOn: null, next: "Done — received as agreed." };
+    if (f === "disputed") return { ...base, state: "failed", waitingOn: null, next: "A problem was reported." };
+    if (f === "cancelled") return { ...base, state: "cancelled", waitingOn: null, next: "Cancelled." };
+    const buyer = buyerOf(e);
+    if (!paid) return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? "Pay to complete the deal." : "Waiting for payment." };
+    if (f === "delivered") return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? "Confirm you received it." : "Waiting for them to confirm." };
+    return { ...base, state: mine === buyer ? "waiting_for_external" : "waiting_for_input", waitingOn: mine === buyer ? "them" : "you", next: mine === buyer ? "Waiting for the handover." : "Hand it over." };
+  }
+  if (e.waiting[mine]) return { ...base, state: "waiting_for_input", waitingOn: "you", next: e.waiting[mine]!.kind === "confirm" ? "Confirm the deal." : "Your agent needs you." };
+  if (e.waiting[them] || e.outbox) return { ...base, state: "waiting_for_external", waitingOn: "them", next: `Waiting for ${counterparty}.` };
+  return { ...base, state: "running", waitingOn: null, next: e.offer.price == null && answered ? "Answered — ask more or tap Done." : "Agents are talking." };
+}
+
+/** A goal's state from its tasks (and the owner's own decision to close it). */
+export function goalState(g: Goal, tasks: TaskView[]): GoalState {
+  if (g.closed) return g.closed;
+  if (!tasks.length) return "draft";
+  const done = (t: TaskView) => ["succeeded", "failed", "cancelled"].includes(t.state);
+  if (tasks.every(done)) {
+    const ok = tasks.filter(t => t.state === "succeeded").length;
+    if (ok === tasks.length) return "completed";
+    if (ok > 0) return g.kind === "purchase" || g.kind === "service" ? "completed" : "partially_completed";
+    return tasks.every(t => t.state === "cancelled") ? "cancelled" : "failed";
+  }
+  if (tasks.some(t => t.waitingOn === "you")) return "waiting";
+  return "active";
+}
+
+export async function createGoal(db: Docs, owner: string, outcome: string, kind: GoalKind, budget: Goal["budget"], now: number): Promise<Goal> {
+  const g: Goal = { id: newId(), schemaVersion: 1, revision: 1, owner, outcome: outcome.slice(0, 200), kind, budget, taskIds: [], closed: null, createdAt: now, updatedAt: now };
+  await db.set(GOALS, g.id, g);
+  return g;
+}
+
+/** Links a conversation to a goal (both must be the owner's); idempotent. */
+export async function linkTask(db: Docs, goalId: string, owner: string, engagementId: string, now: number) {
+  await db.update(GOALS, goalId, (g: Goal | null) => (!g || g.owner !== owner || g.taskIds.includes(engagementId) ? null
+    : { ...g, taskIds: [...g.taskIds, engagementId].slice(-50), revision: g.revision + 1, updatedAt: now }));
+}
+
+/** A goal with its tasks and derived state, from its owner's side. */
+export async function goalView(db: Docs, g: Goal) {
+  const es = (await Promise.all(g.taskIds.map(id => db.get(ENGAGEMENTS, id)))).filter(Boolean) as Engagement[];
+  const tasks = es.map(e => taskOf(e, g.owner));
+  const state = goalState(g, tasks);
+  const next = tasks.find(t => t.waitingOn === "you")?.next ?? tasks.find(t => t.state === "waiting_for_external" || t.state === "running")?.next ?? null;
+  return { ...g, state, tasks, next };
+}

@@ -77,6 +77,8 @@ export interface Brief {
   shared: SharedBrief;
   /** For matching only: the request's filters and area, with the budget as the band (not the exact limit). */
   need: Need;
+  /** The goal created with this request; conversations started from it are its tasks. */
+  goalId?: string | null;
   createdAt: number;
 }
 
@@ -136,6 +138,8 @@ export interface Engagement {
   payment?: import("./pay.ts").Payment;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
+  /** The requester's goal this conversation is a task of (see core/goals.ts). */
+  goalId?: string | null;
   /** The operational policy version this conversation started under (see config/policy.ts). */
   policy?: string;
   /** Set with every save: a turn is waiting (`outbox`), and since when — what the recovery scan looks for. */
