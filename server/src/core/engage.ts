@@ -16,6 +16,7 @@ import { type Context, NegotiateTask, acceptable, describe } from "../market/neg
 import { type Mandate, type Proposal, currencyOf, moneyText, newId } from "../market/types.ts";
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
 import { policy, policyHash } from "../config/policy.ts";
+import { CapacityError, availabilityText, hold, resourceFor } from "./resources.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt } from "./deals.ts";
@@ -77,6 +78,9 @@ export async function save(db: Docs, e: Engagement) {
   e.outboxPending = !!e.outbox;
   e.outboxAt = e.outbox ? (e.outboxAt ?? now()) : null;
   if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; await recordDeal(db, e, now()); await registerReceipt(db, e, now(), signer ?? undefined); }
+  // Reservation: a deal on tracked stock holds the units for the policy's hold window (released if the deal ends,
+  // committed when paid). Out of stock means the deal can't be paid; nothing is charged.
+  if (e.phase === "agreed" && !e.reservation && e.offer.factId) await reserveFor(db, e);
   // AP2: once both owners confirmed, the seller's agent issues the cart the buyer pays against.
   if (e.phase === "agreed" && !e.payment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
@@ -132,6 +136,22 @@ async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" 
   return id;
 }
 
+/** Holds the deal's units on the offering's ledger (if it has one); records the result on the conversation. */
+export async function reserveFor(db: Docs, e: Engagement) {
+  const r = await resourceFor(db, e.offer.factId!);
+  if (!r || r.type !== "quantity") return;
+  const qty = (e.negotiation.deal?.items?.reduce((n, l) => n + l.quantity, 0)) ?? (Number.isInteger(e.negotiation.deal?.terms?.quantity) && e.negotiation.deal!.terms.quantity > 1 ? e.negotiation.deal!.terms.quantity : 1);
+  try {
+    const h = await hold(db, r.id, { holder: e.requester.uid ?? "", engagementId: e.id, qty, ttlSec: policy().timing.holdTtlSec }, now());
+    e.reservation = { resourceId: r.id, holdId: h.id, qty, state: "held", expiresAt: h.expiresAt };
+    say(e, "system", `${qty} reserved until ${new Date(h.expiresAt * 1000).toISOString().slice(11, 16)} UTC — pay before then to keep it.`);
+  } catch (err) {
+    if (!(err instanceof CapacityError)) throw err;
+    e.reservation = { resourceId: r.id, holdId: null, qty, state: "unavailable", expiresAt: null, reason: err.message };
+    say(e, "system", `${err.message} The deal can't be paid until the seller restocks; nothing was charged.`);
+  }
+}
+
 /** For tests and other modules: ask an owner (deduplicated, with a deadline). */
 export const askOwner = ask;
 
@@ -153,6 +173,12 @@ function source(allowed: Allowed[], evidence: string[]): Allowed | null {
 
 async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q: QA): Promise<{ text: string; src: QA["source"]; review: boolean; byModel: boolean } | null> {
   const owner = uidOf(e, s), asker = uidOf(e, other(s));
+  // Stock and slot questions are answered from the ledger, never from a cached reply or the model: a count only
+  // when it's confirmed, "needs to be confirmed" when it's stale, "isn't tracked" when there's no ledger.
+  if (s === "provider" && e.offer.factId && /\b(in stock|available|availability|stock|left|any (more|left)|have (it|any|one)|slots?|book(ing)?|free (on|at))\b/i.test(q.question)) {
+    const r = await resourceFor(db, e.offer.factId);
+    if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
+  }
   const key = s === "provider" && e.offer.factId ? docId(`${e.offer.factId}:${savedKey(q.question)}`) : null;
   const allowed = owner ? await allowedFor(db, owner, asker, now()) : [];
   let facts = asFacts(allowed);

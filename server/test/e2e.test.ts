@@ -276,9 +276,32 @@ test('currencies: a USD chat deal is agreed, paid and verified in USD; an unsupp
   assert.equal((await verifyReceiptBundle(bundle, bundle.publicKey)).receipt, false, 'changing the currency breaks the receipt');
 });
 
+test('stock: an out-of-stock deal cannot be paid (nothing charged); restocked, payment commits the unit; stock questions answer from the ledger', async () => {
+  const deal = await as('amy', `/api/engagements/${agreedId}`);
+  const seller = deal.seller === 'requester' ? 'amy' : 'bob';
+  const ledger = await as(seller, '/api/resources', { factId: deal.offer.factId, type: 'quantity', onHand: 0 });
+  await assert.rejects(as('amy', '/api/resources', { factId: deal.offer.factId, type: 'quantity', onHand: 5 }), 'only the offering owner tracks its stock');
+  const refused = await fetch(B + `/api/engagements/${agreedId}/pay`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer dev:amy' }, body: JSON.stringify({ idempotencyKey: 'stock-1' }) });
+  assert.equal(refused.status, 409);
+  const body = await refused.json();
+  assert.equal(body.code, 'CAPACITY_UNAVAILABLE'); assert.match(body.error, /Nothing was charged/);
+  assert.equal((await as('amy', `/api/engagements/${agreedId}`)).payment.status, 'awaiting', 'the payment claim was released');
+  await as(seller, `/api/resources/${ledger.id}/stock`, { onHand: 1 });
+});
+
 test('a listing-origin agreement can be paid and issued a pickup pass', async () => {
   const e = await as('amy', `/api/engagements/${agreedId}/pay`, {});
   assert.equal(e.payment.status, 'paid');
+  // The restocked unit was held and is now committed: it left the seller's stock.
+  assert.equal(e.reservation.state, 'committed');
+  const seller = e.seller === 'requester' ? 'amy' : 'bob';
+  const [ledger] = await as(seller, '/api/resources');
+  assert.equal(ledger.onHand, 0);
+  // Someone else asks the same shop whether it's in stock: the agent answers from the ledger, not the model.
+  await as('zed', '/api/me', { handle: 'zed', name: 'Zed', areaName: 'Bengaluru' });
+  let q = await as('zed', `/api/people/${(await as(seller, '/api/me')).handle}/ask`, { text: 'Is it still in stock?', offerFactId: e.offer.factId });
+  q = await as('zed', `/api/engagements/${q.id}/run`, {});
+  assert.equal(q.qa.find((x: any) => x.question === 'Is it still in stock?')?.answer, 'Out of stock right now.');
   assert.ok((await as('amy', `/api/engagements/${agreedId}/pickup`)).path);
 });
 

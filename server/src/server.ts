@@ -22,8 +22,9 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
+import { CapacityError, RESOURCES, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
@@ -693,6 +694,22 @@ app.post("/api/engagements/:id/pay", route(async req => {
     const { claim: _c, ...rest } = cur.payment;
     return { ...cur, payment: { ...rest, status: "awaiting" } };
   });
+  // Tracked stock: the reservation must be live. An expired or missing hold is taken again if the stock is there;
+  // if not, nothing is charged and the claim is released.
+  if (!e.reservation && e.offer.factId && (await resourceFor(db, e.offer.factId))) await reserveFor(db, e); // deals from before tracking
+  if (e.reservation && e.reservation.state !== "committed") {
+    const live = e.reservation.state === "held" && (e.reservation.expiresAt ?? 0) > now();
+    if (!live) {
+      try {
+        const h = await holdResource(db, e.reservation.resourceId, { holder: req.uid, engagementId: e.id, qty: e.reservation.qty, ttlSec: policy().timing.holdTtlSec }, now());
+        e.reservation = { ...e.reservation, holdId: h.id, state: "held", expiresAt: h.expiresAt };
+      } catch (err) {
+        await release();
+        if (err instanceof CapacityError) throw new HttpError(409, `${err.message} Nothing was charged.`, err.code);
+        throw err;
+      }
+    }
+  }
   let mandate;
   try {
     mandate = pay(e, side, signing.sign, now());
@@ -710,8 +727,13 @@ app.post("/api/engagements/:id/pay", route(async req => {
   const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} — Payment Mandate signed (AP2, test mode: no money moved).`, by: "owner" as const };
   // Commit only while this tap still holds the claim.
   const committed = await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.payment?.status === "paying" && cur.payment.claim?.key === key
-    ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, events: [...cur.events, paidEvent], updatedAt: now() } : null));
+    ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, ...(e.reservation ? { reservation: e.reservation } : {}), events: [...cur.events, paidEvent], updatedAt: now() } : null));
   if (!committed) throw new HttpError(409, "This payment changed while it was being made. Try again.", "VERSION_CONFLICT");
+  // Paid: the held units become a commitment (they leave the seller's stock).
+  if (e.reservation?.holdId && e.reservation.state === "held") {
+    await commitResource(db, e.reservation.resourceId, e.reservation.holdId, now()).catch(err => log.error("reservation commit failed after payment", { id, error: String(err).slice(0, 160) }));
+    await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.reservation ? { ...cur, reservation: { ...cur.reservation, state: "committed" } } : null));
+  }
   const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate, ap2: { checkout_mandate: e.payment!.ap2!.checkout_mandate, payment_mandate: e.payment!.ap2!.payment_mandate, checkout_hash: e.payment!.ap2!.checkout_hash } };
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
@@ -725,6 +747,23 @@ app.post("/api/engagements/:id/cart", route(async req => {
   if (e.phase === "agreed" && !e.payment) await saveEngagement(db, e);
   return load(db, e.id);
 }));
+// Stock and slots for an owner's offerings (the ledger the reservations come from).
+app.get("/api/resources", route(async req => db.find(RESOURCES, [["owner", "==", req.uid]], 100)));
+app.post("/api/resources", route(async req => {
+  const factId = text(req.body?.factId, 60);
+  const f = (await db.get(FACTS, factId)) as Fact | null;
+  if (!f || f.owner !== req.uid || f.tier !== "public" || !f.offer) throw new HttpError(404, "Track stock for one of your public offerings.", "NOT_FOUND");
+  if (await resourceFor(db, factId)) throw new HttpError(409, "This offering already has a ledger — update it instead.", "VERSION_CONFLICT");
+  const type = req.body?.type === "slots" ? "slots" : "quantity";
+  const slots = Array.isArray(req.body?.slots) ? req.body.slots.slice(0, 100).map((x: any) => ({ start: num(x?.start, 0, 4e9) ?? 0, end: num(x?.end, 0, 4e9) ?? 0, capacity: num(x?.capacity, 1, 1000) ?? 1 })) : [];
+  try { return await createResource(db, req.uid, { factId, type, title: f.offer.title, onHand: type === "quantity" ? Number(req.body?.onHand) : 0, slots, timezone: text(req.body?.timezone, 60) || undefined }, now()); }
+  catch (err) { if (err instanceof CapacityError) throw new HttpError(400, err.message, "INVALID_INPUT"); throw err; }
+}));
+app.post("/api/resources/:id/stock", route(async req => {
+  try { return await setStock(db, String(req.params.id), req.uid, Number(req.body?.onHand), now()); }
+  catch (err) { if (err instanceof CapacityError) throw new HttpError(err.code === "NOT_FOUND" ? 404 : 400, err.message, err.code === "NOT_FOUND" ? "NOT_FOUND" : "INVALID_INPUT"); throw err; }
+}));
+
 // Fulfilment, separate from payment: the seller hands over (pickup pass) or marks delivered; the buyer then accepts or
 // reports a problem. Each side's report also feeds the other side's track record.
 async function markDelivered(id: string, seller: "requester" | "provider", at: number, note: string) {
@@ -776,6 +815,12 @@ app.post("/api/engagements/:id/outcome", route(async req => {
   if (e.phase !== "agreed") throw new HttpError(400, "no deal yet");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   (e.outcome ??= {})[side] = req.body?.happened ? "happened" : "fell_through";
+  // A deal that fell through before payment gives its held stock back.
+  if (!req.body?.happened && e.reservation?.state === "held" && e.reservation.holdId) {
+    await releaseResource(db, e.reservation.resourceId, e.reservation.holdId, now());
+    e.reservation = { ...e.reservation, state: "released" };
+    e.fulfilment = { ...(e.fulfilment ?? { state: "not_started" }), state: "cancelled" };
+  }
   await saveEngagement(db, e);
   return e;
 }));

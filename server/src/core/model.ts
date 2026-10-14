@@ -138,6 +138,8 @@ export interface Engagement {
   payment?: import("./pay.ts").Payment;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
+  /** The stock held for this deal (see core/resources.ts): held until paid (then committed), released if it ends. */
+  reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable"; expiresAt: number | null; reason?: string };
   /** The requester's goal this conversation is a task of (see core/goals.ts). */
   goalId?: string | null;
   /** The operational policy version this conversation started under (see config/policy.ts). */
