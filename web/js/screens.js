@@ -362,8 +362,7 @@ export const screens = {
           <input class="field" name="bio" value="${esc(S.profile.bio)}" placeholder="One line about you (public)">
           <input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="Your area">
           <button class="btn" data-act="save-profile">Save</button></form>
-        <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>On-device AI</dt><dd>${deviceAI()}</dd>
-          <dt>Gemma on this device</dt><dd>${deviceAI()}</dd>
+        <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>Gemma on this device</dt><dd>${deviceAI()}</dd>
           <dt>Answer my notes with</dt><dd class="stack" style="gap:4px">${[["device-only", "Only this device", `${MODEL.label} here; if it can't, you're told — nothing is sent`],
             ["my-devices", "My devices", `${MODEL.label} here or on another of your devices — never the cloud`], ["cloud", "My devices, then the cloud", "Gemini on Vertex AI when none of your devices can"]]
             .map(([v, t, d]) => `<label class="row small" style="gap:6px"><input type="radio" name="processing" data-act="processing" value="${v}" ${engine.mode === v ? "checked" : ""}> <b>${t}</b> <span class="faint">${d}</span></label>`).join("")}</dd>

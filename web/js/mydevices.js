@@ -23,8 +23,8 @@ function deviceName() {
   return `${what} · ${browser}`;
 }
 
-// Testing two devices in one browser: ?devicetest=phone is a second device of the same account (its own identity,
-// and no Gemma of its own), so one browser can check that another device answers for it.
+// Testing two devices in one browser: ?devicetest=laptop and ?devicetest=phone&nogemma are two devices of the same
+// account (each its own identity; the second without Gemma), so one browser can check that one answers for the other.
 export const testDevice = new URLSearchParams(location.search).get("devicetest")?.replace(/[^\w-]/g, "").slice(0, 16) || null;
 
 /** This device's identity for this account (IndexedDB, per account): id, name, key pair, whether it serves others. */

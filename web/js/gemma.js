@@ -35,7 +35,8 @@ export async function gemmaDownloaded() {
 /** Sets `gemma.status` from what this browser can do and what it already has. */
 export async function detectGemma() {
   if (["downloading", "loading", "ready"].includes(gemma.status)) return gemma.status;
-  if (new URLSearchParams(location.search).has("devicetest")) { gemma.status = "unsupported"; gemma.reason = "a test device without Gemma"; return gemma.status; }
+  // Testing My devices in one browser: ?devicetest=phone&nogemma plays a device that can't run Gemma.
+  if (new URLSearchParams(location.search).has("nogemma")) { gemma.status = "unsupported"; gemma.reason = "a test device without Gemma"; return gemma.status; }
   const s = await gemmaSupport();
   gemma.reason = s.reason;
   gemma.status = !s.ok ? "unsupported" : (await gemmaDownloaded()) ? "downloaded" : "absent";
