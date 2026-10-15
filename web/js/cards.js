@@ -163,7 +163,7 @@ function matchesCard(c, at) {
         <span class="small faint">${[f.distanceKm ? `${f.distanceKm} km` : null, ...f.met.slice(0, 2).map(x => `✓ ${x}`), f.unknown.length ? `${f.unknown.length} to ask` : null].filter(Boolean).map(esc).join(" · ")}</span>
         ${f.profile.stats?.deals ? `<span class="small faint">Track record: ${f.profile.stats.deals} deal${f.profile.stats.deals === 1 ? "" : "s"} · ${f.profile.stats.kept} completed as agreed${f.profile.stats.fellThrough ? ` · ${f.profile.stats.fellThrough} fell through` : ""}</span>` : `<span class="small faint">New on Collab — no deals yet</span>`}
         <span class="row match-actions">
-          ${f.fact.offer?.price?.amount != null && !f.over ? `<button class="btn accent compact" data-act="match-book" data-j="${j}" ${at}>${f.fact.offer.instant ? "Book now" : "Book"} at ${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</button>` : ""}
+          ${f.fact.offer?.price?.amount != null && !f.over && (c.draft.mandate?.price?.limit == null || f.fact.offer.price.amount <= c.draft.mandate.price.limit) ? `<button class="btn accent compact" data-act="match-book" data-j="${j}" ${at}>${f.fact.offer.instant ? "Book now" : "Book"} at ${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</button>` : ""}
           <button class="btn secondary compact" data-act="match-negotiate" data-j="${j}" ${at}>Negotiate</button>
           <button class="btn quiet compact" data-act="match-addons" data-j="${j}" ${at}>Ask about add-ons</button>
         </span></span>

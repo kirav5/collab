@@ -128,6 +128,10 @@ export function availabilityText(r: Resource | null, now: number): string {
   if (!r) return "Availability isn't tracked — the seller will confirm.";
   if (certainty(r, now) === "stale") return "Availability needs to be confirmed by the seller.";
   if (r.type === "quantity") { const n = available(r, now); return n > 0 ? `${n} ${r.unit === "each" ? "available" : r.unit + " available"}` : "Out of stock right now."; }
-  const free = r.slots.filter(s => s.start > now && available(r, now, s.id) > 0);
-  return free.length ? `${free.length} open slot${free.length === 1 ? "" : "s"}` : "No open slots right now.";
+  // The next free times themselves, in the seller's time zone — "105 open slots" answers nothing.
+  const free = r.slots.filter(s => s.start > now && available(r, now, s.id) > 0).sort((a, b) => a.start - b.start);
+  if (!free.length) return "No open slots right now.";
+  const fmt = (t: number) => new Date(t * 1000).toLocaleString("en-IN", { timeZone: r.timezone || "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  const mins = Math.round((free[0].end - free[0].start) / 60);
+  return `Next free: ${free.slice(0, 3).map(s => fmt(s.start)).join("; ")}${free.length > 3 ? ` (${free.length} open in all)` : ""}. Each takes about ${mins} minutes.`;
 }

@@ -57,3 +57,13 @@ test("a manual count goes stale: availability becomes unknown, not a number, unt
   await assert.rejects(setStock(db, r.id, "shop", -1, later), /zero or more/);
   assert.equal(availabilityText(null, T), "Availability isn't tracked — the seller will confirm.");
 });
+
+test("asked about free times, the agent names the next ones, not a count", async () => {
+  const { availabilityText, createResource } = await import("../src/core/resources.ts");
+  const { memoryDocs } = await import("../src/docs.ts");
+  const db = memoryDocs(), T = 1_800_000_000;
+  const r = await createResource(db, "o", { factId: "f", type: "slots", title: "Haircut", slots: [0, 1, 2, 3].map(i => ({ start: T + 3600 + i * 2400, end: T + 3600 + i * 2400 + 2400, capacity: 1 })), timezone: "Asia/Kolkata" }, T);
+  const text = availabilityText(r, T);
+  assert.match(text, /^Next free: .+; .+; .+ \(4 open in all\)\. Each takes about 40 minutes\.$/);
+  assert.doesNotMatch(text, /open slots$/);
+});
