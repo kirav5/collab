@@ -22,7 +22,7 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -388,7 +388,7 @@ async function directConversation(me_: Profile, p: Profile, f: Fact | null, t: s
   const questions = (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
   const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length ? questions : [t.slice(0, 160)] };
   const e = fresh({ briefId: null, brief, requester: { uid: me_.uid, handle: me_.handle, name: me_.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
-    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
+    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
   e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
   e.events.push({ at: now(), who: "system", text: via === "order" ? `You ordered from ${p.name}'s card.` : `You asked ${p.name}'s agent directly.` });
   // A direct question is its own goal: information until a price is involved.
@@ -430,6 +430,8 @@ app.post("/api/people/:handle/order", route(async req => {
   e.preferredSlotId = slotId;
   try { await offerDeal(db, e, "requester", each, said, said, quantity > 1 ? quantity : null, false); }
   catch (err) { if (err instanceof Refused) throw new HttpError(409, err.message); throw err; }
+  // Instant booking: at the listed price, on an offering whose seller turned it on, their agent confirms at once.
+  if (f.offer.instant && each === listed) await autoConfirm(db, await load(db, e.id), "provider");
   event("order_sent", { category: f.offer.category, quantity, offer: each !== listed, slot: !!slotId });
   return load(db, e.id);
 }));
@@ -679,7 +681,7 @@ app.post("/api/briefs/:id/engage", route(async req => {
     const p = f ? ((await db.get(PROFILES, f.owner)) as Profile | null) : null;
     if (!f || !p || f.tier !== "public" || p.uid === req.uid) continue;
     const e = fresh({ briefId: brief.id, brief: brief.shared, requester: { uid: owner.uid, handle: owner.handle, name: owner.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
-      offer: f.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: f.id, title: f.text.slice(0, 80), price: null, unit: null, category: null } });
+      offer: f.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: f.id, title: f.text.slice(0, 80), price: null, unit: null, category: null } });
     e.events.push({ at: now(), who: "system", text: `Your agent is contacting ${p.name}'s agent over A2A.` });
     if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
     // The first turn waits in the outbox; the device starts it with /run (each run is one bounded request).
@@ -726,6 +728,18 @@ app.post("/api/price-check", route(async req => {
   catch (err) { if (err instanceof PriceCheckError) throw new HttpError(err.status, err.message); throw err; }
 }));
 app.get("/api/price-check", route(async req => db.get(PRICE_CHECKS, req.uid)));
+
+// An offering's stated policies and instant booking — set by its owner only. Collab shows them as the seller wrote them
+// and seals them into each deal; it never writes terms for a seller.
+app.post("/api/facts/:id/policies", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || !f.offer) throw new HttpError(404, "offering not found");
+  const list = Array.isArray(req.body?.policies) ? req.body.policies : [];
+  const policies = list.slice(0, 8).map((p: any) => ({ label: text(p?.label, 40).trim(), text: text(p?.text, 240).trim() })).filter((p: { label: string; text: string }) => p.label && p.text);
+  const offer = { ...f.offer, policies, instant: req.body?.instant === true };
+  await db.set(FACTS, f.id, { ...f, offer, updatedAt: now() });
+  return publicFact({ ...f, offer });
+}));
 app.post("/api/nearby", route(async req => {
   try { return await nearby(db, model, req.uid, text(req.body?.item, 200), text(req.body?.area, 120), now()); }
   catch (err) { if (err instanceof NearbyError) throw new HttpError(err.status, err.message); throw err; }

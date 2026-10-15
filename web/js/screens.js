@@ -364,7 +364,8 @@ export const screens = {
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>Gemma on this device</dt><dd>${deviceAI()}</dd>
           <dt>Answer my notes with</dt><dd class="stack" style="gap:4px">${[["device-only", "Only this device", `${MODEL.label} here; if it can't, you're told — nothing is sent`],
-            ["my-devices", "My devices", `${MODEL.label} here or on another of your devices — never the cloud`], ["cloud", "My devices, then the cloud", "Gemini on Vertex AI when none of your devices can"]]
+            ["my-devices", "My devices", `${MODEL.label} here or on another of your devices — never the cloud`], ["cloud", "My devices, then the cloud", "Gemini on Vertex AI when none of your devices can"],
+            ["cloud-only", "Only the cloud", "Gemini on Vertex AI every time — Gemma isn't used"]]
             .map(([v, t, d]) => `<label class="row small" style="gap:6px"><input type="radio" name="processing" data-act="processing" value="${v}" ${engine.mode === v ? "checked" : ""}> <b>${t}</b> <span class="faint">${d}</span></label>`).join("")}</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
         ${myDevices()}
@@ -395,7 +396,7 @@ export const screens = {
       if (a === "gemma-remove") { busy(el, true); await removeGemma(); await detectEngine(); refreshServing(); h.toast(`${MODEL.label} removed from this device.`); h.paint(); return true; }
       if (a === "processing") {
         setProcessingMode(el.value);
-        h.toast(el.value === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : el.value === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
+        h.toast(el.value === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : el.value === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : el.value === "cloud-only" ? "Your notes are answered by Gemini in the cloud." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
         h.paint(); return true;
       }
       if (a === "device-rename") { await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }

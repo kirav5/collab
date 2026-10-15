@@ -453,6 +453,17 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
   }
 }
 
+/** The seller allowed it (instant booking at the listed price): their always-on agent confirms for them, now. */
+export async function autoConfirm(db: Docs, e: Engagement, s: Side) {
+  e.negotiation.confirmed[s] = true;
+  (e.negotiation.confirmedBy ??= {})[s] = "mandate";
+  for (const id of e.waiting[s]?.inbox ?? []) await db.update(INBOX, id, (x: InboxItem | null) => (x && x.kind === "confirm" ? { ...x, status: "done" } : x));
+  e.waiting[s] = null;
+  say(e, agentOf(s), "Booked at the listed price — confirmed by my owner's standing instruction.", "rules");
+  settle(e);
+  await save(db, e);
+}
+
 function settle(e: Engagement) {
   if (e.phase === "deal" && e.negotiation.confirmed.requester && e.negotiation.confirmed.provider) {
     e.phase = "agreed";

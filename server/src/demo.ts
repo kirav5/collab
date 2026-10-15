@@ -13,14 +13,32 @@ import { domain } from "./market/domains.ts";
 import { resolve } from "./market/places.ts";
 import type { Offer } from "./market/types.ts";
 import { log } from "./log.ts";
+import { RESOURCES, createResource, resourceFor } from "./core/resources.ts";
 
 interface Person {
   handle: string; name: string; bio: string; area: string;
-  offer: { text: string; category: string; title: string; price: number; floor: number; attributes: Record<string, string> };
+  offer: { text: string; category: string; title: string; price: number; floor: number; attributes: Record<string, string>;
+    /** The demo seller's own stated terms, and instant booking at the listed price. */
+    policies?: { label: string; text: string }[]; instant?: boolean };
+  /** Bookable times, kept for the coming week: open hours (IST) and slot length in minutes. */
+  slots?: { from: number; to: number; minutes: number };
   protected?: { text: string; topics: string[]; shape: Rule["shape"]; approval: Rule["approval"] }[];
 }
 
 const PEOPLE: Person[] = [
+  { handle: "sharp-cuts", name: "Sharp Cuts Barber Studio", bio: "Barber studio in Indiranagar.", area: "Indiranagar",
+    offer: { category: "beauty", title: "Men's haircut & styling · Indiranagar", price: 450, floor: 380,
+      text: "Men's haircut and styling at our Indiranagar studio, about 40 minutes. Beard trim ₹150 extra. Home visits within 5 km for ₹200 extra. ₹450 a session.",
+      attributes: { service: "haircut, styling, beard trim", at_home: "studio, or a home visit within 5 km", duration_minutes: "40" },
+      policies: [
+        { label: "Cancellation", text: "Free up to 2 hours before your slot; later cancellations forfeit the booking." },
+        { label: "Late arrival", text: "We hold your slot for 10 minutes; after that the cut may be shortened or moved to the next free slot." },
+        { label: "Re-trim", text: "Free touch-up within 7 days if you're not happy with the cut." },
+        { label: "Hygiene", text: "Tools sterilised after every client; a fresh towel and neck strip each time." },
+        { label: "Payment", text: "Pay in the app or in cash at the studio." },
+        { label: "Contact", text: "Message us through Collab; the studio's exact address comes with your booking pass." },
+      ], instant: true },
+    slots: { from: 10, to: 20, minutes: 40 } },
   { handle: "riya", name: "Riya Sharma", bio: "Guitar teacher in Jayanagar.", area: "Jayanagar",
     offer: { category: "lessons", title: "Guitar lessons · online or at your home", price: 800, floor: 650,
       text: "I teach acoustic and electric guitar to beginners and intermediates, online or at your home in south Bengaluru. ₹800 an hour. 8 years teaching. Classes in English, Hindi or Kannada.",
@@ -69,13 +87,30 @@ const DEAL_SEED: [string, string, string | null, number, number, number][] = [
   ["tasks", "HSR Layout", "assignment", 1_500, 1_200, 10], ["tasks", "HSR Layout", "visit", 500, 450, 22],
   ["goods", "Koramangala", null, 4_500, 3_800, 3], ["goods", "Koramangala", null, 5_500, 4_800, 14],
   ["goods", "Koramangala", null, 6_000, 5_000, 26], ["goods", "Koramangala", null, 4_000, 3_400, 38],
+  ["beauty", "Indiranagar", "session", 450, 400, 3], ["beauty", "Indiranagar", "session", 500, 450, 10], ["beauty", "Indiranagar", "session", 400, 380, 17], ["beauty", "Indiranagar", "session", 450, 420, 25],
   ["vehicles", "Bengaluru", null, 650_000, 620_000, 8], ["vehicles", "Bengaluru", null, 700_000, 670_000, 21], ["vehicles", "Bengaluru", null, 750_000, 720_000, 34],
 ];
 
-const SEEDED = "demo-v3";
+const SEEDED = "demo-v4";
+
+/** Demo sellers with a schedule always have bookable times for the coming week (checked at every start). */
+async function refreshDemoSlots(db: Docs, now: number) {
+  for (const p of PEOPLE.filter(x => x.slots)) {
+    const factId = `demo-${p.handle}-offer`, r = await resourceFor(db, factId);
+    if (r && r.slots.some(s => s.start > now + 3 * 86_400)) continue;
+    if (r) await db.delete(RESOURCES, r.id);
+    const IST = 19_800, day0 = Math.floor((now + IST) / 86_400) * 86_400 - IST, { from, to, minutes } = p.slots!;
+    const slots = [];
+    for (let d = 0; d < 7; d++) for (let m = from * 60; m + minutes <= to * 60; m += minutes) {
+      const start = day0 + d * 86_400 + m * 60;
+      if (start > now + 1800) slots.push({ start, end: start + minutes * 60, capacity: 1 });
+    }
+    await createResource(db, `demo-${p.handle}`, { factId, type: "slots", title: p.offer.title, slots, timezone: "Asia/Kolkata" }, now);
+  }
+}
 
 export async function seedDemo(db: Docs, model: Model | null, now: number) {
-  if ((await db.get("meta", "demo"))?.version === SEEDED) return;
+  if ((await db.get("meta", "demo"))?.version === SEEDED) return refreshDemoSlots(db, now);
   const city = resolve("Bengaluru");
   for (const p of PEOPLE) {
     const uid = `demo-${p.handle}`;
@@ -87,7 +122,8 @@ export async function seedDemo(db: Docs, model: Model | null, now: number) {
     const offer: Offer = { id: `${uid}-offer`, category: p.offer.category, title: p.offer.title, details: p.offer.text,
       price: { amount: p.offer.price, currency: "INR", period: d?.priceUnit ?? null }, place: area!,
       attributes: { ...p.offer.attributes, ...(p.offer.floor < p.offer.price ? { negotiable: "yes" } : {}) }, askBuyer: d?.sellerAsks.slice(0, 1) ?? [],
-      publishedAt: now, expiresAt: now + 365 * 86_400, status: "active" };
+      publishedAt: now, expiresAt: now + 365 * 86_400, status: "active",
+      ...(p.offer.policies ? { policies: p.offer.policies } : {}), ...(p.offer.instant ? { instant: true } : {}) };
     const embedding = (await model?.embed?.([`${offer.title}. ${p.offer.text}`], "document"))?.[0];
     const fact: Fact = { id: offer.id, owner: uid, text: p.offer.text, tier: "public", topics: [], offer, ...(embedding ? { embedding } : {}), createdAt: now, updatedAt: now };
     await db.set(FACTS, fact.id, fact);
@@ -103,6 +139,7 @@ export async function seedDemo(db: Docs, model: Model | null, now: number) {
       questions: 2 + (i % 4), at: now - days * 86_400, demo: true };
     await db.set(DEALS, d.id, d);
   }
+  await refreshDemoSlots(db, now);
   await db.set("meta", "demo", { version: embeddingOk(model) ? SEEDED : "partial" });
   log.info("demo people seeded", { count: PEOPLE.length });
 }

@@ -48,6 +48,7 @@ async function cachedNotes() { try { return (await local.get("facts", "notes"))?
 
 /** No network: questions about the owner's own notes are answered by Gemma on this device; anything else waits. */
 async function offlineAnswer(text) {
+  if (engine.mode === "cloud-only") return { text: "You're offline, and your notes are set to be answered in the cloud. Choose My devices in Settings › AI engine to have Gemma answer them offline.", cards: [] };
   if (!engine.here) return { text: limitation(engine.mode, { canRunHere: engine.canRun, offline: true }), cards: [] };
   const notes = relevant(await cachedNotes(), text);
   const a = notes.length ? await think(text, notes, "self", true) : null;

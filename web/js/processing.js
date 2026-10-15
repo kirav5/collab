@@ -2,14 +2,16 @@
 //   mode:   "device-only" — Gemma on this device, nothing else
 //           "my-devices"  — Gemma here, or on another of the person's own devices; never the cloud (the default)
 //           "cloud"       — also Gemini in the cloud when no Gemma of theirs can answer (only if they choose it)
+//           "cloud-only"  — always Gemini in the cloud, never Gemma (if they choose it)
 //   here:   Gemma is downloaded on this device · remote: another of their devices with Gemma is online
 // → "here" · "remote" · "cloud" · "limitation" (nothing allowed can answer: the owner is told, nothing is sent)
-export const MODES = ["device-only", "my-devices", "cloud"];
+export const MODES = ["device-only", "my-devices", "cloud", "cloud-only"];
 
 /** Saved choices from before Gemma ("device-first" let the cloud answer) become "my-devices": Gemma only. */
 export const normalizeMode = m => (MODES.includes(m) ? m : "my-devices");
 
 export function decideProcessing(mode, { here = false, remote = false } = {}) {
+  if (mode === "cloud-only") return "cloud";
   if (here) return "here";
   if (mode !== "device-only" && remote) return "remote";
   if (mode === "cloud") return "cloud";

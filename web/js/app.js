@@ -143,7 +143,7 @@ function paintSidebar() {
   const n = needsYou().length;
   const groups = groupSessions(S.sessions);
   const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
-      title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
+      title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here && engine.mode !== "cloud-only" ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
@@ -181,7 +181,7 @@ function paintTop() {
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
-  $("#composer-note").innerHTML = label(engine.here ? "Private notes are read by Gemma on this device" : engine.mode === "cloud" ? "Private notes are never shared · Gemini sees only what a request needs" : "Private notes are read only by Gemma on your devices · never shared");
+  $("#composer-note").innerHTML = label(engine.here && engine.mode !== "cloud-only" ? "Private notes are read by Gemma on this device" : engine.mode === "cloud" || engine.mode === "cloud-only" ? "Private notes are never shared · Gemini sees only what a request needs" : "Private notes are read only by Gemma on your devices · never shared");
 }
 
 let painting = false, lastHTML = "";

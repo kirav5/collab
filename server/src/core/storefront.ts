@@ -15,13 +15,15 @@ export interface ShopItem {
   /** The most anyone can order in one go (what's in stock, or 20 when stock isn't tracked). */
   maxQuantity: number;
   slots: { id: string; start: number; end: number }[] | null;
+  /** The seller's own stated terms, and whether an order at the listed price is confirmed at once. */
+  policies: { label: string; text: string }[]; instant: boolean;
   timezone: string | null;
   questions: Suggestion[];
 }
 
 const ACTION: Record<string, ShopAction> = {
   goods: "buy", food: "buy", supply: "buy", other: "buy",
-  lesson: "book", service: "book", pet: "book", event: "book", stay: "book", equipment: "book", ride: "book", freight: "book",
+  lesson: "book", service: "book", salon: "book", pet: "book", event: "book", stay: "book", equipment: "book", ride: "book", freight: "book",
   rent: "visit", sale: "visit", vehicle: "visit", job: "visit",
 };
 
@@ -48,7 +50,7 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
       if (action === "book" || action === "visit" || (oneOff && !stock)) max = 1;
       return { factId: f.id, title: o.title, name: itemName(o.title), details: clip(o.details || f.text, 160), category: o.category,
         price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, slots,
-        timezone: r?.type === "slots" ? r.timezone : null, questions: forOffer(f, (r?.type ?? null) as Tracked) };
+        timezone: r?.type === "slots" ? r.timezone : null, policies: o.policies ?? [], instant: !!o.instant && price != null, questions: forOffer(f, (r?.type ?? null) as Tracked) };
     });
 }
 

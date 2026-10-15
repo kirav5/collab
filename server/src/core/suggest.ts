@@ -16,11 +16,11 @@ export function itemName(title: string): string {
   return plain ? t.toLowerCase() : t;
 }
 
-type Kind = "goods" | "vehicle" | "food" | "lesson" | "service" | "rent" | "sale" | "stay" | "ride" | "job" | "supply" | "freight" | "equipment" | "event" | "pet" | "other";
+type Kind = "goods" | "vehicle" | "food" | "lesson" | "service" | "salon" | "rent" | "sale" | "stay" | "ride" | "job" | "supply" | "freight" | "equipment" | "event" | "pet" | "other";
 const KIND: Record<string, Kind> = {
   goods: "goods", vehicles: "vehicle", food: "food", lessons: "lesson", services: "service", tasks: "service",
   "property-rent": "rent", "commercial-lease": "rent", "property-sale": "sale", stays: "stay", rides: "ride", jobs: "job",
-  wholesale: "supply", manufacturing: "supply", freight: "freight", "equipment-rental": "equipment", events: "event", pets: "pet",
+  wholesale: "supply", manufacturing: "supply", freight: "freight", "equipment-rental": "equipment", events: "event", pets: "pet", beauty: "salon",
 };
 export const kindOf = (category: string | null | undefined): Kind => KIND[category ?? ""] ?? (domain(category ?? "")?.family === "goods" ? "goods" : "other");
 
@@ -46,6 +46,10 @@ export function forOffer(f: Fact, tracked: Tracked = null): Suggestion[] {
       price(k === "rent" ? "Is the rent negotiable?" : `What's your best price for ${it}?`, `What's the price for ${it}?`),
       // (Visiting is the card's main button, so the third question is about what it costs to live there or own it.)
       k === "rent" ? s("Deposit", "What's the deposit and the monthly maintenance?") : k === "sale" ? s("Papers", "Are the papers clear for registration?") : s("Included", "What's included, and are there extra charges?")];
+    case "salon": return [
+      s("Next slot", tracked === "slots" ? `What's your next free slot for ${it}?` : `Do you have a slot today or tomorrow for ${it}?`),
+      price(`What's your best price for ${it}?`, `How much is ${it}?`),
+      s("Home visit", "Do you do home visits, and what does that cost?")];
     case "ride": return [s("Pick up?", "Can you pick me up this evening?"), price("Is the fare negotiable?", "What's the fare?"), s("Book", "Can I book a ride for tomorrow morning?")];
     case "job": return [s("Open?", `Is the ${it} position still open?`), price("What's the salary range?", "What's the salary range?"), s("Process", "What's the interview process?")];
     case "freight": return [s("Vehicle?", "Is a vehicle free this week?"), price("Is the rate per trip negotiable?", "What's the rate per trip?"), s("Insurance", "Is transit insurance included?")];

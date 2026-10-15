@@ -17,6 +17,8 @@ test("Gemma here first; then the person's other devices; the cloud only when cho
   assert.equal(decideProcessing("cloud", { here: false, remote: false }), "cloud");
   assert.equal(normalizeMode("device-first"), "my-devices", "the old cloud-fallback choice becomes Gemma only");
   assert.equal(normalizeMode(null), "my-devices"); assert.equal(normalizeMode("cloud"), "cloud");
+  assert.equal(decideProcessing("cloud-only", { here: true, remote: true }), "cloud", "only the cloud: Gemma isn't used even when it's here");
+  assert.equal(normalizeMode("cloud-only"), "cloud-only");
   assert.match(LIMITATION, /this device only/);
   assert.match(limitation("my-devices"), /Nothing was sent anywhere/);
   assert.match(limitation("my-devices", { offline: true }), /offline/i);

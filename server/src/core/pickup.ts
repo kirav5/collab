@@ -16,7 +16,7 @@ export function validCode(secret: string, id: string, purpose: "pickup" | "recei
 export function passKind(e: Engagement): "pickup" | "booking" | "handover" {
   if (e.reservation?.slotId) return "booking";
   const k = kindOf(e.offer.category);
-  if (["lesson", "service", "pet", "stay", "ride", "event", "freight", "equipment"].includes(k)) return "booking";
+  if (["lesson", "service", "salon", "pet", "stay", "ride", "event", "freight", "equipment"].includes(k)) return "booking";
   if (["rent", "sale", "vehicle", "job"].includes(k)) return "handover";
   return "pickup";
 }
