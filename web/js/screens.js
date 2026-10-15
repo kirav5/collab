@@ -5,7 +5,7 @@ import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
 import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
-import { engagementCard } from "./cards.js";
+import { engagementCard, passKind } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
 import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
@@ -85,6 +85,20 @@ export const screens = {
           <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div>
           ${connected(r) || `<div class="row small"><input class="field" type="url" placeholder="Calendar iCal URL (https)" data-ical="${esc(r.id)}"><button class="btn quiet compact" data-act="conn-ical" data-id="${esc(r.id)}">Connect calendar</button></div><span class="faint small">Only busy times are read — event titles stay with your calendar.</span>`}</div>`;
       };
+      // The seller's own terms for an offering, and instant booking. Headings are suggestions by kind; the words are theirs.
+      const HEADINGS = { booking: ["Cancellation", "Late arrival", "Re-service", "Hygiene", "Payment"], pickup: ["Returns", "Warranty", "Payment", "Delivery"], handover: ["Deposit", "Cancellation", "Documents", "Payment"] };
+      const EXAMPLE = { Cancellation: "e.g. Free up to 2 hours before", "Late arrival": "e.g. Slot held 10 minutes", "Re-service": "e.g. Free touch-up within 7 days", Hygiene: "e.g. Tools sterilised after every client",
+        Returns: "e.g. Unused items within 7 days", Warranty: "e.g. 6 months from the brand", Payment: "e.g. In the app or cash on pickup", Delivery: "e.g. Free within 3 km", Deposit: "e.g. Two months, refundable", Documents: "e.g. Rental agreement on move-in" };
+      const termsRow = f => {
+        if (f.tier !== "public" || !f.offer) return "";
+        const ps = f.offer.policies ?? [], kind = passKind({ offer: { category: f.offer.category } });
+        const heads = [...new Set([...ps.map(p => p.label), ...(HEADINGS[kind] ?? [])])].slice(0, 8);
+        return `<details class="more"><summary>Your terms for buyers${ps.length ? ` · ${ps.length} set` : ""}${f.offer.instant ? " · instant booking on" : ""}</summary>
+          <p class="small muted">Shown on your card and sealed into each deal's receipt exactly as you write them. Leave any blank — Collab never writes terms for you. Don't put a phone number or home address here unless you want every buyer to see it.</p>
+          ${heads.map(l => `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:104px">${esc(l)}</span><input class="field" data-policy="${esc(f.id)}" data-label="${esc(l)}" maxlength="240" value="${esc(ps.find(p => p.label === l)?.text ?? "")}" placeholder="${esc(EXAMPLE[l] ?? "")}"></div>`).join("")}
+          <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
+          <button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button></details>`;
+      };
       return frame("Context", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
@@ -93,7 +107,7 @@ export const screens = {
           <button class="btn" data-act="add-fact">Save</button></div></form>
         <div class="stack">${facts.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           <span>${esc(f.text)}</span>
-          ${stockRow(f)}
+          ${stockRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
     },
@@ -111,6 +125,14 @@ export const screens = {
         busy(el, true);
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
         if (f) await saveNote(api, { id: f.id, text: f.text, tier: el.dataset.tier });
+        h.paint(); return true;
+      }
+      if (a === "terms-save") {
+        const id = el.dataset.id;
+        const policies = [...document.querySelectorAll(`[data-policy="${CSS.escape(id)}"]`)].map(i => ({ label: i.dataset.label, text: i.value.trim() })).filter(p => p.text);
+        busy(el, true, "Saving");
+        try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast("Saved — buyers see these terms on your card and receipts."); }
+        catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
       if (a === "stock-track" || a === "slots-track") {

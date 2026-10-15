@@ -107,3 +107,9 @@ test("fair prices for services are read per hour (or night, order…), not per i
   assert.equal(r.items[0].label, "Rhythm School guitar classes for beginners");
   assert.equal(priceEvidence(g, "item").status, "insufficient_evidence", "per-hour prices aren't read as per item");
 });
+
+test("a salon or barber is asked about its next slot, price and home visits; its deals get a booking pass", async () => {
+  const cut = forOffer(offer("b", "beauty", "Men's haircut & styling · Indiranagar"), "slots").map(s => s.text);
+  assert.deepEqual(cut, ["What's your next free slot for men's haircut & styling?", "What's your best price for men's haircut & styling?", "Do you do home visits, and what does that cost?"]);
+  assert.equal(passKind(paidDeal("beauty", "paid")), "booking");
+});

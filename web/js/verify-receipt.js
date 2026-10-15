@@ -38,7 +38,9 @@ export async function verifyReceiptBundle(r, trustedKey) {
   };
   const t = r.terms, a = r.parties;
   const hash = await digest({ engagementId: r.engagementId, taskId: r.taskId,
-    terms: { title: t.title, price: t.price, unit: t.unit, category: t.category, terms: t.terms, ...(t.currency ? { currency: t.currency } : {}) },
+    terms: { title: t.title, price: t.price, unit: t.unit, category: t.category, terms: t.terms, ...(t.currency ? { currency: t.currency } : {}),
+      // The seller's stated terms, when the deal had any (records without them are hashed exactly as before).
+      ...(t.policies?.length ? { policies: t.policies.map(p => ({ label: p.label, text: p.text })) } : {}) },
     parties: { requester: { handle: a.requester.handle, name: a.requester.name }, provider: { handle: a.provider.handle, name: a.provider.name } }, at: r.at });
   const receipt = hash === r.hash && await signature(r.subjects.requester, hash, r.signatures.requester) && await signature(r.subjects.provider, hash, r.signatures.provider);
   let cart = null, payment = null;

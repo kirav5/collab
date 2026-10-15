@@ -338,3 +338,32 @@ test("paying in the app for several items: the pass, the receipt and every signa
   const { verifyReceiptBundle } = await import("../../web/js/verify-receipt.js");
   assert.deepEqual(await verifyReceiptBundle(bundle, bundle.publicKey), { receipt: true, cart: true, payment: true, ap2: { merchant: true, mandates: true } });
 });
+
+test("a seller's own terms are shown and sealed into the receipt; instant booking confirms at the listed price, never below it", async () => {
+  await as("t-s", "/api/me", { handle: "t-salon", name: "Trim Salon", areaName: "Indiranagar" });
+  await as("t-b", "/api/me", { handle: "t-buyer", name: "Ravi", areaName: "Indiranagar" });
+  const f = await as("t-s", "/api/facts", { tier: "public", text: "Haircuts for sale in Indiranagar, ₹450 each" });
+  assert.equal((await raw("t-b", `/api/facts/${f.id}/policies`, { policies: [{ label: "Cancellation", text: "x" }] })).status, 404, "only the owner sets terms");
+  const policies = [{ label: "Cancellation", text: "Free up to 2 hours before." }, { label: "Re-trim", text: "Free touch-up within 7 days." }];
+  await as("t-s", `/api/facts/${f.id}/policies`, { policies, instant: true });
+  const card = (await as("t-b", "/api/people/t-salon")).shop.find((i: any) => i.factId === f.id);
+  assert.deepEqual(card.policies, policies); assert.equal(card.instant, true);
+  let e = await as("t-b", "/api/people/t-salon/order", { offerFactId: f.id, quantity: 1 });
+  assert.equal(e.phase, "agreed", "instant booking: confirmed at once by the seller's standing instruction");
+  assert.equal(e.negotiation.confirmedBy.provider, "mandate");
+  assert.equal(await inboxFor("t-s", e.id, "confirm"), undefined, "the seller wasn't asked");
+  const below = await as("t-b", "/api/people/t-salon/order", { offerFactId: f.id, quantity: 1, price: 400 });
+  assert.equal(below.phase, "deal", "an offer below the listed price still goes to the seller");
+  await as("t-b", `/api/engagements/${e.id}/paid-outside`, {});
+  const r = await as("t-b", `/api/engagements/${e.id}/receipt`);
+  assert.deepEqual(r.terms.policies, policies, "the terms in force are part of the signed record");
+  const code = r.verifyPath.split(".html#")[1].split(".")[1];
+  const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${code}`)).json();
+  // @ts-ignore browser module
+  const { verifyReceiptBundle } = await import("../../web/js/verify-receipt.js");
+  assert.equal((await verifyReceiptBundle(bundle, bundle.publicKey)).receipt, true);
+  bundle.terms.policies[0].text = "No refunds ever."; assert.equal((await verifyReceiptBundle(bundle, bundle.publicKey)).receipt, false, "changing a term breaks the record");
+  // Terms changed later don't rewrite a deal already made.
+  await as("t-s", `/api/facts/${f.id}/policies`, { policies: [{ label: "Cancellation", text: "No cancellations." }] });
+  assert.deepEqual((await as("t-b", `/api/engagements/${e.id}/receipt`)).terms.policies, policies);
+});

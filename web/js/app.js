@@ -10,7 +10,7 @@ import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
-import { PASS, engagementCard, messageHTML, storeCard } from "./cards.js";
+import { PASS, engagementCard, messageHTML, receiptHTML, storeCard } from "./cards.js";
 import { payWithGoogle, preload as preloadGooglePay } from "./gpay.js";
 import { screens } from "./screens.js";
 import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
@@ -617,10 +617,8 @@ async function onClick(e) {
       const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
       const when = t => new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
       const by = s => (r.confirmedBy[s] === "mandate" ? "their standing instruction" : "the owner");
-      box.innerHTML = `<div class="receipt">
-        <div class="row">${r.matches ? tag("✓ Verified", "fresh") : tag(r.registered ? "Changed since agreed" : "Not registered", "danger")}
-          <span class="small">${esc(r.parties.requester.name)} ↔ ${esc(r.parties.provider.name)} · <b>${money(r.terms.price, r.terms.unit)}</b></span></div>
-        <span class="small muted">“${esc(r.terms.title)}” · agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
+      box.innerHTML = `<div class="receipt">${receiptHTML(r, live.engagements.get(el.dataset.id))}
+        <span class="small muted">Agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
         <a class="btn secondary compact" href="${esc(r.verifyPath)}" target="_blank" rel="noopener">Public verification & download</a><span class="small faint">Anyone with that link can view the receipt.</span>
         <details class="more"><summary>How this is checked</summary>
           <span class="small muted">When both sides confirmed, Collab hashed the terms, both parties and the time (SHA-256) and registered that hash. Verify recomputes it from the conversation: any change to price, terms or parties breaks the match. Confirmed by ${by("requester")} (requester) and ${by("provider")} (provider).</span>
@@ -672,8 +670,21 @@ async function cardAction(a, el, { s, m, c }) {
     if (session.push && "Notification" in window && Notification.permission === "default") session.push().then(() => toast("Notifications on — you'll hear when someone new fits.")).catch(() => {});
     await refresh(openScreen);
   }
-  if (a === "brief-engage") {
-    const picks = (c.picked ?? []).map(j => c.found[j]).filter(Boolean);
+  // One match, straight from its row: book at the listed price (the seller confirms, or their agent does at once if
+  // they allow instant booking).
+  if (a === "match-book") {
+    const p = c.found[Number(el.dataset.j)];
+    busy(el, true, "Booking");
+    try {
+      const e = await api(`/api/people/${encodeURIComponent(p.profile.handle)}/order`, { offerFactId: p.fact.id, quantity: 1 });
+      live.engagements.set(e.id, e); m.cards.push({ type: "engagement", id: e.id });
+      session.track("order_from_card", { kind: "match", instant: e.phase === "agreed" });
+      await saveSession(s); paint();
+    } catch (err) { toast(err.message); busy(el, false); }
+    return;
+  }
+  if (a === "brief-engage" || a === "match-negotiate" || a === "match-addons") {
+    const picks = (a === "brief-engage" ? (c.picked ?? []) : [Number(el.dataset.j)]).map(j => c.found[j]).filter(Boolean);
     if (!picks.length) return toast("Choose at least one person.");
     busy(el, true, "Contacting");
     const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: picks.map(p => ({ factId: p.fact.id })) });
@@ -682,6 +693,7 @@ async function cardAction(a, el, { s, m, c }) {
     session.track("agents_contacted", { count: es.length, category: c.draft?.need?.category ?? "none" });
     await saveSession(s); paint();
     for (const x of es) run(x.id);
+    if (a === "match-addons") for (const x of es) api(`/api/engagements/${x.id}/ask`, { text: "What add-ons or extras do you offer, and what does each cost?" }).then(e => { live.engagements.set(e.id, e); paint(); }).catch(() => {});
     return;
   }
   if (a === "offer-publish") {
