@@ -466,6 +466,11 @@ app.post("/api/engagements/:id/ask", route(async req => {
       throw new HttpError(400, `This conversation is in ${e.offer.currency}; offer in ${e.offer.currency}.`, "UNSUPPORTED_CURRENCY");
     e.offer.currency = offered.currency;
     await offerDeal(db, e, side, offered.amount, q, q, count, isTotal);
+    // A buyer taking an instant-booking seller's listed price is booked at once, as from the seller's card.
+    if (side === "requester" && e.offer.factId && e.offer.price != null && !count && offered.amount === e.offer.price) {
+      const f = (await db.get(FACTS, e.offer.factId)) as Fact | null;
+      if (f?.offer?.instant) await autoConfirm(db, await load(db, e.id), "provider");
+    }
     return load(db, e.id);
   }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });
