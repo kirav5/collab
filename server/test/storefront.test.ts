@@ -29,6 +29,7 @@ test("goods are bought with a quantity bounded by stock; low and out of stock sa
   assert.equal(storefront([offer("a", "goods", "B")], [], T)[0].stock, null, "untracked: no stock line");
   assert.equal(storefront([offer("a", "goods", "B")], [], T)[0].maxQuantity, 20);
   assert.equal(storefront([offer("c", "goods", "Decathlon cycle · used")], [], T)[0].maxQuantity, 1, "a used item is one item");
+  assert.equal(storefront([offer("w", "goods", "Water Bottles · items for sale (new or used)")], [], T)[0].maxQuantity, 20, "the category's label isn't a condition");
 });
 
 test("lessons are booked from the next free times (two weeks, soonest first); flats are visited; no price means ask", () => {

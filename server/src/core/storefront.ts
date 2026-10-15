@@ -44,7 +44,7 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
         max = 1;
       }
       // One-off things (a used cycle, a booking, a flat) come one at a time.
-      const oneOff = /\b(used|second[- ]hand|pre-?owned|refurbished)\b/i.test(`${o.title} ${Object.values(o.attributes ?? {}).join(" ")} ${f.text}`);
+      const oneOff = /\b(used|second[- ]hand|pre-?owned|refurbished)\b/i.test(`${o.title} ${Object.values(o.attributes ?? {}).join(" ")} ${f.text}`.replace(/new or used/gi, ""));
       if (action === "book" || action === "visit" || (oneOff && !stock)) max = 1;
       return { factId: f.id, title: o.title, name: itemName(o.title), details: (o.details || f.text).slice(0, 160), category: o.category,
         price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, slots,
