@@ -46,19 +46,23 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
       // One-off things (a used cycle, a booking, a flat) come one at a time.
       const oneOff = /\b(used|second[- ]hand|pre-?owned|refurbished)\b/i.test(`${o.title} ${Object.values(o.attributes ?? {}).join(" ")} ${f.text}`.replace(/new or used/gi, ""));
       if (action === "book" || action === "visit" || (oneOff && !stock)) max = 1;
-      return { factId: f.id, title: o.title, name: itemName(o.title), details: (o.details || f.text).slice(0, 160), category: o.category,
+      return { factId: f.id, title: o.title, name: itemName(o.title), details: clip(o.details || f.text, 160), category: o.category,
         price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, slots,
         timezone: r?.type === "slots" ? r.timezone : null, questions: forOffer(f, (r?.type ?? null) as Tracked) };
     });
 }
 
+/** Cut at a word, with "…", so a description never ends mid-word. */
+const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n).replace(/\s+\S*$/, "")}…`);
+
 /** The words an order says, so the conversation and the seller's confirmation read naturally. */
-export function orderText(item: Pick<ShopItem, "name" | "currency">, quantity: number, priceEach: number, listed: number | null, slotLabel: string | null): string {
+export function orderText(item: Pick<ShopItem, "name" | "currency"> & Partial<Pick<ShopItem, "action" | "unit">>, quantity: number, priceEach: number, listed: number | null, slotLabel: string | null): string {
   const money = (n: number) => `${item.currency === "INR" ? "₹" : `${item.currency} `}${n.toLocaleString("en-IN")}`;
-  const what = quantity > 1 ? `${quantity} × ${item.name}` : item.name;
+  const book = item.action === "book", per = item.unit && item.unit !== "each" ? `/${item.unit}` : quantity > 1 ? " each" : "";
+  const what = book ? `to book ${item.name}` : quantity > 1 ? `${quantity} × ${item.name}` : item.name;
   const when = slotLabel ? ` on ${slotLabel}` : "";
   const total = quantity > 1 ? ` (${money(priceEach * quantity)} in all)` : "";
   return listed != null && priceEach !== listed
-    ? `I'd like ${what}${when} — would you take ${money(priceEach)}${quantity > 1 ? " each" : ""}?${total}`
-    : `I'd like ${what}${when} at ${money(priceEach)}${quantity > 1 ? " each" : ""}.${total}`;
+    ? `I'd like ${what}${when} — would you take ${money(priceEach)}${per}?${total}`
+    : `I'd like ${what}${when} at ${money(priceEach)}${per}.${total}`;
 }

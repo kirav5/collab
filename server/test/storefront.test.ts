@@ -55,5 +55,8 @@ test("an order reads naturally: how many, when, at the listed price or as an off
   assert.equal(orderText(it, 2, 450, 450, null), "I'd like 2 × water bottles at ₹450 each. (₹900 in all)");
   assert.equal(orderText(it, 1, 450, 450, null), "I'd like water bottles at ₹450.");
   assert.equal(orderText(it, 2, 400, 450, null), "I'd like 2 × water bottles — would you take ₹400 each? (₹800 in all)");
-  assert.equal(orderText({ name: "guitar lessons", currency: "INR" }, 1, 800, 800, "Sat 18 Oct, 6:00 pm"), "I'd like guitar lessons on Sat 18 Oct, 6:00 pm at ₹800.");
+  assert.equal(orderText({ name: "guitar lessons", currency: "INR", action: "book", unit: "hour" }, 1, 800, 800, "Sat 18 Oct, 6:00 pm"), "I'd like to book guitar lessons on Sat 18 Oct, 6:00 pm at ₹800/hour.");
+  assert.equal(orderText({ name: "guitar lessons", currency: "INR", action: "book", unit: "hour" }, 1, 700, 800, null), "I'd like to book guitar lessons — would you take ₹700/hour?");
+  const long = storefront([{ ...offer("d", "goods", "B"), text: "word ".repeat(60) }], [], T)[0].details;
+  assert.ok(long.endsWith("word…") && long.length <= 161, long);
 });
