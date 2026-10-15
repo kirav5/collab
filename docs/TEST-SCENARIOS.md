@@ -38,6 +38,31 @@ phone or a person (checklist at the end).
 | Q9 | Scan your own QR | "That's your own QR code" (400 "that's you") | scenarios › QR | ✅ |
 | Q10 | Re-scan a shop you've chatted with | Card refreshed with today's offerings and chips | app.js openDirect | ✅ |
 
+## 2b. Acting from someone's card (no typing needed)
+
+The card shows each offering with what fits it: goods get a stock badge, a quantity stepper and **Buy**; lessons and
+services get their **next free times** to pick and **Book** (or "Request a booking" without a schedule); flats,
+vehicles and jobs get **"I'm interested — ask to visit"**; anything priced gets **Make an offer**; each offering has
+its own three questions. Saved cards refresh whenever their chat opens. Owners can preview their own card.
+
+| ID | Scenario | Expected | Evidence | Result |
+|---|---|---|---|---|
+| K1 | Reopen a chat saved before the update (your screenshot) | Card refreshed: description, "N in stock", stepper, Buy, offer, specific questions | Live (sidebar → Steel Bottle Store) | ✅ |
+| K2 | Stepper to 2 → Buy | "Buy 2 for ₹900"; order "2 × water bottles at ₹450 each (₹900 in all)"; shop asked to confirm "₹900 for 2" | scenarios › ordering; Live | ✅ |
+| K3 | More than in stock / 0 / unknown offering / own card / paused shop | "Only 3 left" (409) / 400 / 404 / 400 / 409 | scenarios › ordering | ✅ |
+| K4 | Out of stock | Buy disabled, "Ask when it's back" | storefront › out | ✅ |
+| K5 | Used item (second-hand cycle) | One item, no stepper; "(new or used)" category label doesn't count | storefront | ✅ |
+| K6 | Lesson with free times → pick Sat 6 pm → Book | Seller confirms → that time is held; time leaves the card; Booking pass shows it | scenarios › ordering | ✅ |
+| K7 | Lesson without a schedule (Riya) → Request a booking | "I'd like to book guitar lessons at ₹800/hour"; Booking pass after payment | Live | ✅ |
+| K8 | Flat (Kabir) | "I'm interested — ask to visit"; offer box "per month"; questions about deposit, not a second "visit" | Live | ✅ |
+| K9 | Make an offer ₹35,000 → they say no | "Said no to ₹35,000/month"; chat stays open | Live | ✅ |
+| K10 | **Pay in the app for an order from a card** | Pass, receipt and all signatures verify | scenarios › several items; Live (₹900, every check ✓) | ✅ (was broken: the payment's A2A task changed the sealed record) |
+| K11 | Shop scans the pass | "2 × Water Bottles · INR 900 · Buyer…" → Mark collected (once) | Live | ✅ |
+| K12 | Buyer: Received it ✓ | Accepted; nothing left asking either side | scenarios › cash pass; Live | ✅ |
+| K13 | Owner: People › "See your card as customers do" (or scanning their own QR) | Preview with buttons off | Live | ✅ |
+| K14 | Names in sentences | "waiting for Steel Bottle Store" (not "Steel"); "Riya" for a person | Live | ✅ |
+| K15 | Ended or finished conversations | Ask nobody anything; "needs you" count drops | scenarios › mid-conversation, cash pass; Live | ✅ (closed chats kept asking) |
+
 ## 3. Questions and answers (privacy, language, abuse)
 
 | ID | Scenario | Expected | Evidence | Result |
@@ -190,6 +215,9 @@ Real-device timings are now sent to Analytics as `load_timing` (start screen, ap
 11. First visit waited ~3 s for guest sign-in and reCAPTCHA; screens re-fetched the same data on every live update; the
     on-device agent re-read notes and limits once per pending question on every update (38 start-up calls).
 12. "Steel's agent" (shop name cut to a first name); "pick it up" with plurals.
+13. Paying in the app for a deal agreed before any A2A task existed (orders from a card) broke its pass and receipt.
+14. Ended conversations and finished deals kept asking for answers ("needs you" stayed high).
+15. A saved QR card never refreshed, so it kept old, vague chips ("Is it available?").
 
 ## 14. Needs your phone (device checklist)
 

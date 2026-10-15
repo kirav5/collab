@@ -268,8 +268,10 @@ function refreshStoreCard(cur) {
 }
 
 /** The owner's own card, as customers see it — nothing can be sent from it. */
-async function previewCard() {
+async function previewCard(el = null) {
+  if (el) busy(el, true, "Loading");
   const p = await person(S.profile.handle, true);
+  if (el) busy(el, false);
   if (!p) return toast("Couldn't load your card.");
   document.querySelector(".overlay")?.remove();
   const o = document.createElement("div");
@@ -501,7 +503,7 @@ async function onClick(e) {
     if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
-    if (a === "preview-card") return previewCard();
+    if (a === "preview-card") return previewCard(el);
     if (a === "qty" || a === "slot-pick" || a === "store-offer-open") return shopControl(a, el);
     if (a === "store-order" || a === "store-offer-send") return orderFromCard(a, el);
     if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
