@@ -192,7 +192,7 @@ function savedCard(c, at) {
 }
 
 function sourcesCard(c) {
-  return `<div class="card slim">${label(c.on === "device" ? "From your notes · answered on this device (Gemini Nano)" : "From your notes · Gemini", "peri")}
+  return `<div class="card slim">${label(`From your notes · ${c.engine ?? (c.on === "device" ? "Gemma · this device" : "Gemini")}`, "peri")}
     ${c.notes.map(n => `<div class="row">${tierTag(n.tier)}<span class="small">${esc(n.text)}</span></div>`).join("")}</div>`;
 }
 

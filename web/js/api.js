@@ -141,7 +141,8 @@ export async function signIn() {
       setUserProperties(ga, { signed_in: auth.currentUser?.isAnonymous ? "guest" : "google" });
     }).catch(() => {});
     // Live updates (Firestore) load after sign-in without holding up the first screen; until then the app polls.
-    session.fsReady = import(`${FB}/firebase-firestore.js`).then(({ initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, query, where, onSnapshot }) => {
+    session.fsReady = import(`${FB}/firebase-firestore.js`).then(mod => {
+      const { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, query, where, onSnapshot } = mod;
       // Offline cache: the installed app shows conversations and inbox items with no network, and catches up after.
       let db;
       try { db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
@@ -150,6 +151,8 @@ export async function signIn() {
         engagements: cb => onSnapshot(query(collection(db, "engagements"), where("participants", "array-contains", session.uid)), s => cb(s.docs.map(d => d.data())), () => {}),
         inbox: cb => onSnapshot(query(collection(db, "inbox"), where("owner", "==", session.uid), where("status", "==", "open")), s => cb(s.docs.map(d => d.data())), () => {}),
         engagement: (id, cb) => onSnapshot(doc(db, "engagements", id), s => s.exists() && cb(s.data()), () => {}),
+        // The SDK itself, for My devices (users/{uid}/devices and /jobs: the owner's own, end-to-end encrypted).
+        raw: { db, mod },
       };
       return session.fs;
     }).catch(() => null);

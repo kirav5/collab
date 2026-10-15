@@ -4,7 +4,9 @@
 // agents are doing (Requests) and what was shared (Activity).
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
-import { chat, detectNano, engine, itemOf, refreshNotesCache, startDevice, drafts } from "./agent.js";
+import { chat, detectEngine, engine, itemOf, refreshNotesCache, startDevice, drafts } from "./agent.js";
+import { onDevices, refreshServing, startDevices } from "./mydevices.js";
+import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
 import { PASS, engagementCard, messageHTML, storeCard } from "./cards.js";
@@ -88,12 +90,17 @@ async function setup() {
 }
 
 async function boot() {
-  detectNano().then(() => paintSidebar());
+  // Gemma on this device (and whether it can run here); then this device joins the account's devices.
+  detectEngine().then(() => { paintSidebar(); startDevices().then(refreshServing).catch(() => {}); });
+  onDevices(() => { if (S.screen === "settings") paintContent(true); });
   // Offline: a banner, cached conversations, and (with the on-device model) answers from the notes on this device.
   refreshNotesCache();
   loadPolicy();
-  addEventListener("online", () => { toast("Back online — syncing what you did offline."); refreshNotesCache(); syncChats(); paint(); });
-  addEventListener("offline", () => { toast(engine.nano ? "Offline — questions about your notes are answered on this device." : "Offline — showing what's saved on this device."); paint(); });
+  // Back online: what was saved on this device while offline goes up (notes, chats), then everything refreshes.
+  const catchUp = async () => { const n = await replayOutbox(api).catch(() => 0); if (n) toast(`Synced ${n} change${n === 1 ? "" : "s"} made offline.`); refreshNotesCache(); syncChats(); };
+  addEventListener("online", () => { toast("Back online — syncing what you did offline."); catchUp().then(() => paint()); });
+  addEventListener("offline", () => { toast(engine.here ? "Offline — Gemma answers questions about your notes on this device. New notes are saved here and sync later." : "Offline — showing what's saved on this device. New notes sync when you're back."); paint(); });
+  if (navigator.onLine) catchUp();
   S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
   syncChats();
@@ -130,8 +137,8 @@ function paintSidebar() {
   if (!el) return;
   const n = needsYou().length;
   const groups = groupSessions(S.sessions);
-  const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.nano ? "peri" : "accent"}" data-act="screen" data-screen="settings"
-      title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.nano ? " · on-device AI" : ""}` : `✦ ${engine.nano ? "Gemini Nano · on this device" : "Powered by Gemini"}`}</button></span></header>
+  const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
+      title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
@@ -169,7 +176,7 @@ function paintTop() {
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
-  $("#composer-note").innerHTML = label(engine.nano ? "Private notes are read on this device (Gemini Nano)" : "Private notes are never shared · Gemini sees only what a request needs");
+  $("#composer-note").innerHTML = label(engine.here ? "Private notes are read by Gemma on this device" : engine.mode === "cloud" ? "Private notes are never shared · Gemini sees only what a request needs" : "Private notes are read only by Gemma on your devices · never shared");
 }
 
 let painting = false, lastHTML = "";
@@ -444,7 +451,7 @@ async function send(text, offerFactId = null) {
     // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
     const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
     const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open);
-    Object.assign(reply, r, { pending: null, engine: r.cards?.some(c => c.on === "device") ? "Gemini Nano · on device" : "Gemini" });
+    Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
   } catch (e) {
     Object.assign(reply, { pending: null, text: e.status === 429 ? e.message : `Something went wrong: ${e.message}` });
   }

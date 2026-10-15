@@ -1,5 +1,6 @@
 rules_version = '2';
-// The server (Cloud Run, Admin SDK) does every write. A signed-in person may watch, live, only the conversations
+// The server (Cloud Run, Admin SDK) does every write, except a person's own device registry and the encrypted questions
+// between their devices (below). A signed-in person may watch, live, only the conversations
 // between agents they take part in and their own device's inbox. Everything else — facts of every tier (Private
 // included: stored with the owner's account, never disclosed to counterparties), rules, limits, chats, payments and
 // A2A tasks — is server-only.
@@ -10,6 +11,29 @@ service cloud.firestore {
     }
     match /inbox/{id} {
       allow read: if request.auth != null && request.auth.uid == resource.data.owner;
+    }
+    // My devices: a person's own devices (same account) register here with a public key, and a device with Gemma answers
+    // the others' questions through /jobs. Only the owner can read or write them; questions and answers are end-to-end
+    // encrypted between the devices (web/js/e2e.js), so these documents hold ciphertext, never note text.
+    match /users/{uid}/devices/{deviceId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'platform', 'model', 'gemma', 'serve', 'publicKey', 'lastSeen'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60
+        && request.resource.data.gemma is bool && request.resource.data.serve is bool
+        && request.resource.data.publicKey.keys().hasOnly(['kty', 'crv', 'x', 'y']);
+    }
+    match /users/{uid}/jobs/{jobId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['from', 'to', 'status', 'epk', 'iv', 'ct', 'createdAt', 'expireAt'])
+        && request.resource.data.status == 'open'
+        && request.resource.data.ct is string && request.resource.data.ct.size() < 200000
+        && request.resource.data.expireAt is timestamp;
+      allow update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'answer', 'error', 'claimedAt', 'doneAt'])
+        && request.resource.data.status in ['working', 'done', 'error', 'expired']
+        && (!('answer' in request.resource.data) || request.resource.data.answer.ct.size() < 60000);
     }
     match /{document=**} {
       allow read, write: if false;

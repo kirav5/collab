@@ -2,30 +2,58 @@
 // People, Sharing (rules for Protected topics, pause everything), Requests (every conversation between agents, live),
 // Activity (what your agent shared, with whom) and Settings.
 import { api, ios, session, standalone, cached } from "./api.js";
-import { downloadNano, engine, setProcessingMode } from "./agent.js";
+import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
+import { MODEL, removeGemma } from "./gemma.js";
+import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
 import { engagementCard } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
 import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
+import { pendingWrites, saveNote } from "./outbox.js";
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
 
 /** Every fact the owner has — all tiers live on the server under their account; Private is never shared. */
 async function allFacts() {
-  return [...(await cached("/api/facts").catch(() => []))].sort((a, b) => b.createdAt - a.createdAt);
+  // Offline: the notes kept on this device, plus any saved offline that haven't synced yet (marked so).
+  const online = await cached("/api/facts").catch(() => null);
+  const queued = (await pendingWrites()).filter(w => w.path === "/api/facts").map(w => ({ ...w.body, queued: true, createdAt: Math.floor(w.at / 1000), topics: [] }));
+  const base = online ?? (await local.get("facts", "notes").catch(() => null))?.items ?? [];
+  const byId = new Map(base.map(f => [f.id, f]));
+  for (const q of queued) byId.set(q.id, { ...byId.get(q.id), ...q });
+  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Gemini Nano's state on this device, and what the owner can do about it. */
+/** Gemma's state on this device, and what the owner can do about it. */
 function deviceAI() {
   const pct = engine.progress == null ? "" : ` ${Math.round(engine.progress * 100)}%`;
   switch (engine.status) {
-    case "available": return `<span style="color:var(--fresh)">● Gemini Nano ready on this device</span>`;
-    case "downloadable": return `Gemini Nano can run on this device (Chrome built-in AI). It's a one-time download of about 3–4 GB.
-      <button class="btn secondary compact" data-act="device-download">Download on-device model</button>`;
-    case "downloading": return `<span class="spinner"></span> Downloading Gemini Nano…${pct} <span class="small faint">You can keep using Collab.</span>`;
+    case "ready": case "downloaded": return `<span style="color:var(--fresh)">● ${MODEL.label} is on this device</span> — answers about your notes run here, even offline.
+      <button class="btn quiet compact" data-act="gemma-remove">Remove (frees about 2 GB)</button>`;
+    case "absent": return `${MODEL.label} can run on this device, in this browser on its GPU — no internet needed after a one-time download of about 2 GB. Nothing it reads leaves the device.
+      <button class="btn secondary compact" data-act="device-download">Download ${MODEL.label}</button>${engine.reason ? `<br><span class="small" style="color:var(--stale)">${esc(engine.reason)}</span>` : ""}`;
+    case "downloading": return `<span class="spinner"></span> Downloading ${MODEL.label}…${pct} <span class="small faint">You can keep using Collab; if it stops, it resumes where it left off.</span>`;
+    case "loading": return `<span class="spinner"></span> Loading ${MODEL.label} onto this device's GPU…`;
+    case "error": return `<span style="color:var(--danger)">${MODEL.label} couldn't start: ${esc(engine.reason ?? "unknown error")}</span> <button class="btn secondary compact" data-act="device-download">Try again</button>`;
     case "checking": return `Checking…`;
-    default: return `Not available in this browser. Gemini Nano runs in Chrome on desktop (Windows, macOS, Linux, ChromeOS) with enough memory; your agent uses Gemini in the cloud here.`;
+    default: return `This device can't run Gemma${engine.reason ? `: ${esc(engine.reason)}` : "."} Your laptop or desktop can — and with the same Google account, it answers this device's questions (My devices, below).`;
   }
+}
+
+/** The account's devices: this one, the others, whether each has Gemma and answers for the rest. */
+function myDevices() {
+  if (session.user?.isAnonymous) return `<div class="card">${label("My devices", "sq")}<p class="small">To use Collab on your other devices — and have your laptop's Gemma answer your phone — keep this account with Google first (below), then sign in with the same Google account on each device.</p></div>`;
+  const ago = ms => { const m = Math.round((Date.now() - ms) / 60000); return m < 2 ? "online now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  const row = d => `<div class="card slim"><div class="row"><b>${esc(d.name ?? "Device")}</b>${d.gemma ? tag(MODEL.label, "fresh") : tag("No Gemma", "")}${d.gemma && d.serve ? tag("Answers for my devices", "peri") : ""}<span class="end small faint">${ago(d.seen)}</span></div>
+      <div class="row"><button class="btn quiet compact" data-act="device-remove" data-id="${esc(d.id)}">Remove</button></div></div>`;
+  return `<div class="card">${label("My devices", "sq")}
+    <p class="small muted">Your devices signed in with the same Google account. One that has ${MODEL.label} can answer questions about your notes for the others — end-to-end encrypted between your devices, so neither Google nor Collab can read them.</p>
+    <div class="card slim"><div class="row"><b>This device</b><input class="field compact" data-device-name value="${esc(me.name ?? "")}" maxlength="60" aria-label="This device's name"><button class="btn quiet compact" data-act="device-rename">Rename</button></div>
+      <label class="row small" style="gap:6px"><input type="checkbox" data-act="device-serve" ${me.serve ? "checked" : ""} ${engine.here ? "" : "disabled"}> Answer questions from my other devices with ${MODEL.label}${engine.here ? "" : " (download it here first)"}</label>
+      <span class="small faint">Keep Collab open on it (a tab or the installed app) for it to answer.</span></div>
+    ${others.length ? others.map(row).join("") : `<p class="small faint">No other devices yet.</p>`}
+    <details class="more"><summary>Add a device</summary><p class="small">On your other phone, tablet or computer, open <b>${esc(location.origin)}</b> (or scan your QR in People) and choose <b>Continue with Google</b> with the same Google account. It appears here by itself.</p></details>
+  </div>`;
 }
 
 export const screens = {
@@ -75,13 +103,14 @@ export const screens = {
         const text = String(f.get("text") ?? "").trim(), tier = String(f.get("tier"));
         if (!text) return true;
         busy(el, true);
-        await api("/api/facts", { text, tier });
+        const saved = await saveNote(api, { text, tier });
+        if (saved.queued) h.toast("Saved on this device — it syncs to your account when you're back online.");
         h.paint(); return true;
       }
       if (a === "fact-tier") {
         busy(el, true);
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
-        if (f) await api("/api/facts", { id: f.id, text: f.text, tier: el.dataset.tier });
+        if (f) await saveNote(api, { id: f.id, text: f.text, tier: el.dataset.tier });
         h.paint(); return true;
       }
       if (a === "stock-track" || a === "slots-track") {
@@ -334,11 +363,12 @@ export const screens = {
           <input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="Your area">
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card">${label("AI engine", "sq")}<p class="small muted">Which AI does what for your agent. Gemini understands what you type, shapes requests, and answers other people's agents for you — only ever from what you chose to share.</p><dl class="kv"><dt>On-device AI</dt><dd>${deviceAI()}</dd>
-          <dt>Process my notes</dt><dd class="stack" style="gap:4px">${[["device-only", "On this device only", "never sent to the cloud; if this device can't answer, you're told"],
-            ["device-first", "Device first, cloud if needed", "the cloud answers when this device can't"], ["cloud", "In the cloud", "Gemini on Vertex AI"]]
+          <dt>Gemma on this device</dt><dd>${deviceAI()}</dd>
+          <dt>Answer my notes with</dt><dd class="stack" style="gap:4px">${[["device-only", "Only this device", `${MODEL.label} here; if it can't, you're told — nothing is sent`],
+            ["my-devices", "My devices", `${MODEL.label} here or on another of your devices — never the cloud`], ["cloud", "My devices, then the cloud", "Gemini on Vertex AI when none of your devices can"]]
             .map(([v, t, d]) => `<label class="row small" style="gap:6px"><input type="radio" name="processing" data-act="processing" value="${v}" ${engine.mode === v ? "checked" : ""}> <b>${t}</b> <span class="faint">${d}</span></label>`).join("")}</dd>
-          <dt>Your notes</dt><dd>${engine.nano ? (engine.mode === "device-only" ? "Answered only on this device (Gemini Nano via Firebase AI Logic) — also offline" : "Answered by Gemini Nano on this device when it can — also offline") : engine.mode === "device-only" ? "Set to this device only — waiting for the on-device model" : "Answered by Gemini via Cloud Run"} — your Private facts are stored with your account but the policy gate never shares them.</dd>
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
+        ${myDevices()}
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Install Collab to open it like an app. Notifications tell you when your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
           <dl class="kv"><dt>Browser check</dt><dd>${session.appCheckOk ? `<span style="color:var(--fresh)">● Verified by Google reCAPTCHA</span>`
@@ -359,11 +389,19 @@ export const screens = {
       if (a === "save-profile") { const f = new FormData(el.closest("form")); busy(el, true); S.profile = await api("/api/me", { name: f.get("name"), handle: String(f.get("handle")).toLowerCase(), bio: f.get("bio"), areaName: f.get("area") }); h.toast("Saved."); h.paint(); return true; }
       if (a === "device-download") {
         el.disabled = true;
-        try { await downloadNano(() => h.paint()); h.toast(engine.nano ? "Gemini Nano is ready — your notes are answered on this device, even offline." : "Downloaded."); }
+        try { await downloadModel(() => h.paint()); h.toast(`${MODEL.label} is on this device — your notes are answered here, even offline.`); }
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
-      if (a === "processing") { setProcessingMode(el.value); h.toast(el.value === "device-only" ? "Your notes are processed on this device only." : el.value === "cloud" ? "Your notes are answered by Gemini in the cloud." : "Your notes are answered on this device when it can, else in the cloud."); h.paint(); return true; }
+      if (a === "gemma-remove") { busy(el, true); await removeGemma(); await detectEngine(); refreshServing(); h.toast(`${MODEL.label} removed from this device.`); h.paint(); return true; }
+      if (a === "processing") {
+        setProcessingMode(el.value);
+        h.toast(el.value === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : el.value === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
+        h.paint(); return true;
+      }
+      if (a === "device-rename") { await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }
+      if (a === "device-serve") { await setServe(el.checked); h.toast(el.checked ? "This device answers your other devices' questions while Collab is open." : "This device no longer answers for your other devices."); h.paint(); return true; }
+      if (a === "device-remove") { busy(el, true); await removeDevice(el.dataset.id).catch(err => h.toast(err.message)); h.paint(); return true; }
       if (a === "push-test") {
         busy(el, true, "Sending");
         try { const r = await api("/api/push/test", {}); h.toast(r.sent ? `Sent to ${r.sent} device${r.sent === 1 ? "" : "s"} — it should appear in a few seconds.` : "The notification service didn't accept it — try turning notifications off and on."); }
