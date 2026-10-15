@@ -32,6 +32,7 @@ import { CapacityError, RESOURCES, type Resource, available as availableIn, comm
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
+import { TermsTask } from "./core/terms.ts";
 import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
@@ -604,7 +605,17 @@ app.post("/api/offers/draft", route(async req => {
   const read_ = r.draft.mandate.price.limit < r.draft.mandate.price.opening ? r.draft.mandate.price.limit : null;
   const floor = read_ ?? (written !== null && written < r.draft.offer.price.amount ? written : null);
   const publicText = floor ? withoutAmount(t, floor) : t;
-  return { offer: { ...r.draft.offer, details: publicText }, floor, publicText };
+  // What buyers of this kind usually ask that the offering doesn't say yet — the seller can answer now, publicly.
+  const attrs = r.draft.offer.attributes, dom = domainOf(r.draft.offer.category);
+  const missing = (dom?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).slice(0, 4).map(x => ({ key: x.key, label: x.label, ask: x.ask }));
+  return { offer: { ...r.draft.offer, details: publicText }, floor, publicText, missing };
+}));
+
+// Terms a seller might state, suggested for their kind of offering — returned for them to edit; nothing is saved here.
+app.post("/api/terms/suggest", route(async req => {
+  await spend(req.uid, 2);
+  const out = await decide(model, TermsTask, { category: text(req.body?.category, 40), offering: text(req.body?.text, 600) });
+  return { terms: out.output.terms, byModel: out.byModel };
 }));
 
 function statedFloor(t: string): number | null {

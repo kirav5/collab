@@ -518,6 +518,24 @@ async function onClick(e) {
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
+    // The seller's quick moves on a request (their side of the conversation card).
+    if (a === "seller-quote" || a === "seller-counter-send") {
+      const price = a === "seller-quote" ? Number(el.dataset.price) : Number(document.querySelector(`[data-counter-price="${CSS.escape(el.dataset.id)}"]`)?.value);
+      if (!(price > 0)) return toast("Type your price.");
+      busy(el, true, "Sending");
+      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text: `I'll sell it for ₹${price}` }); live.engagements.set(e.id, e); toast("Offer sent — they confirm or say no."); }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
+    if (a === "seller-counter") { const box = document.querySelector(`[data-counter="${CSS.escape(el.dataset.id)}"]`); box.hidden = !box.hidden; box.querySelector("input")?.focus(); return; }
+    if (a === "seller-ask") { const f = document.querySelector(`[data-followup="${CSS.escape(el.dataset.id)}"]`); if (f) { f.focus(); f.placeholder = "Ask them anything — e.g. which style, any reference photo?"; } else toast("Use the box below the card to ask them."); return; }
+    if (a === "take-price") {
+      // Accepting the seller's listed price is an offer at that price: they confirm (or their agent does, if they allow it).
+      busy(el, true, "Sending");
+      try { const e = await api(`/api/engagements/${el.dataset.eng}/ask`, { text: `I'll buy it for ₹${el.dataset.price}` }); live.engagements.set(e.id, e); toast("Offered at their price — they confirm, then you pay."); }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
     if (a === "qty" || a === "shop-slot" || a === "store-offer-open") return shopControl(a, el);
     if (a === "store-order" || a === "store-offer-send") return orderFromCard(a, el);
     if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
@@ -655,8 +673,15 @@ async function cardAction(a, el, { s, m, c }) {
     const q = d.clarify[Number(el.dataset.j)], opt = q.options[Number(el.dataset.k)];
     busy(el, true, "Updating");
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
+    (c.answered ??= []).push({ question: q.question, answer: opt });
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
     if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
+      // Every answer tapped here stays in what sellers see, even if the re-read leaves it out ("When: Tomorrow").
+      const reqs = c.draft.shared.requirements;
+      for (const x of c.answered) if (!reqs.some(rq => rq.value.toLowerCase().includes(x.answer.toLowerCase()))) {
+        const when = /\b(when|time|day|date|book)\b/i.test(x.question);
+        reqs.push({ label: when ? "When" : /\bwho\b/i.test(x.question) ? "For" : x.question.replace(/\?$/, "").split(/\s+/).slice(0, 3).join(" "), value: x.answer, strength: when ? "nice" : "required" });
+      }
       c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit, item: itemOf(r.draft) }); }
   }
   if (a === "brief-send") {
@@ -699,9 +724,22 @@ async function cardAction(a, el, { s, m, c }) {
     if (a === "match-addons") for (const x of es) api(`/api/engagements/${x.id}/ask`, { text: "What add-ons or extras do you offer, and what does each cost?" }).then(e => { live.engagements.set(e.id, e); paint(); }).catch(() => {});
     return;
   }
+  if (a === "offer-suggest-terms") {
+    busy(el, true, "Suggesting");
+    const r = await api("/api/terms/suggest", { category: c.offer?.category ?? "", text: c.publicText ?? c.text }).catch(err => { toast(err.message); return null; });
+    if (r) c.terms = r.terms;
+    c.instant = !!el.closest(".card")?.querySelector("[data-instant-new]")?.checked;
+  }
   if (a === "offer-publish") {
     busy(el, true, "Publishing");
+    // The details buyers usually ask about, answered here, join the public text; the terms are saved as the seller's own.
+    const card = el.closest(".card");
+    const extra = [...card.querySelectorAll("[data-missing]")].filter(i => i.value.trim()).map(i => `${i.dataset.missing}: ${i.value.trim().replace(/[.]+$/, "")}.`).join(" ");
+    const terms = [...card.querySelectorAll("[data-term-text]")].map(i => ({ label: i.previousElementSibling?.value.trim() ?? "", text: i.value.trim() })).filter(t => t.label && t.text);
+    const instant = !!card.querySelector("[data-instant-new]")?.checked;
+    if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
     const fact = await api("/api/facts", { tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount) });
+    if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
     if (c.offer && c.floor) {
       const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: c.autonomy ?? "ask", days: c.days ?? 7 });

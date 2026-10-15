@@ -97,7 +97,7 @@ export const screens = {
           <p class="small muted">Shown on your card and sealed into each deal's receipt exactly as you write them. Leave any blank — Collab never writes terms for you. Don't put a phone number or home address here unless you want every buyer to see it.</p>
           ${heads.map(l => `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:104px">${esc(l)}</span><input class="field" data-policy="${esc(f.id)}" data-label="${esc(l)}" maxlength="240" value="${esc(ps.find(p => p.label === l)?.text ?? "")}" placeholder="${esc(EXAMPLE[l] ?? "")}"></div>`).join("")}
           <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
-          <button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button></details>`;
+          <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}">Suggest terms for this kind of offering</button></div></details>`;
       };
       return frame("Context", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
@@ -126,6 +126,22 @@ export const screens = {
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
         if (f) await saveNote(api, { id: f.id, text: f.text, tier: el.dataset.tier });
         h.paint(); return true;
+      }
+      if (a === "terms-suggest") {
+        // Suggestions fill empty fields (and add new headings); nothing is saved until the seller taps Save terms.
+        busy(el, true, "Suggesting");
+        const f = (await allFacts()).find(x => x.id === el.dataset.id);
+        const r = await api("/api/terms/suggest", { category: el.dataset.category, text: f?.text ?? "" }).catch(err => { h.toast(err.message); return null; });
+        busy(el, false);
+        if (!r) return true;
+        const panel = el.closest("details");
+        for (const t of r.terms) {
+          let input = panel.querySelector(`[data-policy][data-label="${CSS.escape(t.label)}"]`);
+          if (!input) { const row = document.createElement("div"); row.className = "row small"; row.style.flexWrap = "nowrap"; row.innerHTML = `<span style="min-width:104px">${esc(t.label)}</span><input class="field" data-policy="${esc(el.dataset.id)}" data-label="${esc(t.label)}" maxlength="240">`; panel.querySelector("label.row")?.before(row); input = row.querySelector("input"); }
+          if (!input.value.trim()) input.value = t.text;
+        }
+        h.toast("Suggested — edit anything, then Save terms. Nothing is saved yet.");
+        return true;
       }
       if (a === "terms-save") {
         const id = el.dataset.id;

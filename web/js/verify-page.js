@@ -13,7 +13,24 @@ try {
   let result = null;
   for (const key of candidates) { const r2 = await verifyReceiptBundle(r, key); if (!result || r2.receipt) result = r2; if (r2.receipt) break; }
   document.querySelector('#status').textContent = result.receipt ? '✓ Receipt signature verified in this browser' : 'Verification failed';
-  document.querySelector('#details').textContent = `${r.terms.title}\nINR ${r.terms.price}\n${r.parties.requester.name} ↔ ${r.parties.provider.name}\nCart signature: ${result.cart === true ? 'valid' : result.cart === null ? 'none' : 'invalid or legacy HMAC'}\nPayment signature: ${result.payment === true ? 'valid · TEST MODE' : result.payment === null ? 'none' : 'invalid or legacy HMAC'}${result.ap2 ? `\nAP2 v0.2 checkout (seller agent): ${result.ap2.merchant ? 'valid' : 'invalid'}\nAP2 v0.2 mandates (buyer agent): ${result.ap2.mandates ? 'valid' : 'invalid'}\nInstrument: ${r.payment.ap2.instrument.type === 'google_pay' ? `Google Pay TEST · ${r.payment.ap2.instrument.description ?? ''}` : 'test'}` : ''}${r.legacyAttestation ? '\nLegacy agreement: receipt attested on export.' : ''}`;
+  // The receipt itself (from the signed record), then what was checked.
+  const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const t = r.terms, cur = t.currency ?? 'INR', qty = t.terms?.quantity > 1 ? t.terms.quantity : 1;
+  const amount = n => (cur === 'INR' ? '₹' + Math.round(n).toLocaleString('en-IN') : new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(n));
+  const total = r.payment?.cart?.total?.value ?? t.price * qty;
+  const sellerSide = r.payment?.seller ?? 'provider', buyerSide = sellerSide === 'provider' ? 'requester' : 'provider';
+  const paid = r.payment?.status === 'paid' ? 'Paid in the app (test mode — no money moved)' : r.payment?.status === 'outside' ? 'Paid outside the app (cash or UPI)' : 'Not paid yet';
+  const ok = v => (v === true ? 'valid' : v === null || v === undefined ? 'none' : 'invalid');
+  document.querySelector('#details').innerHTML = `<dl class="kv">
+      <dt>Buyer</dt><dd>${esc(r.parties[buyerSide].name)} <span class="faint">@${esc(r.parties[buyerSide].handle)}</span></dd>
+      <dt>Seller</dt><dd>${esc(r.parties[sellerSide].name)} <span class="faint">@${esc(r.parties[sellerSide].handle)}</span></dd>
+      <dt>What</dt><dd>${esc(t.title.split(' · ')[0])}${qty > 1 ? ` × ${qty}` : ''}</dd>
+      <dt>Agreed price</dt><dd>${amount(total / qty)}${t.unit && t.unit !== 'each' ? `/${esc(t.unit)}` : ''}${qty > 1 ? ` each · ${amount(total)} in all` : ''}</dd>
+      <dt>Platform fee</dt><dd>${amount(0)}</dd>
+      <dt>Payment</dt><dd>${esc(paid)}</dd>
+      <dt>Agreed</dt><dd>${new Date(r.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</dd></dl>
+    ${t.policies?.length ? `<p class="small"><b>Seller's terms, as they stated them</b></p>${t.policies.map(p => `<p class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</p>`).join('')}` : ''}
+    <p class="small muted">Checked in this browser — agreement: ${ok(result.receipt)} · cart: ${ok(result.cart)} · payment: ${ok(result.payment)}${result.ap2 ? ` · AP2 checkout: ${ok(result.ap2.merchant)} · AP2 mandates: ${ok(result.ap2.mandates)}` : ''}${r.legacyAttestation ? ' · older agreement, attested on export' : ''}</p>`;
   const a = document.querySelector('#download');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' })); a.download = `collab-${id}.json`; a.hidden = false;
 } catch (e) { document.querySelector('#status').textContent = e.message; }

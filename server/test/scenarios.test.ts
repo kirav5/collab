@@ -367,3 +367,13 @@ test("a seller's own terms are shown and sealed into the receipt; instant bookin
   await as("t-s", `/api/facts/${f.id}/policies`, { policies: [{ label: "Cancellation", text: "No cancellations." }] });
   assert.deepEqual((await as("t-b", `/api/engagements/${e.id}/receipt`)).terms.policies, policies);
 });
+
+test("a seller's offering draft lists what buyers usually ask; terms are suggested for the seller to accept, never saved by themselves", async () => {
+  await as("in-s", "/api/me", { handle: "intake-salon", name: "Intake Salon", areaName: "Indiranagar" });
+  const draft = await as("in-s", "/api/offers/draft", { text: "Men's haircut for sale in Indiranagar, ₹400 each" });
+  assert.ok(Array.isArray(draft.missing));
+  const sug = await as("in-s", "/api/terms/suggest", { category: "beauty", text: "Men's haircut in Indiranagar, ₹400" });
+  assert.ok(sug.terms.length >= 2 && sug.terms.every((t: any) => t.label && t.text));
+  const facts = await as("in-s", "/api/facts");
+  assert.ok(!facts.some((f: any) => f.offer?.policies?.length), "suggestions aren't saved until the seller saves them");
+});

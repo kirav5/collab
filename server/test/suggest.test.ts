@@ -113,3 +113,19 @@ test("a salon or barber is asked about its next slot, price and home visits; its
   assert.deepEqual(cut, ["What's your next free slot for men's haircut & styling?", "What's your best price for men's haircut & styling?", "Do you do home visits, and what does that cost?"]);
   assert.equal(passKind(paidDeal("beauty", "paid")), "booking");
 });
+
+test("suggested terms are short, carry no contact details or invented amounts, and fall back by kind of offering", async () => {
+  const { TermsTask } = await import("../src/core/terms.ts");
+  const input = { category: "beauty", offering: "Men's haircut at our studio, ₹450 a session, home visits ₹200 extra." };
+  const ok = TermsTask.validate({ terms: [{ label: "Late arrival", text: "Your slot is held for 10 minutes." }, { label: "Home visits", text: "Home visits cost ₹200 extra within 5 km." }] }, input);
+  assert.equal(ok?.terms.length, 2, "an amount the offering states is fine");
+  assert.equal(TermsTask.validate({ terms: [{ label: "Cancellation", text: "Cancel late and pay ₹999 as a fee." }, { label: "Contact", text: "Call 98765 43210 to reschedule." }] }, input), null, "invented amounts and phone numbers are dropped");
+  assert.deepEqual(TermsTask.fallback(input).terms.map(t => t.label), ["Cancellation", "Late arrival", "Re-service", "Hygiene & safety"]);
+  assert.deepEqual(TermsTask.fallback({ category: "goods", offering: "x" }).terms[0].label, "Returns");
+});
+
+test("time questions are recognised (so a seller with bookable slots doesn't ask them)", async () => {
+  const { isTimeQuestion } = await import("../src/core/engage.ts");
+  for (const q of ["What time suits you?", "When would you like to come in?", "Which day works for you?", "What's your preferred time?"]) assert.equal(isTimeQuestion(q), true, q);
+  for (const q of ["Which style would you like?", "Any reference photo?", "How long is your hair now?"]) assert.equal(isTimeQuestion(q), false, q);
+});

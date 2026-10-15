@@ -134,7 +134,7 @@ export async function chat(text, recent, area, open = null) {
     case "offer": {
       const d = await api("/api/offers/draft", { text, here: area });
       const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }) : [];
-      return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, floor: d.floor ?? null, insights, step: "review" }] };
+      return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, insights, step: "review" }] };
     }
     case "refine": {
       // Change the open request and search again — for real; the reply says exactly what changed and what was found.

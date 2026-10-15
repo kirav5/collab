@@ -242,3 +242,4 @@ details.more[open] { display: grid; gap: 10px; }
 .privacy-split > div { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--hairline); border-radius: 6px; }
 @media (max-width: 520px) { .privacy-split { grid-template-columns: 1fr; } }
 .match-actions { gap: 6px; margin-top: 4px; }
+.seller-req { display: grid; gap: 6px; border-color: color-mix(in srgb, var(--accent) 35%, transparent); }

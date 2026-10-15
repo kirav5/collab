@@ -186,7 +186,17 @@ function offerCard(c, at) {
     ${o ? `${label("Lowest you'll accept · private, never shown to anyone", "peri")}
       <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-edit="floor" value="${c.floor ?? o.price.amount}"></div>
       ${autonomyPick(c)}
-      ${c.insights?.length ? `<div class="card peri slim">${label("What similar listings agreed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}` : ""}
+      ${c.insights?.length ? `<div class="card peri slim">${label("What similar listings agreed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}
+      <div class="privacy-split">
+        <div>${label("Public — buyers' agents see", "fresh")}<span class="small">The text above, your price (${money(o.price.amount, o.price.period)}), ${esc(o.place.name)}${c.missing?.length ? ", the details you add below" : ""} and your terms</span></div>
+        <div>${label("Private — never shared", "peri")}<span class="small">The lowest you'll accept, and anything you keep as a private note</span></div>
+      </div>
+      ${c.missing?.length ? `<div class="stack" style="gap:6px">${label("Buyers usually ask — answer now (public)", "sq")}${c.missing.map(m => `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">${esc(m.label)}</span><input class="field" data-missing="${esc(m.label)}" placeholder="${esc(m.ask)}"></div>`).join("")}</div>` : ""}
+      <div class="stack" style="gap:6px">${label("Your terms for buyers", "sq")}
+        <span class="small muted">Shown on your card and sealed into each deal's receipt. Suggestions are only suggestions — edit or clear any before you publish.</span>
+        ${(c.terms ?? []).map(t => `<div class="row small" style="flex-wrap:nowrap"><input class="field compact" data-term-label value="${esc(t.label)}" style="max-width:130px" aria-label="Term"><input class="field" data-term-text value="${esc(t.text)}" aria-label="${esc(t.label)}"></div>`).join("")}
+        <div class="row"><button class="btn secondary compact" data-act="offer-suggest-terms" ${at}>${c.terms?.length ? "Suggest again" : "Suggest terms for this kind of offering"}</button></div>
+        <label class="row small" style="gap:6px"><input type="checkbox" data-instant-new ${c.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking)</label></div>` : ""}
     <div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><span class="small faint">Public: discoverable by anyone's agent.</span></div>
   </div>`;
 }
@@ -307,6 +317,28 @@ export function dealAmount(e) {
   return `${money(total, null, e.offer.currency)} for ${n} (${money(Math.round((total / n) * 100) / 100, null, e.offer.currency)} each)`;
 }
 
+// MARK: - A request that reached a seller
+
+/** On the seller's side: what the buyer asked for, at a glance, and the moves a seller usually makes next. */
+function sellerRequest(e, mine) {
+  if (mine !== "provider" || !["asking", "negotiating"].includes(e.phase)) return "";
+  const b = e.brief ?? {}, id = esc(e.id);
+  return `<div class="card slim seller-req">
+    <div class="row">${label("Their request", "sq accent")}</div>
+    <b class="small">${esc(b.title ?? e.title)}</b>
+    ${(b.requirements ?? []).length ? `<div class="row">${b.requirements.map(r => `<span class="chip">${esc(r.label)}: ${esc(r.value)}${r.strength === "required" ? " · must" : ""}</span>`).join("")}</div>` : ""}
+    <span class="small faint">${[b.area, b.mode === "online" ? "online" : b.mode === "in_person" ? "in person" : null, b.budget ? `budget ${b.budget}` : "no budget given"].filter(Boolean).map(esc).join(" · ")}</span>
+    <div class="row">
+      ${e.offer.price != null ? `<button class="btn accent compact" data-act="seller-quote" data-id="${id}" data-price="${e.offer.price}">Offer it at ${money(e.offer.price, e.offer.unit, e.offer.currency)}</button>` : ""}
+      <button class="btn secondary compact" data-act="seller-counter" data-id="${id}">Offer a ${e.offer.price != null ? "different " : ""}price</button>
+      <button class="btn quiet compact" data-act="seller-ask" data-id="${id}">Ask them something</button>
+      <button class="btn quiet compact" data-act="eng-close" data-id="${id}">Decline politely</button>
+    </div>
+    <div class="row" data-counter="${id}" hidden><input class="field compact" type="number" min="1" data-counter-price="${id}" placeholder="Your price"><button class="btn accent compact" data-act="seller-counter-send" data-id="${id}">Send offer</button></div>
+    <span class="small faint">An offer goes to them to confirm; nothing is final until both of you do. Your lowest price is never shown.</span>
+  </div>`;
+}
+
 // MARK: - The receipt
 
 // Tips by kind of deal — guidance for the buyer, never terms (the seller's own terms come from their offering).
@@ -324,7 +356,11 @@ const TIPS = {
 export function receiptHTML(r, e) {
   const t = r.terms, cur = t.currency ?? "INR", qty = t.terms?.quantity > 1 ? t.terms.quantity : 1;
   const total = r.payment?.cart?.total?.value ?? t.price * qty, each = total / qty;
-  const listed = e?.offer?.price ?? null, discount = listed != null && listed > each ? (listed - each) * qty : 0;
+  // Where the price started: the listed price, or (a deal made in chat) the seller's first quote.
+  const sellerSide = e?.seller === "requester" ? "requester" : "provider";
+  const firstQuote = e?.negotiation?.[sellerSide]?.[0]?.price ?? null;
+  const listed = e?.offer?.price ?? firstQuote, listedLabel = e?.offer?.price != null ? "Listed price" : "Their first price";
+  const discount = listed != null && listed > each ? (listed - each) * qty : 0;
   const pay = r.payment, method = pay?.status === "paid" ? (pay.ap2?.instrument?.type === "google_pay" ? "Google Pay (test mode — no money moved)" : "In the app (test mode — no money moved)")
     : pay?.status === "outside" ? "Outside the app (cash or UPI)" : "Not paid yet";
   const kind = e ? passKind(e) : "pickup", slot = e?.reservation?.slot;
@@ -340,7 +376,7 @@ export function receiptHTML(r, e) {
       ${line("Where", `${esc(e?.offer?.title?.split(" · ").at(-1) ?? e?.brief?.area ?? "As arranged")} · ${PASS[kind].name}`)}
     </dl>
     <div class="breakdown">
-      ${listed != null ? `<div class="row small"><span>Listed price</span><span class="end">${money(listed, null, cur)}${qty > 1 ? ` × ${qty}` : ""}</span></div>` : ""}
+      ${listed != null ? `<div class="row small"><span>${listedLabel}</span><span class="end">${money(listed, null, cur)}${qty > 1 ? ` × ${qty}` : ""}</span></div>` : ""}
       ${discount > 0 ? `<div class="row small" style="color:var(--fresh)"><span>Discount (negotiated)</span><span class="end">− ${money(discount, null, cur)} · ${Math.round((discount / (listed * qty)) * 100)}%</span></div>` : ""}
       <div class="row small"><span>Agreed price</span><span class="end">${money(each, null, cur)}${qty > 1 ? ` × ${qty}` : ""}</span></div>
       <div class="row small"><span>Platform fee</span><span class="end">${money(0, null, cur)}</span></div>
@@ -350,6 +386,11 @@ export function receiptHTML(r, e) {
     </div>
     ${t.policies?.length ? `<div class="stack" style="gap:4px">${label("Seller's terms — as they stated them", "sq")}${t.policies.map(p => `<div class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</div>`).join("")}</div>`
       : `<span class="small muted">The seller hasn't stated cancellation, return or warranty terms for this. Ask them before you pay if it matters.</span>`}
+    <div class="stack" style="gap:4px">${label("After you buy", "sq")}
+      ${(() => { const after = (t.policies ?? []).filter(p => /warrant|return|refund|re-?service|re-?trim|touch|exchange|guarantee|support|repair/i.test(`${p.label} ${p.text}`));
+        return after.length ? after.map(p => `<div class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</div>`).join("")
+          : `<div class="small muted">No warranty, return or re-service terms were stated for this — ask the seller in this chat if you need them.</div>`; })()}
+      <div class="small">Questions or follow-ups: message ${esc(r.parties[e?.seller === "requester" ? "requester" : "provider"].name)} in this conversation.</div></div>
     <div class="stack" style="gap:4px">${label("Collab's terms", "sq")}
       <div class="small">Nothing was final until both of you confirmed; this record is signed and anyone can verify it.</div>
       <div class="small">${esc(PASS[kind].name)}: shown once at the ${kind === "booking" ? "appointment" : "handover"}; the seller marks it ${PASS[kind].done.toLowerCase()}.</div>
@@ -395,6 +436,7 @@ export function engagementCard(e, id) {
     ${e.phase === "agreed" ? "" : `<p class="status ${talking ? "busy" : ""}">${talking ? `<span class="spinner"></span>` : ""}<span>${open ? openLine(e, mine, them) : statusLine(e, mine, them, items, talking)}</span>${e.offer.price ? `<span class="end faint small">listed ${money(e.offer.price, e.offer.unit)}</span>` : ""}</p>`}
     ${items.length || e.phase === "agreed" ? "" : keyAnswer(e, mine)}
     ${items.map(inboxBlock).join("")}
+    ${sellerRequest(e, mine)}
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(shortName(them.name))}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">To make an offer, name a price — “${mine === "requester" ? "I'll buy it for ₹350" : "I'll sell it for ₹400"}”. They confirm or say no; nothing is final until both do.</span>` : ""}
@@ -495,7 +537,7 @@ function inboxBlock(i) {
   if (i.kind === "move") return box(i.question ? "No deal inside your limit yet" : "Your agent needs your limit", `${i.question ? `<span class="small">${esc(i.question)}</span>` : `<span class="small">Set the most you'll pay (or least you'll take). It's never shared; your agent uses it for each move.</span>`}
     ${i.hint ? `<span class="small faint">${esc(i.hint)}</span>` : ""}
     <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-limit="${esc(i.id)}" placeholder="${i.listPrice ? money(i.listPrice) : "amount"}">
-    <button class="btn accent compact" data-act="inbox-move" data-id="${esc(i.id)}">Keep negotiating</button><button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`);
+    <button class="btn accent compact" data-act="inbox-move" data-id="${esc(i.id)}">Keep negotiating</button>${i.side === "requester" && i.listPrice ? `<button class="btn secondary compact" data-act="take-price" data-eng="${esc(i.engagementId)}" data-price="${i.listPrice}">Take their price (${money(i.listPrice)})</button>` : ""}<button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`);
   if (i.kind === "confirm") {
     const e = live.engagements.get(i.engagementId);
     const deal = e?.negotiation.deal;

@@ -212,6 +212,9 @@ export const isStockQuestion = (q: string) => /\b(in stock|available|availabilit
   || /\b(do|does|did|have|has|got|is|are)\b.*\b(have|got|stock|carry|sell)\b.*\b(today|now|right now|at the moment|currently)\b/i.test(q)
   || /\b(have|got)\s+(it|any|one|some|them)\b/i.test(q);
 
+/** "What time suits you?", "when would you like to come?" — a question the slot picker answers when there are slots. */
+export const isTimeQuestion = (q: string) => /\b(what|which) (time|day|date|slot)s?\b|\bwhen (would|do|can|could|will) you\b|\btime (suits|works)\b|\bpreferred (time|date|day|slot)\b/i.test(q);
+
 /** "Last price?", "what's your floor?", "kam se kam kitna?" — asking for the limit the agent never says. */
 export const isLimitProbe = (q: string) =>
   /\b(lowest|minimum|floor|least|bottom|rock[- ]bottom|last|final)\b[^?]{0,30}\b(price|rate|amount|offer|accept|take|go)\b/i.test(q)
@@ -377,7 +380,11 @@ export async function providerTurn(db: Docs, model: Model | null, e: Engagement,
     const fact = (await db.get(FACTS, e.offer.factId)) as Fact | null;
     const usual = domainOf(e.offer.category ?? "")?.sellerAsks ?? [];
     const g = await decide(model, GatherTask, { offering: fact?.text ?? e.offer.title, brief: e.brief, answered: e.qa.filter(q => q.answer).map(q => q.question), usual });
-    for (const question of g.output) {
+    // With bookable time slots the buyer picks a time when booking — asking "what time suits you?" only stalls the
+    // conversation on a question the slot picker already answers.
+    const slotted = (await resourceFor(db, e.offer.factId))?.type === "slots";
+    const asks = slotted ? g.output.filter(q => !isTimeQuestion(q)) : g.output;
+    for (const question of asks) {
       const q: QA = { id: newId(), from: "provider", question, status: "open" };
       e.qa.push(q);
       (out.questions ??= []).push({ id: q.id, question });
