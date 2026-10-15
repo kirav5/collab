@@ -453,6 +453,8 @@ async function onClick(e) {
         // Google's search suggestions (required with grounded answers): its links open in a new tab — google.com
         // refuses to load inside a frame.
         if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = `<base target="_blank">${r.searchEntryPoint}`; frame.style.cssText = "width:100%;border:0;height:64px"; box.append(frame); }
+      } catch (err) {
+        box.innerHTML = `<div class="card slim"><span class="small">Couldn't get prices from the web right now${err.status === 503 ? " — Google Search didn't answer in time" : ""}. Try again in a minute.</span></div>`;
       } finally { busy(el, false); }
       loadPolicy();
       return;
