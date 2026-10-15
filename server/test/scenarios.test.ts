@@ -100,8 +100,9 @@ test("a paused shop's agent answers nobody from its facts, and its private notes
   await as("shop", "/api/facts", { tier: "private", text: "My supplier charges me ₹170 a bottle; never go below ₹250." });
   let e = await as("buyer", "/api/people/steel-shop/ask", { text: "What does your supplier charge you per bottle?" });
   e = await as("buyer", `/api/engagements/${e.id}/run`, {});
-  const said = JSON.stringify([e.qa, e.events]);
-  assert.ok(!/170|250/.test(said), "the private cost and floor are never said");
+  // Only what was said (not ids or timestamps, which can contain any digits).
+  const said = [...e.qa.map((q: any) => `${q.question} ${q.answer ?? ""}`), ...e.events.map((x: any) => x.text)].join(" ");
+  assert.ok(!/\b(170|250)\b/.test(said), `the private cost and floor are never said: ${said}`);
   await as("shop", "/api/me/pause", { paused: true });
   let p = await as("buyer", "/api/people/steel-shop/ask", { text: "Do you have steel water bottles?" });
   p = await as("buyer", `/api/engagements/${p.id}/run`, {});
