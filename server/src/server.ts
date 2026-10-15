@@ -1045,14 +1045,19 @@ app.post("/api/engagements/:id/close", route(async req => {
 // The owner's device: what only it can do
 async function inboxFor(uid: string): Promise<InboxItem[]> {
   const mine = (await db.find(INBOX, [["owner", "==", uid], ["status", "==", "open"]], 100)) as InboxItem[];
+  const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 100)) as Engagement[];
+  // A conversation that has ended asks nobody anything: leftovers from before that rule are closed as they're found.
+  const ended = new Set(es.filter(e => e.phase === "closed" || e.phase === "declined").map(e => e.id));
   // Demo people's devices are simulated: their items show up for the person talking to them.
   const demo: InboxItem[] = [];
-  for (const e of (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 100)) as Engagement[]) {
+  for (const e of es) {
     if (e.requester.uid === uid && e.provider.uid.startsWith("demo-") && e.waiting.provider) {
       demo.push(...((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === "provider"));
     }
   }
-  return [...mine, ...demo].sort((a, b) => b.createdAt - a.createdAt);
+  const all = [...mine, ...demo];
+  for (const i of all.filter(x => ended.has(x.engagementId))) void db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)).catch(() => {});
+  return all.filter(i => !ended.has(i.engagementId)).sort((a, b) => b.createdAt - a.createdAt);
 }
 app.get("/api/inbox", route(async req => inboxFor(req.uid)));
 app.post("/api/inbox/:id", route(async req => {

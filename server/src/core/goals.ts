@@ -179,6 +179,8 @@ export async function cancelGoal(db: Docs, owner: string, goalId: string, now: n
       waiting: { requester: null, provider: null }, outbox: null, outboxPending: false,
       events: [...cur.events, { at: now, who: cur.requester.uid === owner ? "requester" : "provider", text: "Goal cancelled — conversation ended.", by: "owner" }], updatedAt: now } : null));
     await deallocate(db, goalId, id, now);
+    const { closeInbox } = await import("./engage.ts");
+    await closeInbox(db, id);
   }
   return (await db.get(GOALS, goalId)) as Goal;
 }

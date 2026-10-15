@@ -86,6 +86,8 @@ test("mid-conversation: whoever ends it, nobody can keep asking; paying or a pas
   assert.equal((await raw("buyer", `/api/engagements/${e.id}/pickup`)).status, 400, "no payment, no pass");
   e = await as("buyer", `/api/engagements/${e.id}/close`, {});
   assert.equal(e.phase, "closed");
+  assert.equal(await inboxFor("buyer", e.id), undefined, "nothing left asking the buyer");
+  assert.equal(await inboxFor("shop", e.id), undefined, "nothing left asking the shop");
   await assert.rejects(as("shop", `/api/engagements/${e.id}/ask`, { text: "Still there?" }), /ended/);
   await assert.rejects(as("buyer", `/api/engagements/${e.id}/ask`, { text: "Wait" }), /ended/);
   assert.equal((await as("buyer", `/api/engagements/${e.id}/close`, {})).phase, "closed", "ending twice is harmless");

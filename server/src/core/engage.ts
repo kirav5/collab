@@ -75,8 +75,16 @@ export const setOutgoingScreen = (fn: typeof outgoingScreen) => { outgoingScreen
 let signer: ((uid: string, hash: string) => string) | null = null;
 export const setSigner = (fn: (uid: string, hash: string) => string) => { signer = fn; };
 
+/** Closes every open question and decision of a conversation, on both sides. */
+export async function closeInbox(db: Docs, engagementId: string) {
+  for (const i of (await db.find(INBOX, [["engagementId", "==", engagementId], ["status", "==", "open"]], 50)) as InboxItem[])
+    await db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null));
+}
+
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
+  // An ended conversation asks nobody anything: its open questions and decisions close, on both sides (once).
+  if ((e.phase === "closed" || e.phase === "declined") && !e.inboxClosed) { e.inboxClosed = true; e.waiting = { requester: null, provider: null }; await closeInbox(db, e.id); }
   // The outbox flag is derived on every save, so a waiting turn can always be found by the recovery scan.
   e.outboxPending = !!e.outbox;
   e.outboxAt = e.outbox ? (e.outboxAt ?? now()) : null;

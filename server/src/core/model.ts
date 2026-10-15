@@ -141,6 +141,8 @@ export interface Engagement {
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
   outbox?: unknown;
   /** The stock held for this deal (see core/resources.ts): held until paid (then committed), released if it ends. */
+  /** Set once the conversation ended and its open questions and decisions were closed. */
+  inboxClosed?: boolean;
   /** A time the buyer picked on the seller's card: held as soon as the deal is agreed (if still free). */
   preferredSlotId?: string | null;
   reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable" | "choose_slot";
