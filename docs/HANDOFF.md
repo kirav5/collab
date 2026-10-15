@@ -418,5 +418,14 @@ live updates); `stats()` cached 10 min in `stats/{uid}` and cleared by `clearSta
 Google Analytics for Firebase in the web app (`session.track`); goal cancel (`cancelGoal`) and deal lapse release held
 stock; first-run intro card; `web/js/processing.js` holds the device-only decision (tested). 107/107.
 
+**16 Oct, final testing round** ([TEST-SCENARIOS.md](TEST-SCENARIOS.md)): `core/suggest.ts` (QR chips and agent-card
+skill examples per offering); `pickup.ts` passKind/pickupDetails (every paid deal, cash/UPI included; kind and
+quantity); `direct.ts` explicitOffer/offeredQuantity/perUnit (typed offers on priced listings, quantities, uneven
+totals split over two lines); `/api/inbox` needs explicit confirm/decline; a new typed price replaces a pending one;
+paid-outside commits stock; `engage.ts` isLimitProbe/isContactRequest standard replies (not when paused);
+`app-check.ts` appCheckRequired (plain GETs don't wait); client: first visit shows the start screen before guest
+sign-in finishes (`session.ready`), handle optional, `cached()` shared reads, one on-device run at a time,
+`load_timing` analytics; price check per unit with low thinking, 22 s limit and a retry. 129/129.
+
 **Still to check on devices:** Google Pay TEST sheet, Firebase AI Logic on Chrome desktop with Nano, offline cache in
 the installed app, an outside agent's push webhook, a full `bench.ts --full --autorater` run.

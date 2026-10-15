@@ -19,7 +19,7 @@ phone or a person (checklist at the end).
 | A5 | Change handle | Old handle is free for others; name kept | scenarios › sign-up | ✅ |
 | A6 | First visit with no handle typed | Handle made from the name (+3 digits), retried if taken | Live: "Meera Test" → @meeratest187 | ✅ |
 | A7 | First visit speed | Start screen without waiting for guest sign-in | Live: start screen at **0.88 s** (was ~2.95 s) | ✅ |
-| A8 | Returning visit | Profile and app load; no Google redirect check unless one was started | Live: shop card 1.8 s → see Q6 | ✅ |
+| A8 | Returning visit | Profile and app load; no Google redirect check unless one was started | Live: shop card 1.3–1.7 s (was 1.8 s) | ✅ |
 | A9 | Guest → "Continue with Google" | Same account upgraded (handle, context kept); existing Google account switches | Earlier live test (13 Oct) | Device re-check |
 | A10 | Two people in one browser (`?as=name`) | Separate accounts | Used throughout live tests | ✅ |
 
@@ -169,8 +169,8 @@ phone or a person (checklist at the end).
 | First visit from a QR → start screen | ~2.95 s | **0.88 s** |
 | Tap Start → shop card with chips | 1.6 s | **0.9 s** |
 | Tap "in stock?" → answer | — | **~1.1 s** |
-| Returning visit → shop card | 1.8 s | ~1.4 s (modules preloaded, shop fetched beside the profile) |
-| `/api/facts` calls during one QR open | 7 | 1 (shared reads) |
+| Returning visit → shop card | 1.8 s | **1.3–1.7 s** (modules preloaded, shop fetched beside the profile) |
+| API calls during start-up (account with ~15 pending questions) | 38, done at 7.8 s | **13, done at 3.7 s** (`/api/facts` 19 → 1, `/api/limits` 18 → 1) |
 | Server time per API call | 15–50 ms | unchanged (the rest is network) |
 
 Real-device timings are now sent to Analytics as `load_timing` (start screen, app, QR card; first visit or not; installed or not).
@@ -187,7 +187,8 @@ Real-device timings are now sent to Analytics as `load_timing` (start screen, ap
 8. Only in-app payments got a pass; passes now for every paid deal, named by kind, with quantity.
 9. "Last price?" and contact requests were forwarded to the shopkeeper every time.
 10. A paused agent still answered stock questions.
-11. First visit waited ~3 s for guest sign-in and reCAPTCHA; screens re-fetched the same data on every live update.
+11. First visit waited ~3 s for guest sign-in and reCAPTCHA; screens re-fetched the same data on every live update; the
+    on-device agent re-read notes and limits once per pending question on every update (38 start-up calls).
 12. "Steel's agent" (shop name cut to a first name); "pick it up" with plurals.
 
 ## 14. Needs your phone (device checklist)
