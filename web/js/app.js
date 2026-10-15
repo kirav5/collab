@@ -352,8 +352,8 @@ function shopControl(a, el) {
     const input = item.querySelector(".qty"), max = Number(item.dataset.max) || 20;
     input.value = String(Math.min(max, Math.max(1, (Number(input.value) || 1) + Number(el.dataset.d))));
   }
-  if (a === "slot-pick") {
-    item.querySelectorAll('[data-act="slot-pick"]').forEach(c => c.classList.toggle("on", c === el));
+  if (a === "shop-slot") {
+    item.querySelectorAll('[data-act="shop-slot"]').forEach(c => c.classList.toggle("on", c === el));
     item.dataset.slot = el.dataset.slot; item.dataset.slotLabel = el.dataset.label;
   }
   if (a === "store-offer-open") { const box = item.querySelector(".offer-box"); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("input")?.focus(); }
@@ -518,7 +518,7 @@ async function onClick(e) {
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
-    if (a === "qty" || a === "slot-pick" || a === "store-offer-open") return shopControl(a, el);
+    if (a === "qty" || a === "shop-slot" || a === "store-offer-open") return shopControl(a, el);
     if (a === "store-order" || a === "store-offer-send") return orderFromCard(a, el);
     if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
     if (a.startsWith("inbox-")) return inboxAction(a, el);
@@ -591,7 +591,10 @@ async function onClick(e) {
       busy(el, true);
       const r = await api(`/api/engagements/${el.dataset.id}/slots`);
       const box = document.querySelector(`[data-slots="${CSS.escape(el.dataset.id)}"]`);
-      box.innerHTML = r.slots.length ? `<span class="small">Pick a time (${esc(r.timezone ?? "")}):</span><div class="row" style="flex-wrap:wrap">${r.slots.map(sl => `<button class="btn secondary compact" data-act="slot-pick" data-id="${esc(el.dataset.id)}" data-slot="${esc(sl.id)}">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined })}</button>`).join("")}</div>`
+      // The next eight times up front; the rest behind "More times".
+      const slotBtn = sl => `<button class="btn secondary compact" data-act="slot-pick" data-id="${esc(el.dataset.id)}" data-slot="${esc(sl.id)}">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined })}</button>`;
+      box.innerHTML = r.slots.length ? `<span class="small">Pick a time (${esc(r.timezone ?? "")}):</span><div class="row" style="flex-wrap:wrap">${r.slots.slice(0, 8).map(slotBtn).join("")}</div>
+          ${r.slots.length > 8 ? `<details class="more"><summary>More times · ${r.slots.length - 8}</summary><div class="row" style="flex-wrap:wrap">${r.slots.slice(8).map(slotBtn).join("")}</div></details>` : ""}`
         : `<span class="small muted">No open slots right now — ask them to add some.</span>`;
       return;
     }
