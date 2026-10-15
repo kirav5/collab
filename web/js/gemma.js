@@ -112,6 +112,14 @@ export function loadGemma() {
   return loading;
 }
 
+/** The first answer in a session compiles the GPU programs (~30 s on a laptop); doing it in the background right
+ *  after the app opens means the person's first question — or one from their phone — is answered in about a second. */
+let warmed = null;
+export function warmGemma() {
+  warmed ??= generate("Reply with OK.", "OK?").then(() => true).catch(() => { warmed = null; return false; });
+  return warmed;
+}
+
 let queue = Promise.resolve();
 /** One answer at a time (the runtime handles one request at a time). Gemma 4's turn format. */
 export function generate(system, user) {

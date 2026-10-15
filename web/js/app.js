@@ -6,6 +6,7 @@ import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
 import { chat, detectEngine, engine, itemOf, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
+import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
@@ -91,7 +92,11 @@ async function setup() {
 
 async function boot() {
   // Gemma on this device (and whether it can run here); then this device joins the account's devices.
-  detectEngine().then(() => { paintSidebar(); startDevices().then(refreshServing).catch(() => {}); });
+  detectEngine().then(() => {
+    paintSidebar(); startDevices().then(refreshServing).catch(() => {});
+    // Gemma downloaded here: load and warm it in the background, once the app has settled.
+    if (engine.here) setTimeout(() => warmGemma().then(() => { detectEngine().then(paintSidebar); }), 8000);
+  });
   onDevices(() => { if (S.screen === "settings") paintContent(true); });
   // Offline: a banner, cached conversations, and (with the on-device model) answers from the notes on this device.
   refreshNotesCache();
