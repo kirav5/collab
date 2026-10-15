@@ -36,7 +36,7 @@ const PEOPLE: Person[] = [
         { label: "Re-trim", text: "Free touch-up within 7 days if you're not happy with the cut." },
         { label: "Hygiene", text: "Tools sterilised after every client; a fresh towel and neck strip each time." },
         { label: "Payment", text: "Pay in the app or in cash at the studio." },
-        { label: "Contact", text: "Message us through Collab; the studio's exact address comes with your booking pass." },
+        { label: "Contact", text: "Message us through Collab; we share the studio's exact address in the chat once you've booked." },
       ], instant: true },
     slots: { from: 10, to: 20, minutes: 40 } },
   { handle: "riya", name: "Riya Sharma", bio: "Guitar teacher in Jayanagar.", area: "Jayanagar",
@@ -91,7 +91,7 @@ const DEAL_SEED: [string, string, string | null, number, number, number][] = [
   ["vehicles", "Bengaluru", null, 650_000, 620_000, 8], ["vehicles", "Bengaluru", null, 700_000, 670_000, 21], ["vehicles", "Bengaluru", null, 750_000, 720_000, 34],
 ];
 
-const SEEDED = "demo-v4";
+const SEEDED = "demo-v5";
 
 /** Demo sellers with a schedule always have bookable times for the coming week (checked at every start). */
 async function refreshDemoSlots(db: Docs, now: number) {
