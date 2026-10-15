@@ -250,8 +250,10 @@ test("'2 bottles for ₹800' is ₹800 for two, not ₹800 each: the cart, the s
   e = await as("q-b", `/api/engagements/${e.id}`);
   assert.equal(e.payment.cart.total.value, 800, "the cart is ₹800 in all");
   assert.equal(e.reservation.qty, 2, "two units held");
+  await as("q-b", `/api/engagements/${e.id}/paid-outside`, {});
+  assert.equal((await as("q-b", `/api/engagements/${e.id}/pickup`)).quantity, 2, "the pass says how many");
   const [ledger] = (await as("q-s", "/api/resources")).filter((r: any) => r.id === stock.id);
-  assert.equal(ledger.holds.filter((h: any) => h.state === "held").reduce((n: number, h: any) => n + h.qty, 0), 2);
+  assert.equal(ledger.onHand, 3, "paid: the two left the stock");
   // ₹1,000 for 3 doesn't divide: two lines that add up to exactly ₹1,000.
   let u = await as("q-b", "/api/people/q-s/ask", { text: "Any more?", offerFactId: listing.id });
   u = await as("q-b", `/api/engagements/${u.id}/run`, {});

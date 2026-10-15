@@ -11,7 +11,8 @@ async function refresh() {
   const k = KINDS[details.kind] ?? KINDS.pickup;
   document.title = `Collab ${k.name.toLowerCase()}`; document.querySelector('h1').textContent = k.name; collect.textContent = `Mark ${k.done.toLowerCase()}`;
   const when = details.slot ? `\nTime: ${new Date(details.slot * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
-  document.querySelector('#details').textContent = `${details.item}\n${details.amount.currency ?? 'INR'} ${details.amount.value}${when}\nBuyer: ${details.buyer}\nSeller: @${details.sellerHandle}`;
+  const item = details.quantity > 1 ? `${details.quantity} × ${details.item.split(' · ')[0]}` : details.item;
+  document.querySelector('#details').textContent = `${item}\n${details.amount.currency ?? 'INR'} ${details.amount.value}${when}\nBuyer: ${details.buyer}\nSeller: @${details.sellerHandle}`;
   const paid = details.payment === 'outside'
     ? (details.markedBy === 'seller' ? 'Paid outside the app — the seller confirmed it' : 'Marked paid outside the app by the buyer — check you received the money')
     : '✓ Paid (test mode)';

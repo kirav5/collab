@@ -210,9 +210,19 @@ function keyAnswer(e, mine) {
 
 /** What to price: the listing's own name when it's specific, plus what was asked for (a generic category title like
  *  "Water Bottles · items for sale" alone finds nothing comparable). */
-function priceItem(e) {
-  const asked = (e.brief?.title ?? "").replace(/^(do you have|i want|looking for|need)\s+(a|an|the)?\s*/i, "").replace(/[?.!]+$/, "");
-  const listed = (e.offer.title ?? "").split(" · ")[0];
+/**
+ * What to price on the web: the item the buyer named ("a 500 ml steel bottle") with the listing's own title. A question
+ * ("What's your best rate for guitar lessons?") or Hinglish filler isn't an item, so only the listing is searched.
+ */
+export function priceItem(e) {
+  const listed = (e.offer?.title ?? "").split(" · ")[0].trim();
+  let asked = (e.brief?.title ?? "").trim().replace(/[.!?]+$/, "")
+    .replace(/^(hi|hello|hey|bhaiya|bhai|sir|madam|ji)[,!\s]+/i, "")
+    .replace(/^(what('?s| is) (your |the )?(best |lowest |last |final )?(price|rate|cost)( for| of)?|how much (is|are|for|does|do)( the| a| an)?|do you (have|sell|make)|have you got|is (the|there|it)|are (the|there)|can i (get|order|buy|book)|i('d| would)? (want|need|like)( to buy)?|i'?m looking for|looking for|need|what times are free( this week)? for|are you free( this week)? for)\s+/i, "")
+    .replace(/\s+(in stock|available|still available|today|tomorrow|this week|now|please)\??$/i, "")
+    .replace(/^(a|an|the|some)\s+/i, "").trim();
+  if (asked.length < 3 || asked.includes("?") || asked.split(/\s+/).length > 8 || asked.toLowerCase() === listed.toLowerCase()
+    || /\b(kitne|kitna|chahiye|doge|milega|hai|kya|bhaiya)\b/i.test(asked)) asked = "";
   return [asked, listed].filter(Boolean).join(" — ").slice(0, 160) || e.title;
 }
 

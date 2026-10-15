@@ -30,7 +30,9 @@ export function pickupDetails(e: Engagement) {
   if (e.phase !== "agreed" || !e.payment || (status !== "paid" && status !== "outside")) throw new Error("No pass yet: the deal isn't paid.");
   const amount = e.payment.cart?.total ?? { value: e.negotiation.deal?.price ?? e.offer.price ?? 0, currency: currencyOf(e) };
   const markedBy = status === "outside" ? (e.payment.by === sellerOf(e) ? "seller" : "buyer") : null;
-  return { id: e.id, item: e.offer.title, amount, buyer: e[buyerOf(e)].name, sellerHandle: e[sellerOf(e)].handle,
+  const d = e.negotiation.deal, q = d?.terms?.quantity ?? 1;
+  const quantity = d?.items?.length ? d.items.reduce((n, l) => n + l.quantity, 0) : q > 1 ? q : 1;
+  return { id: e.id, item: e.offer.title, quantity, amount, buyer: e[buyerOf(e)].name, sellerHandle: e[sellerOf(e)].handle,
     paidAt: e.payment.paidAt ?? null, kind: passKind(e), slot: e.reservation?.slot?.start ?? null,
     payment: status === "paid" ? "in_app_test" : "outside", markedBy, mode: "test" };
 }

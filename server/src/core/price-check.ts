@@ -62,7 +62,7 @@ export function priceEvidence(g: GroundedResult) {
     typical: comparable ? (prices[Math.floor((prices.length - 1) / 2)] + prices[Math.ceil((prices.length - 1) / 2)]) / 2 : null,
     unit: comparable ? items[0].unit : null, searchEntryPoint: g.searchEntryPoint,
     sources: g.sources.filter(s => /^https:\/\//.test(s.url)),
-    note: "Search-based asking prices, not a guaranteed fair value or completed sale price. Check condition, size and quantity." };
+    note: "Asking prices found on the web — not a guaranteed fair price or a completed sale. Compare like with like (size, condition, hours, quantity)." };
 }
 
 export async function checkPrice(db: Docs, model: Model | null, uid: string, item: string, area: string, now: number) {
