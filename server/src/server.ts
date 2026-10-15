@@ -42,7 +42,7 @@ import { NearbyError, nearby } from "./core/nearby.ts";
 import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
 import { checkPrice, PriceCheckError, PRICE_CHECKS, quotaStatus } from "./core/price-check.ts";
-import { appCheckDecision, replayProtected, appCheckRequired } from "./core/app-check.ts";
+import { appCheckDecision, appCheckMode, appCheckOutcome, appCheckRequired, freeUnverified, instanceBucket, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
@@ -124,6 +124,7 @@ async function spend(uid: string, n = 1) {
 const route = (h: Handler, auth = true) => async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (auth) (req as any).uid = await uidOf(req);
+    if (auth && (req as any).appCheck === "unverified" && APPCHECK === "enforce" && !freeUnverified(req.method, req.path)) await spendUnverified((req as any).uid);
     res.set("cache-control", "no-store").json((await h(req as any, res)) ?? null);
   } catch (e) { next(e); }
 };
@@ -189,7 +190,14 @@ app.use("/api", express.json({ limit: "128kb" }));
 
 // App Check: calls to the API come from our own web app. "monitor" logs what would be refused; "enforce" refuses.
 // (A2A at /a2a stays open to any agent — that's the point of it — and is rate-limited instead.)
-const APPCHECK = env.APPCHECK ?? "off";
+const APPCHECK = appCheckMode(env.APPCHECK);
+const appCheckStats = { verified: 0, unverified: { none: 0, invalid: 0, expired: 0 }, refused: 0 };
+// Unverified writes: 20 per account then one every 6 s, and at most ~300 a minute per server instance in all.
+const unverifiedCeiling = instanceBucket(300, 5);
+async function spendUnverified(uid: string) {
+  if (!unverifiedCeiling() || !(await take(db, `unverified:${uid}`, 1, 20, 1 / 6)))
+    throw new HttpError(429, "Too many requests from a browser that couldn't be verified by Google reCAPTCHA. Wait a minute, or reload Collab.", "APP_CHECK_LIMITED");
+}
 let consumeUnavailable: { at: number; error: string } | null = null;
 let appCheck: ((t: string, options?: { consume: boolean }) => Promise<{ alreadyConsumed?: boolean }>) | null = null;
 app.use("/api", async (req, res, next) => {
@@ -199,7 +207,7 @@ app.use("/api", async (req, res, next) => {
   if (!appCheckRequired(req.method, req.path) && typeof token !== "string") return next();
   // Consuming a token needs a network call and the Token Verifier IAM role. Do it only for sensitive writes when
   // enforcement is on; monitor mode keeps working with ordinary cached tokens.
-  const consume = APPCHECK === "enforce" && replayProtected(req.method, req.path);
+  const consume = (APPCHECK === "enforce" || APPCHECK === "strict") && replayProtected(req.method, req.path);
   if (!appCheck) {
     const { initializeApp, getApps } = await import("firebase-admin/app");
     const { getAppCheck } = await import("firebase-admin/app-check");
@@ -214,16 +222,27 @@ app.use("/api", async (req, res, next) => {
     return res.status(503).json({ error: "Payments and pickups are paused for a moment while a security check is unavailable. Try again shortly.", code: "SECURITY_CHECK_UNAVAILABLE" });
   }
   if (consume && decision === "ok") consumeUnavailable = null;
-  const ok = decision === "ok";
-  if (ok) return next();
-  log.warn("app check failed", { path: req.path, mode: APPCHECK, hadToken: typeof token === "string", replayProtected: consume });
-  if (APPCHECK === "enforce") return res.status(401).json({ error: consume ? "This action needs a fresh app check. Please try again." : "Please use the Collab app (app check failed)." });
+  const outcome = appCheckOutcome(APPCHECK, decision, consume);
+  if (outcome === "verified") { appCheckStats.verified++; (req as any).appCheck = "verified"; return next(); }
+  const reason = typeof token !== "string" ? "none" : decision === "expired" ? "expired" : "invalid";
+  if (outcome === "refuse") {
+    appCheckStats.refused++;
+    log.warn("app check refused", { path: req.path, mode: APPCHECK, reason, replayProtected: consume });
+    return res.status(401).json({ code: "APP_CHECK", error: consume
+      ? "Payments, pickups and price checks need a browser check by Google reCAPTCHA, and this browser couldn't pass it. Reload Collab; if a content blocker is on, allow google.com for this site."
+      : "This browser couldn't be verified by Google reCAPTCHA. Reload Collab and try again; a content blocker or private window can stop the check." });
+  }
+  // Allowed, marked unverified: writes draw on a tighter budget (route()), and it's counted and logged.
+  appCheckStats.unverified[reason]++;
+  (req as any).appCheck = "unverified";
+  log.warn("app check unverified", { path: req.path, mode: APPCHECK, reason, method: req.method });
+  event("appcheck_unverified", { reason, write: req.method !== "GET" });
   next();
 });
 
 app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local", policy: POLICY_HASH, model: model?.status() ?? null, store: env.STORE === "memory" ? "memory" : "firestore", a2a: `${cfg.publicUrl}/a2a/<handle>`,
   modelArmor: armor ? { on: true, ...armor.stats } : { on: false },
-  security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on" } }), false));
+  security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" && APPCHECK !== "strict" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on", verification: appCheckStats } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
   a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
 

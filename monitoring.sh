@@ -59,7 +59,7 @@ JSON
 fi
 
 # Product events: the server logs one line per event (log.ts → event()); each becomes a counter you can chart.
-for ev in signup request_sent agents_contacted deal_agreed paid collected goal_cancelled; do
+for ev in signup request_sent agents_contacted deal_agreed paid collected goal_cancelled appcheck_unverified order_sent; do
   gcloud logging metrics describe "collab_$ev" >/dev/null 2>&1 || gcloud logging metrics create "collab_$ev" \
     --description="Collab product event: $ev" \
     --log-filter="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"collab-market\" AND jsonPayload.message=\"event\" AND jsonPayload.event=\"$ev\"" >/dev/null

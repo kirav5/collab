@@ -341,7 +341,10 @@ export const screens = {
           <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Install Collab to open it like an app. Notifications tell you when your agent needs you, someone's agent contacts yours, or a watch finds someone new — even with Collab closed. They never contain prices or private notes.</span>
-          <dl class="kv"><dt>App</dt><dd>${standalone() ? `<span style="color:var(--fresh)">● Installed</span>`
+          <dl class="kv"><dt>Browser check</dt><dd>${session.appCheckOk ? `<span style="color:var(--fresh)">● Verified by Google reCAPTCHA</span>`
+            : session.appCheckError ? `<span style="color:var(--stale)">● Couldn't verify this browser</span> <span class="small faint">(${esc(session.appCheckError.code)})</span><br><span class="small muted">Chat and requests still work. Payments, pickups and price checks need it: reload Collab, or allow google.com in your content blocker.</span>`
+            : `<span class="small muted">Checking…</span>`}</dd>
+          <dt>App</dt><dd>${standalone() ? `<span style="color:var(--fresh)">● Installed</span>`
             : session.install ? `<button class="btn secondary compact" data-act="install">📲 Install Collab</button>`
             : ios() ? `In Safari, tap <b>Share</b> (the square with an arrow), then <b>Add to Home Screen</b>. Open Collab from the home screen — notifications on iPhone only work there.`
             : `In your browser's menu choose <b>Install app</b> or <b>Add to Home screen</b>.`}</dd>

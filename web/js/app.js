@@ -92,7 +92,7 @@ async function boot() {
   // Offline: a banner, cached conversations, and (with the on-device model) answers from the notes on this device.
   refreshNotesCache();
   loadPolicy();
-  addEventListener("online", () => { toast("Back online."); refreshNotesCache(); paint(); });
+  addEventListener("online", () => { toast("Back online — syncing what you did offline."); refreshNotesCache(); syncChats(); paint(); });
   addEventListener("offline", () => { toast(engine.nano ? "Offline — questions about your notes are answered on this device." : "Offline — showing what's saved on this device."); paint(); });
   S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
@@ -401,14 +401,16 @@ async function saveSession(s) { s.updatedAt = now(); await local.put("sessions",
 // the same chats. Uploads wait a moment so a burst of edits is one write.
 const pending = new Map();
 function upload(s) {
+  const owner = session.uid; // a chat is only ever uploaded to the account it was written under
   clearTimeout(pending.get(s.id));
-  pending.set(s.id, setTimeout(() => { pending.delete(s.id); api("/api/chats", { chat: s }).catch(() => {}); }, 1500));
+  pending.set(s.id, setTimeout(() => { pending.delete(s.id); if (owner === session.uid) api("/api/chats", { chat: s }).catch(() => {}); }, 1500));
 }
 
 /** Brings in chats saved from other devices and sends up the ones only this device has (older chats included). */
 async function syncChats() {
+  const owner = session.uid;
   const remote = await api("/api/chats").catch(() => null);
-  if (!remote) return;
+  if (!remote || owner !== session.uid) return;
   const mine = new Map(S.sessions.map(s => [s.id, s]));
   let changed = false;
   for (const r of remote) {
@@ -547,7 +549,8 @@ async function onClick(e) {
       busy(el, true, "Checking sources");
       const box = el.parentElement.querySelector("[data-price-result]");
       try {
-        const r = await api("/api/price-check", { item: el.dataset.item, area: el.dataset.area, unit: el.dataset.unit || undefined });
+        // The request card's title as edited, if it was.
+        const r = await api("/api/price-check", { item: el.closest(".brief")?.querySelector('[data-edit="title"]')?.value.trim() || el.dataset.item, area: el.dataset.area, unit: el.dataset.unit || undefined });
         const left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
         box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
           <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(s => `<a class="small" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
@@ -774,6 +777,8 @@ navigator.serviceWorker?.addEventListener("message", e => {
 });
 
 // Started last, once everything above is defined.
+// Anything that stops start-up shows a way back instead of a blank page.
+try {
 await signIn();
 if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${label("Collab", "sq ink")}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
 // A returning visitor: their profile and (from a QR) the person they're opening load side by side. A first visit has
@@ -795,6 +800,10 @@ timing("app");
   else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
   else if (qp.get("alerts")) openScreen("requests");
   else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
+}
+
+} catch (err) {
+  if (!document.querySelector("#app")) root.innerHTML = `<main class="setup"><section class="card"><h1 class="headline">Couldn't open Collab</h1><p>${esc(err.message || "Check your connection and try again.")}</p><a class="btn accent" href="/">Try again</a></section></main>`;
 }
 
 export { S, engagementCard };

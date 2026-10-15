@@ -427,5 +427,15 @@ paid-outside commits stock; `engage.ts` isLimitProbe/isContactRequest standard r
 sign-in finishes (`session.ready`), handle optional, `cached()` shared reads, one on-device run at a time,
 `load_timing` analytics; price check per unit with low thinking, 22 s limit and a retry. 129/129.
 
+**16 Oct, App Check lockout fix:** a real browser that can't get a reCAPTCHA token (content blocker, private
+window, the SDK throttling itself) was refused every write ("Please use the Collab app"). `APPCHECK=enforce` is now
+verified-or-limited (`core/app-check.ts` appCheckOutcome): unverified calls are allowed, counted on `/health`
+(`security.verification`), logged ("app check unverified"), and writes draw on a tighter budget (20 per account then
+1/6 s, ~300/min per instance); payments, pickups and price checks still need a fresh single-use token (fail closed).
+`APPCHECK=strict` keeps refuse-everything. Client (`web/js/appcheck.js`): never sends an expired token, waits at most
+5 s for one, retries once with a fresh token on a 401 `APP_CHECK`, shows the state in Settings › Browser check.
+Devin's uncommitted work of 15 Oct 23:14–23:28 (Ollama adapter, plaintext device relay, offline page) is in
+`git stash` "devin-wip …"; its sound fixes were re-applied by hand.
+
 **Still to check on devices:** Google Pay TEST sheet, Firebase AI Logic on Chrome desktop with Nano, offline cache in
 the installed app, an outside agent's push webhook, a full `bench.ts --full --autorater` run.

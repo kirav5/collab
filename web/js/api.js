@@ -1,7 +1,8 @@
 // Sign-in (Firebase Auth) and the server API. On Firebase Hosting the config comes from /__/firebase/init.json; a
 // local server without Firebase uses test accounts (DEV_AUTH).
+import { appCheckCode, usableToken } from "./appcheck.js";
 export const FB = "https://www.gstatic.com/firebasejs/12.14.0";
-export const session = { track: () => {}, appCheckNow: () => null, ready: null, fresh: false, pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
+export const session = { track: () => {}, appCheckNow: () => null, appCheckRefresh: () => {}, appCheckError: null, appCheckOk: false, ready: null, fresh: false, pushOn: false, install: null, fsReady: null, uid: null, user: null, token: null, fs: null, config: {}, google: null, signOut: null, appCheck: null, app: null, push: null };
 
 // The app works offline and installs as an app (PWA); the same service worker receives push notifications.
 export const worker = "serviceWorker" in navigator ? navigator.serviceWorker.register("/sw.js").catch(() => null) : Promise.resolve(null);
@@ -10,8 +11,8 @@ const CONFIG_KEY = "collab.config";
 
 /** The server's and Firebase's config, fetched together; null when the server can't be reached. */
 const fetchConfig = () => Promise.all([
-  fetch("/__/firebase/init.json").then(r => (r.ok ? r.json() : null)).catch(() => null),
-  fetch("/api/config").then(r => (r.ok ? r.json() : null)).catch(() => null),
+  fetch("/__/firebase/init.json", { signal: AbortSignal.timeout(10_000) }).then(r => (r.ok ? r.json() : null)).catch(() => null),
+  fetch("/api/config", { signal: AbortSignal.timeout(10_000) }).then(r => (r.ok ? r.json() : null)).catch(() => null),
 ]).then(([hosted, server]) => {
   if (!server) return null;
   const c = { ...server, firebase: hosted ?? server.firebase ?? null };
@@ -76,12 +77,19 @@ export async function signIn() {
     const appCheck = session.config.appCheckSiteKey ? import(`${FB}/firebase-app-check.js`).then(({ initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, getLimitedUseToken, onTokenChanged }) => {
       const ac = initializeAppCheck(initializeApp(config, `check-${as ?? "main"}`), { provider: new ReCaptchaEnterpriseProvider(session.config.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
       let current = null;
-      onTokenChanged(ac, t => { current = t?.token ?? null; }, () => {});
+      const failed = e => { session.appCheckError = { code: appCheckCode(e), at: Date.now() }; session.appCheckOk = false; session.track("appcheck_failed", { code: session.appCheckError.code }); };
+      const got = t => { session.appCheckOk = true; session.appCheckError = null; return t; };
+      onTokenChanged(ac, t => { current = t?.token ?? null; if (current) got(current); }, failed);
       session.appCheckNow = () => current;
-      getToken(ac, false).catch(() => {});
-      return async (limited = false) => (await (limited ? getLimitedUseToken(ac) : getToken(ac, false))).token;
-    }).catch(() => null) : null;
-    if (appCheck) session.appCheck = async (limited = false) => { const get = await appCheck; return get ? get(limited) : null; };
+      // A stale token is never sent; asking for a fresh one happens in the background.
+      session.appCheckRefresh = () => getToken(ac, false).then(r => { current = r.token; got(r.token); }).catch(failed);
+      session.appCheckRefresh();
+      return async (limited = false, force = false) => {
+        try { return got((await (limited ? getLimitedUseToken(ac) : getToken(ac, force))).token); }
+        catch (e) { failed(e); throw e; }
+      };
+    }).catch(e => { session.appCheckError = { code: appCheckCode(e), at: Date.now() }; return null; }) : null;
+    if (appCheck) session.appCheck = async (limited = false, force = false) => { const get = await appCheck; return get ? get(limited, force) : null; };
     const auth = getAuth(app);
     // Returning from a Google redirect (used where pop-ups don't work, like some installed apps) — only checked when
     // this tab started one, so ordinary visits don't wait on it.
@@ -176,22 +184,27 @@ export async function api(path, body) {
   const limited = body !== undefined && (path === "/api/price-check"
     || /^\/api\/engagements\/[^/]+\/pay$/.test(path)
     || /^\/api\/pickup\/[^/]+\/collect$/.test(path));
-  // Plain reads (not goals, which can run the model) go out at once; the server checks a token only if one is sent.
+  // Plain reads (not goals, which can run the model) go out at once with the current token, if it's still good.
+  // Everything else waits up to 5 s for one; a browser that can't get one (a content blocker, a private window, the
+  // SDK throttling itself) still sends — the server limits unverified calls and refuses only payments, pickups and
+  // price checks, and says why.
   const plainRead = body === undefined && !/^\/api\/goals(\/|$)/.test(path);
-  if (plainRead) { const t = session.appCheckNow(); if (t) headers["x-firebase-appcheck"] = t; }
-  else if (session.appCheck) {
-    try {
-      const t = await session.appCheck(limited);
-      if (!t && limited) throw new Error("No limited-use token was returned.");
-      if (t) headers["x-firebase-appcheck"] = t;
-    }
-    catch (e) { if (limited) throw new Error("Could not verify this app for the action. Please try again.", { cause: e }); }
-  }
+  const tokenFor = async force => {
+    if (plainRead) { const t = usableToken(session.appCheckNow(), Date.now()); if (!t) session.appCheckRefresh(); return t; }
+    if (!session.appCheck) return null;
+    return Promise.race([session.appCheck(limited, force), new Promise(r => setTimeout(() => r(null), 5000))]).catch(() => null);
+  };
   // A write may change anything a cached read shows — except chat-history syncs and push registration, which don't.
   if (body !== undefined && !/^\/api\/(chats|push\/token)(\/|$)/.test(path)) reads.clear();
-  const res = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; throw e; }
+  const send = async force => {
+    const t = await tokenFor(force);
+    return fetch(path, { method: body === undefined ? "GET" : "POST", headers: t ? { ...headers, "x-firebase-appcheck": t } : headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  };
+  let res = await send(false);
+  let data = await res.json().catch(() => ({}));
+  // Refused by the browser check (before the request was handled, so nothing ran): once more with a fresh token.
+  if (res.status === 401 && data.code === "APP_CHECK" && !plainRead) { res = await send(true); data = await res.json().catch(() => ({})); }
+  if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; e.code = data.code; throw e; }
   return data;
 }
 

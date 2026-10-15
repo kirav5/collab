@@ -25,7 +25,7 @@ async function tx(store, mode, fn) {
     const t = d.transaction(store, mode);
     const s = t.objectStore(store);
     const out = fn(s);
-    t.oncomplete = () => resolve(out?.result ?? out);
+    t.oncomplete = () => resolve(out && "result" in out ? out.result : out);
     t.onerror = () => reject(t.error);
   });
 }
@@ -34,16 +34,17 @@ async function tx(store, mode, fn) {
 let owner = "anon";
 export const setOwner = uid => { owner = uid; };
 const key = id => `${owner}:${id}`;
-const strip = x => { if (!x) return x; const { id, ...rest } = x; return { ...rest, id: id.slice(owner.length + 1) }; };
+// The account is read before any await, so a sign-in change mid-call can't mix two people's rows.
+const strip = (x, account = owner) => { if (!x) return x; const { id, ...rest } = x; return { ...rest, id: id.slice(account.length + 1) }; };
 
 export const local = {
   async all(store) {
-    const rows = await tx(store, "readonly", s => s.getAll());
-    return rows.filter(r => r.id.startsWith(owner + ":")).map(strip);
+    const account = owner, rows = await tx(store, "readonly", s => s.getAll());
+    return rows.filter(r => r.id.startsWith(account + ":")).map(r => strip(r, account));
   },
-  async get(store, id) { return strip(await tx(store, "readonly", s => s.get(key(id)))); },
-  async put(store, value) { await tx(store, "readwrite", s => s.put({ ...value, id: key(value.id) })); return value; },
-  async del(store, id) { await tx(store, "readwrite", s => s.delete(key(id))); },
+  async get(store, id) { const account = owner, k = key(id); return strip(await tx(store, "readonly", s => s.get(k)), account); },
+  async put(store, value) { const k = key(value.id); await tx(store, "readwrite", s => s.put({ ...value, id: k })); return value; },
+  async del(store, id) { const k = key(id); await tx(store, "readwrite", s => s.delete(k)); },
   async clear() { for (const s of ["facts", "sessions", "limits", "meta"]) for (const r of await this.all(s)) await this.del(s, r.id); },
 };
 
