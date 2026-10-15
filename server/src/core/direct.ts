@@ -50,6 +50,39 @@ const CURRENCY: [RegExp, string][] = [[/₹|\brs\.?(?=\s*\d)|\b(inr|rupees?)\b|\
   [/€|\b(eur|euros?)\b/i, "EUR"], [/£|\b(gbp|pounds?)\b/i, "GBP"], [/¥|\b(jpy|yen)\b/i, "JPY"], [/\b(aed|dirhams?)\b/i, "AED"]];
 
 /** The amount and currency a chat message offers. `fallback` applies when no currency is written (e.g. "for 400"). */
+const COUNT_WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, dozen: 12, "a dozen": 12 };
+// Sizes and spans that describe the thing rather than how many: "500 ml bottle", "2 BHK", "in 3 days".
+const MEASURE = /^(ml|l|ltr|litres?|liters?|kg|kgs|g|gm|gms|grams?|cm|mm|m|inch(es)?|ft|feet|gb|tb|mah|w|watts?|v|bhk|years?|yrs?|months?|weeks?|days?|nights?|hours?|hrs?|minutes?|mins?|%|percent|am|pm|rs|rupees?|inr|k|lakhs?|cr)$/i;
+
+/**
+ * How many a typed offer is for: "2 bottles for ₹800" → 2, "a dozen for ₹500" → 12, "3 hours for ₹2,000" → 3 when the
+ * listing is priced per hour. Sizes ("500 ml"), spans ("in 2 days") and prices ("for 500", "$20") aren't counts.
+ * null for one.
+ */
+export function offeredQuantity(text: string, unit: string | null = null): number | null {
+  const t = text.toLowerCase().replace(/(\d),(?=\d)/g, "$1")
+    .replace(/(?:₹|\brs\.?\s*|\binr\s*)\s*\d+(?:\.\d+)?\s*(?:k|thousand|lakhs?|cr|crore)?\b/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:k|thousand|lakhs?|cr|crore)?\s*(?:rs\b\.?|rupees?\b|\/-|inr\b)/g, " ")
+    // other currencies too: "$20", "€30", "20 dollars"
+    .replace(/[$€£¥]\s*\d+(?:\.\d+)?\s*(?:k|thousand)?\b/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:usd|dollars?|eur|euros?|gbp|pounds?|jpy|yen|aed|dirhams?)\b/g, " ");
+  const own = unit ? new RegExp(`^${unit.replace(/s$/, "")}s?$`, "i") : null;
+  for (const m of t.matchAll(/\b(\d{1,3}|two|three|four|five|six|seven|eight|nine|ten|a dozen|dozen)\s*(?:x\s*)?([a-z%]+)?/g)) {
+    const n = /\d/.test(m[1]) ? Number(m[1]) : COUNT_WORDS[m[1]];
+    const next = m[2] ?? "";
+    if (!(n >= 2 && n <= 999)) continue;
+    if (!next) continue; // a bare number ("for 500") is a price, not a count
+    if (MEASURE.test(next) && !(own && own.test(next))) continue;
+    return n;
+  }
+  return null;
+}
+
+/** The typed price is per unit ("₹400 each", "₹400 per bottle", "400 ka ek"), not a total. */
+export const perUnit = (text: string, unit: string | null = null) =>
+  /\b(each|apiece|a piece|per (piece|pc|item|unit|bottle|one|plate|box|pack)|ek ka|har ek)\b|\/(each|pc|piece|unit)\b/i.test(text)
+  || (!!unit && new RegExp(`\\b(per|a|an|\\/)\\s*${unit.replace(/s$/, "")}\\b`, "i").test(text));
+
 /**
  * On a listing that already has a price, a named price is an offer only when the words make one ("I'll buy it for
  * ₹350", "can you do ₹350?", "final ₹380, deal?") — "Is it ₹400?" or "Why ₹400?" stay questions.

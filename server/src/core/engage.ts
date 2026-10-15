@@ -191,11 +191,31 @@ export const isStockQuestion = (q: string) => /\b(in stock|available|availabilit
   || /\b(do|does|did|have|has|got|is|are)\b.*\b(have|got|stock|carry|sell)\b.*\b(today|now|right now|at the moment|currently)\b/i.test(q)
   || /\b(have|got)\s+(it|any|one|some|them)\b/i.test(q);
 
+/** "Last price?", "what's your floor?", "kam se kam kitna?" — asking for the limit the agent never says. */
+export const isLimitProbe = (q: string) =>
+  /\b(lowest|minimum|floor|least|bottom|rock[- ]bottom|last|final)\b[^?]{0,30}\b(price|rate|amount|offer|accept|take|go)\b/i.test(q)
+  || /\b(last price|final price|best you can do|how low can you go)\b/i.test(q)
+  || /\b(kam se kam|aakhri|last kitna|final kitna)\b/i.test(q);
+/** Asking for a phone number, e-mail, WhatsApp or home address — never given out by an agent. */
+export const isContactRequest = (q: string) =>
+  /\b(phone|mobile|cell|whatsapp|contact)\s*(number|no\.?|details?)?\b|\b(e-?mail( id| address)?)\b|\bhome address\b|\bwhere (do|does) (you|he|she|the owner) live\b|\bnumber (do|de|dedo|bhejo)\b/i.test(q)
+  && !/\b(order|invoice|gst|tracking|model|serial|size|part) number\b/i.test(q);
+
 async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q: QA): Promise<{ text: string; src: QA["source"]; review: boolean; byModel: boolean } | null> {
   const owner = uidOf(e, s), asker = uidOf(e, other(s));
+  // A paused owner's agent answers nobody, not even from the ledger or with a standard reply.
+  const paused = owner ? !!((await db.get(PROFILES, owner)) as { paused?: boolean } | null)?.paused : false;
+  // Standard replies that never need the owner: the limit stays private (the listed price and an invitation to offer
+  // are said instead), and contact details aren't handed out (the deal's pass handles the handover).
+  if (!paused && isContactRequest(q.question))
+    return { text: "Phone numbers, e-mail and home addresses aren't shared through the agent. Once you both agree, the app gives you a pass for the handover.", src: "listing", review: false, byModel: false };
+  if (!paused && s === "provider" && isLimitProbe(q.question)) {
+    const listed = e.offer.price != null ? moneyText({ amount: e.offer.price, currency: currencyOf(e), period: e.offer.unit }) : null;
+    return { text: listed ? `It's listed at ${listed}. Make an offer and I'll check it with ${e.provider.name}.` : `Tell me what you'd like to pay and I'll check it with ${e.provider.name}.`, src: "listing", review: false, byModel: false };
+  }
   // Stock and slot questions are answered from the ledger, never from a cached reply or the model: a count only
   // when it's confirmed, "needs to be confirmed" when it's stale, "isn't tracked" when there's no ledger.
-  if (s === "provider" && e.offer.factId && isStockQuestion(q.question)) {
+  if (!paused && s === "provider" && e.offer.factId && isStockQuestion(q.question)) {
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
   }
@@ -528,14 +548,24 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
  * A deal one person offers in a direct chat (no listed price): it counts as their confirmation, and the other person
  * is asked to confirm. Both confirming makes it agreed, with a receipt, like a negotiated deal.
  */
-export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null, said = text ?? "") {
+/**
+ * `count`: how many the offer is for (2 or more); `isTotal`: the price named is for all of them, not each. A total
+ * that doesn't divide evenly is split over two lines so the cart adds up to exactly what was said.
+ */
+export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null, said = text ?? "", count: number | null = null, isTotal = true) {
   // A shop with no listing used to seal its shop name as the item. Seal the actual offer shown for confirmation.
   if (!e.offer.factId && said.trim()) e.offer.title = said.trim().slice(0, 160);
   e.seller = sellerFrom(said, s) ?? e.seller ?? "provider";
   // A chat that didn't start from a listing names its item from the offer, so the cart, receipt and pickup pass say
   // what is being handed over (not the person's name).
   if (!e.offer.factId || e.offer.price == null) e.offer.title = dealItem(said) ?? e.offer.title;
-  const p = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
+  const p: Proposal = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
+  if (count && count > 1) {
+    const total = isTotal ? price : price * count, unit = Math.floor(total / count);
+    p.terms = { quantity: count };
+    if (total % count === 0) p.price = unit;
+    else { p.price = unit; p.items = [{ id: "item_1", title: e.offer.title, quantity: count - 1, unitPrice: unit }, { id: "item_2", title: e.offer.title, quantity: 1, unitPrice: total - unit * (count - 1) }]; }
+  }
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
   e.negotiation.confirmed = { requester: s === "requester", provider: s === "provider" };
@@ -544,7 +574,10 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   const over = await budgetCheck(db, e, s);
   if (over) throw new Refused(over);
   if (text) say(e, s, text, "owner");
-  say(e, "system", `Deal offered at ${moneyText({ amount: price, currency: currencyOf(e), period: e.offer.unit })}. Nothing is final until both confirm.`);
+  const n = p.terms.quantity ?? 1, all = p.items?.length ? p.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) : p.price * n;
+  say(e, "system", n > 1
+    ? `Deal offered: ${n} for ${moneyText({ amount: all, currency: currencyOf(e) })} (${moneyText({ amount: Math.round((all / n) * 100) / 100, currency: currencyOf(e) })} each). Nothing is final until both confirm.`
+    : `Deal offered at ${moneyText({ amount: p.price, currency: currencyOf(e), period: e.offer.unit })}. Nothing is final until both confirm.`);
   const o = other(s);
   // An earlier offer still waiting on them is replaced by this one; questions they haven't answered stay.
   const stale: string[] = [];

@@ -56,7 +56,7 @@ test("QR: a shop's card suggests stock, price and pickup; a person's suggests qu
   assert.equal(shop.offers, 1);
   assert.match(shop.suggestions[0].text, /in stock\?$/);
   assert.match(shop.suggestions[1].text, /best price/);
-  assert.match(shop.suggestions[2].text, /pick it up/);
+  assert.match(shop.suggestions[2].text, /collect today/);
   const card = await (await fetch(`${B}/a2a/steel-shop/.well-known/agent-card.json`)).json();
   const skill = card.skills.find((s: any) => s.id === `offer-${f.id}`);
   assert.ok(skill, "one skill per offering");
@@ -229,4 +229,31 @@ test("a changed price replaces the pending one (the stale confirmation is refuse
   e = await as("cp-b", `/api/engagements/${e.id}`);
   assert.equal(e.phase, "agreed"); assert.equal(e.negotiation.deal.price, 420);
   assert.equal(e.payment.cart.total.value, 420, "the cart is for the agreed price");
+});
+
+test("'2 bottles for ₹800' is ₹800 for two, not ₹800 each: the cart, the stock hold and the uneven case add up", async () => {
+  await as("q-b", "/api/me", { handle: "q-b", name: "Q Buyer", areaName: "Indiranagar" });
+  await as("q-s", "/api/me", { handle: "q-s", name: "Q Shop", areaName: "Indiranagar" });
+  const listing = await as("q-s", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹450 each" });
+  const stock = await as("q-s", "/api/resources", { factId: listing.id, type: "quantity", onHand: 5 });
+  let e = await as("q-b", "/api/people/q-s/ask", { text: "Is it available?", offerFactId: listing.id });
+  e = await as("q-b", `/api/engagements/${e.id}/run`, {});
+  e = await as("q-b", `/api/engagements/${e.id}/ask`, { text: "I'll buy 2 bottles for ₹800" });
+  assert.equal(e.negotiation.deal.price, 400); assert.equal(e.negotiation.deal.terms.quantity, 2);
+  assert.match(e.events.at(-1).text, /2 for ₹800 \(₹400 each\)/);
+  await as("q-s", `/api/inbox/${(await inboxFor("q-s", e.id, "confirm")).id}`, { confirm: true });
+  e = await as("q-b", `/api/engagements/${e.id}`);
+  assert.equal(e.payment.cart.total.value, 800, "the cart is ₹800 in all");
+  assert.equal(e.reservation.qty, 2, "two units held");
+  const [ledger] = (await as("q-s", "/api/resources")).filter((r: any) => r.id === stock.id);
+  assert.equal(ledger.holds.filter((h: any) => h.state === "held").reduce((n: number, h: any) => n + h.qty, 0), 2);
+  // ₹1,000 for 3 doesn't divide: two lines that add up to exactly ₹1,000.
+  let u = await as("q-b", "/api/people/q-s/ask", { text: "Any more?", offerFactId: listing.id });
+  u = await as("q-b", `/api/engagements/${u.id}/run`, {});
+  u = await as("q-b", `/api/engagements/${u.id}/ask`, { text: "I'll take 3 for ₹1,000" });
+  assert.deepEqual(u.negotiation.deal.items.map((l: any) => [l.quantity, l.unitPrice]), [[2, 333], [1, 334]]);
+  await as("q-s", `/api/inbox/${(await inboxFor("q-s", u.id, "confirm")).id}`, { confirm: true });
+  u = await as("q-b", `/api/engagements/${u.id}`);
+  assert.equal(u.payment.cart.total.value, 1000);
+  assert.equal(u.reservation.qty, 3);
 });

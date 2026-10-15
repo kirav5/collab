@@ -39,7 +39,7 @@ function storeCard(c) {
     ${offers.length ? `<div class="stack" style="gap:4px">${offers.slice(0, 5).map(f => `<div class="row small"><span>${esc(f.offer.title)}</span><b class="end">${money(f.offer.price.amount, f.offer.price.period)}</b></div>`).join("")}</div>` : ""}
     ${!offers.length && notes.length ? `<span class="small muted">${esc(notes[0].text.slice(0, 160))}</span>` : ""}
     <span class="small faint">${offers.length
-      ? `Tap a question or type your own. ${first}'s agent answers from what they share and asks them the rest — no queue.`
+      ? `Tap a question or type your own. ${esc(p.name)}'s agent answers from what they share and asks them the rest — no queue.`
       : `${first} hasn't listed anything for sale. Their agent answers from what they share and passes anything else to them.`}</span>
     <div class="row">${quick.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}">${esc(q)}</button>`).join("")}</div>
   </div>`;
@@ -188,10 +188,10 @@ function statusLine(e, mine, them, items, talking) {
   const first = them.name.split(" ")[0];
   const mineOffers = mine === "requester" ? e.negotiation.requester : e.negotiation.provider;
   const theirOffers = mine === "requester" ? e.negotiation.provider : e.negotiation.requester;
-  if (e.phase === "agreed") return `Deal agreed at <b>${money(e.negotiation.deal.price, e.offer.unit, e.offer.currency)}</b>.`;
+  if (e.phase === "agreed") return `Deal agreed at <b>${dealAmount(e)}</b>.`;
   if (e.phase === "closed" || e.phase === "declined") return esc(e.events.filter(x => x.who !== "system").at(-1)?.text ?? "This conversation ended.");
   if (items.length) return "Your agent needs you — see below.";
-  if (e.phase === "deal") return `Deal at <b>${money(e.negotiation.deal.price, e.offer.unit, e.offer.currency)}</b> — waiting for ${esc(first)} to confirm.`;
+  if (e.phase === "deal") return `Deal at <b>${dealAmount(e)}</b> — waiting for ${esc(first)} to confirm.`;
   if (theirOffers.length || mineOffers.length) {
     const t = theirOffers.at(-1), m = mineOffers.at(-1);
     return `${talking ? "Negotiating · " : ""}${m ? `you ${money(m.price, e.offer.unit, e.offer.currency)}` : ""}${m && t ? " · " : ""}${t ? `${esc(first)} ${money(t.price, e.offer.unit, e.offer.currency)}` : ""}`;
@@ -214,6 +214,15 @@ function priceItem(e) {
   const asked = (e.brief?.title ?? "").replace(/^(do you have|i want|looking for|need)\s+(a|an|the)?\s*/i, "").replace(/[?.!]+$/, "");
   const listed = (e.offer.title ?? "").split(" · ")[0];
   return [asked, listed].filter(Boolean).join(" — ").slice(0, 160) || e.title;
+}
+
+/** "₹800 for 2 (₹400 each)" for a deal on several; the price and its unit for one. */
+export function dealAmount(e) {
+  const d = e.negotiation.deal, n = d?.terms?.quantity > 1 ? d.terms.quantity : 1;
+  if (!d) return "";
+  if (n === 1 && !d.items?.length) return money(d.price, e.offer.unit, e.offer.currency);
+  const total = d.items?.length ? d.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) : d.price * n;
+  return `${money(total, null, e.offer.currency)} for ${n} (${money(Math.round((total / n) * 100) / 100, null, e.offer.currency)} each)`;
 }
 
 /** The pass a paid deal gets, by what changes hands (the server decides the same way: core/pickup.ts passKind). */
@@ -288,7 +297,7 @@ function reservationLine(e, mine, buyer) {
 function dealBlock(e, mine) {
   const p = e.payment, seller = e.seller ?? "provider", buyer = seller === "requester" ? "provider" : "requester";
   const them = esc((mine === "requester" ? e.provider : e.requester).name.split(" ")[0]);
-  const amount = money(e.negotiation.deal.price, e.offer.unit, e.offer.currency);
+  const amount = dealAmount(e);
   const id = esc(e.id);
   // AP2: the seller's agent signed a cart for the agreed terms; the buyer pays against it (test mode: no money moves).
   // A payment settles whether it went ahead — nobody is asked separately.
@@ -355,8 +364,8 @@ function inboxBlock(i) {
   if (i.kind === "confirm") {
     const e = live.engagements.get(i.engagementId);
     const deal = e?.negotiation.deal;
-    return box("Confirm the deal?", `<span class="small">${deal ? `<b>${money(deal.price, e.offer.unit, e.offer.currency)}</b> for “${esc(e.title)}”.` : ""} Nothing is final until both of you confirm.</span>
-      <div class="row"><button class="btn accent compact" data-act="inbox-confirm" data-id="${esc(i.id)}">Confirm</button><button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`);
+    return box("Confirm the deal?", `<span class="small">${deal ? `<b>${dealAmount(e)}</b> for “${esc(e.offer?.title?.split(" · ")[0] || e.title)}”.` : ""} Nothing is final until both of you confirm.</span>
+      <div class="row"><button class="btn accent compact" data-act="inbox-confirm" data-id="${esc(i.id)}">Confirm</button><button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">${e?.negotiation.chatOffer ? "Say no" : "Walk away"}</button></div>`);
   }
   return "";
 }

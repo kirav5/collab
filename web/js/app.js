@@ -22,6 +22,7 @@ async function setup() {
   const google = session.user && !session.user.isAnonymous;
   const suggest = (session.user?.email ?? "").split("@")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24);
   return new Promise(resolve => {
+    timing("start_screen");
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
       ${label("Collab", "sq ink")}
       <h1 class="headline">Your agent. <span class="soft">Your private context is never shared.</span></h1>
@@ -263,6 +264,20 @@ async function openDirect(handle) {
   }
   S.current = cur.id;
   openScreen("chat");
+  timing("qr_card");
+}
+
+/**
+ * Load times from real devices: how long after the page started the start screen, the app or a QR card showed.
+ * Sent to Analytics once each per visit (event "load_timing", milliseconds), so slow phones and networks show up.
+ */
+const timed = new Set();
+function timing(what) {
+  if (timed.has(what)) return;
+  timed.add(what);
+  const ms = Math.round(performance.now());
+  try { performance.mark(`collab:${what}`); } catch {}
+  setTimeout(() => session.track("load_timing", { what, ms, first_visit: !!session.fresh, installed: standalone() }), 0);
 }
 
 /** In a direct chat, what you type goes to their agent (the first message opens the conversation). */
@@ -667,6 +682,7 @@ if (session.uid) {
 if (!S.profile) await setup();
 setOwner(session.uid);
 await boot();
+timing("app");
 // Links from notifications, the installed app's shortcuts and QR codes open the right place.
 {
   const qp = new URLSearchParams(location.search);

@@ -45,7 +45,7 @@ import { appCheckDecision, replayProtected, appCheckRequired } from "./core/app-
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
-import { offeredMoney, explicitOffer } from "./core/direct.ts";
+import { offeredMoney, explicitOffer, offeredQuantity, perUnit } from "./core/direct.ts";
 import { moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
@@ -392,7 +392,7 @@ app.post("/api/engagements/:id/ask", route(async req => {
     if (e.offer.currency && e.offer.currency !== offered.currency)
       throw new HttpError(400, `This conversation is in ${e.offer.currency}; offer in ${e.offer.currency}.`, "UNSUPPORTED_CURRENCY");
     e.offer.currency = offered.currency;
-    await offerDeal(db, e, side, offered.amount, q);
+    await offerDeal(db, e, side, offered.amount, q, q, offeredQuantity(q, e.offer.unit), !perUnit(q, e.offer.unit));
     return load(db, e.id);
   }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });

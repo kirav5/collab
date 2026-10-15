@@ -34,7 +34,7 @@ export function forOffer(f: Fact, tracked: Tracked = null): Suggestion[] {
     case "goods": case "food": case "supply": return [
       s("In stock?", k === "food" ? `Can you make ${it} for tomorrow?` : `Do you have ${it} in stock?`),
       price(`What's your best price for ${it}?`, `How much is ${it}?`),
-      k === "supply" ? s("Lead time", `What's your lead time for ${it}, and do you give a GST invoice?`) : s("Pick up", `Can I order ${it} now and pick it up today?`)];
+      k === "supply" ? s("Lead time", `What's your lead time for ${it}, and do you give a GST invoice?`) : s("Collect", `Can I order now and collect today?`)];
     case "vehicle": return [s("Available?", `Is the ${it} still available?`), price(`What's your best price for the ${it}?`, `How much is the ${it}?`),
       s("See it", "Can I see it this weekend? Are the RC and insurance in order?")];
     case "lesson": case "service": case "pet": return [

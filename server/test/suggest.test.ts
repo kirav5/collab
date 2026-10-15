@@ -23,7 +23,7 @@ test("item names read naturally: plain words lower-cased, brands and sizes kept"
 
 test("a shop with tracked stock is asked about stock, price and pickup; a tutor about times, rate and a trial", () => {
   const bottles = forOffer(offer("f1", "goods", "Water Bottles · items for sale"), "quantity").map(s => s.text);
-  assert.deepEqual(bottles, ["Do you have water bottles in stock?", "What's your best price for water bottles?", "Can I order water bottles now and pick it up today?"]);
+  assert.deepEqual(bottles, ["Do you have water bottles in stock?", "What's your best price for water bottles?", "Can I order now and collect today?"]);
   const guitar = forOffer(offer("f2", "lessons", "Guitar lessons"), "slots").map(s => s.text);
   assert.equal(guitar[0], "What times are free this week for guitar lessons?");
   assert.equal(guitar[2], "Can I book a trial session?");

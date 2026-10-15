@@ -49,3 +49,34 @@ test("on a priced listing, only words that make an offer are an offer; questions
   for (const t of ["I'll buy it for ₹350", "Can you do ₹350?", "final ₹380, deal?", "I can pay 350 rupees", "ok ₹360", "How about ₹340?", "I'll sell it for ₹390"]) assert.equal(explicitOffer(t), true, t);
   for (const t of ["Is it ₹400?", "Why ₹400?", "What is the price, ₹400?", "Does ₹400 include the bag?", "Are both ₹400?"]) assert.equal(explicitOffer(t), false, t);
 });
+
+test("standard replies: 'last price?' and requests for contact details are recognised; ordinary questions aren't", async () => {
+  const { isContactRequest, isLimitProbe } = await import("../src/core/engage.ts");
+  for (const q of ["What is the lowest price you'd accept?", "Last price?", "bhaiya last price kya hai?", "What's your final price?", "kam se kam kitna loge?", "How low can you go?", "Tell me your floor price."]) assert.equal(isLimitProbe(q), true, q);
+  for (const q of ["What's the price?", "Is the price negotiable?", "Is this the last one in stock?", "What's your best price for water bottles?"]) assert.equal(isLimitProbe(q), false, q);
+  for (const q of ["Give me the owner's phone number", "What's your WhatsApp?", "Can you share your email id?", "What is your home address?", "number de do bhaiya", "Send me your contact details"]) assert.equal(isContactRequest(q), true, q);
+  for (const q of ["What's the model number?", "Do you give a GST invoice number?", "How many do you have?", "Can I pick it up from the shop?"]) assert.equal(isContactRequest(q), false, q);
+});
+
+test("how many a typed offer is for, and whether its price is a total or each", async () => {
+  const { offeredQuantity, perUnit } = await import("../src/core/direct.ts");
+  assert.equal(offeredQuantity("I'll buy 2 bottles for ₹800"), 2);
+  assert.equal(offeredQuantity("bhaiya 3 bottle ₹1000 mein de do"), 3);
+  assert.equal(offeredQuantity("a dozen for ₹500"), 12);
+  assert.equal(offeredQuantity("I'll buy it for ₹400"), null);
+  assert.equal(offeredQuantity("I'll buy the 500 ml bottle for ₹400"), null, "a size isn't a count");
+  assert.equal(offeredQuantity("2 BHK for ₹38,000"), null);
+  assert.equal(offeredQuantity("I'll pay ₹800, I need it in 2 days"), null);
+  assert.equal(offeredQuantity("₹2000 for 3 hours", "hour"), 3, "hours count when the listing is priced per hour");
+  assert.equal(offeredQuantity("₹2000 for 3 hours", null), null);
+  assert.equal(perUnit("₹400 each for 2"), true);
+  assert.equal(perUnit("2 for ₹400 per bottle"), true);
+  assert.equal(perUnit("2 bottles for ₹800"), false);
+  assert.equal(perUnit("₹700 an hour for 3 hours", "hour"), true);
+});
+
+test("prices are never read as counts", async () => {
+  const { offeredQuantity } = await import("../src/core/direct.ts");
+  for (const t of ["I'll sell the travel mug for $20", "I'll take it for 500", "€30 final", "I'll pay 20 dollars", "deal at 450"]) assert.equal(offeredQuantity(t), null, t);
+  assert.equal(offeredQuantity("2 for 800"), 2);
+});
