@@ -187,7 +187,8 @@ export async function api(path, body) {
     }
     catch (e) { if (limited) throw new Error("Could not verify this app for the action. Please try again.", { cause: e }); }
   }
-  if (body !== undefined) reads.clear(); // a write may change anything a cached read shows
+  // A write may change anything a cached read shows — except chat-history syncs and push registration, which don't.
+  if (body !== undefined && !/^\/api\/(chats|push\/token)(\/|$)/.test(path)) reads.clear();
   const res = await fetch(path, { method: body === undefined ? "GET" : "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; throw e; }

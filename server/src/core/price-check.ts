@@ -59,7 +59,7 @@ export function priceEvidence(g: GroundedResult, per = "item") {
   const prices = items.map(i => i.price).sort((a, b) => a - b);
   return { status: comparable ? "evidence" : "insufficient_evidence", currency: "INR", items,
     low: comparable ? prices[0] : null, high: comparable ? prices.at(-1) : null,
-    typical: comparable ? (prices[Math.floor((prices.length - 1) / 2)] + prices[Math.ceil((prices.length - 1) / 2)]) / 2 : null,
+    typical: comparable ? Math.round((prices[Math.floor((prices.length - 1) / 2)] + prices[Math.ceil((prices.length - 1) / 2)]) / 2) : null,
     unit: comparable ? items[0].unit : null, searchEntryPoint: g.searchEntryPoint,
     sources: g.sources.filter(s => /^https:\/\//.test(s.url)),
     note: "Asking prices found on the web — not a guaranteed fair price or a completed sale. Compare like with like (size, condition, hours, quantity)." };

@@ -174,12 +174,22 @@ async function limitFor(item) {
   const e = live.engagements.get(item.engagementId);
   if (!e) return null;
   const key = item.side === "requester" ? `brief:${e.briefId}` : `fact:${e.offer.factId}`;
-  const ls = await api("/api/limits").catch(() => []);
+  const ls = await cached("/api/limits").catch(() => []);
   return ls.find(l => l.key === key)?.mandate ?? null;
 }
 
-/** Moves with a private limit happen on their own while this page is open; questions get a draft from private notes. */
+/**
+ * Moves with a private limit happen on their own while this page is open; questions get a draft from private notes.
+ * Runs after live updates — one run at a time (an update during a run asks for one more), reading notes and limits
+ * once per run however many items are waiting.
+ */
+let working = false, again = false;
 async function work() {
+  if (working) { again = true; return; }
+  working = true;
+  try { do { again = false; await workOnce(); } while (again); } finally { working = false; }
+}
+async function workOnce() {
   for (const item of live.inbox) {
     if (inflight.has(item.id) || item.owner !== session.uid) continue;
     if (item.kind === "move" && !item.question) {
@@ -189,7 +199,7 @@ async function work() {
       api(`/api/inbox/${item.id}`, { mandate }).then(poke).catch(() => {}).finally(() => setTimeout(() => inflight.delete(item.id), 5000));
     } else if (item.kind === "answer" && !drafts.has(item.id)) {
       inflight.add(item.id);
-      const facts = (await api("/api/facts").catch(() => [])).filter(f => f.tier === "private");
+      const facts = (await cached("/api/facts").catch(() => [])).filter(f => f.tier === "private");
       const notes = relevant(facts, item.question ?? "");
       think(item.question, notes, item.side).then(a => { drafts.set(item.id, a && !a.limitation ? { text: a.text, notes: notes.map(n => n.text), on: a.on } : null); for (const fn of live.listeners) fn(); })
         .catch(() => drafts.set(item.id, null)).finally(() => inflight.delete(item.id));
