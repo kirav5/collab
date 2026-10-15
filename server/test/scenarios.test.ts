@@ -240,6 +240,8 @@ test("'2 bottles for ₹800' is ₹800 for two, not ₹800 each: the cart, the s
   e = await as("q-b", `/api/engagements/${e.id}/run`, {});
   e = await as("q-b", `/api/engagements/${e.id}/ask`, { text: "I'll buy 2 bottles for ₹800" });
   assert.equal(e.negotiation.deal.price, 400); assert.equal(e.negotiation.deal.terms.quantity, 2);
+  const same = await as("q-b", `/api/engagements/${e.id}/ask`, { text: "So I'll buy 2 bottles for ₹800, ok?" });
+  assert.equal(same.negotiation.deal.id, e.negotiation.deal.id, "the same offer again changes nothing");
   assert.match(e.events.at(-1).text, /2 for ₹800 \(₹400 each\)/);
   await as("q-s", `/api/inbox/${(await inboxFor("q-s", e.id, "confirm")).id}`, { confirm: true });
   e = await as("q-b", `/api/engagements/${e.id}`);

@@ -385,14 +385,21 @@ app.post("/api/engagements/:id/ask", route(async req => {
   // same price again is just chat. A replaced offer's pending confirmation goes stale (offerDeal).
   const canOffer = e.phase === "deal" ? explicitOffer(q) : e.offer.price == null || explicitOffer(q);
   let offered = canOffer ? offeredMoney(q, e.offer.currency ?? policy().money.defaultCurrency) : null;
-  if (offered && e.phase === "deal" && offered.amount === e.negotiation.deal?.price) offered = null;
+  const count = offeredQuantity(q, e.offer.unit), isTotal = !perUnit(q, e.offer.unit);
+  if (offered && e.phase === "deal" && e.negotiation.deal) {
+    // The same offer again (same number of items, same total) is chat; a different count or total replaces it.
+    const n = count ?? 1, total = isTotal || n === 1 ? offered.amount : offered.amount * n;
+    const pending = e.negotiation.deal, pn = pending.terms?.quantity > 1 ? pending.terms.quantity : 1;
+    const ptotal = pending.items?.length ? pending.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) : pending.price * pn;
+    if (n === pn && total === ptotal) offered = null;
+  }
   if (offered) {
     if (!policy().money.currencies.includes(offered.currency))
       throw new HttpError(400, `Payments in ${offered.currency} aren't supported yet — use ${policy().money.currencies.join(" or ")}.`, "UNSUPPORTED_CURRENCY");
     if (e.offer.currency && e.offer.currency !== offered.currency)
       throw new HttpError(400, `This conversation is in ${e.offer.currency}; offer in ${e.offer.currency}.`, "UNSUPPORTED_CURRENCY");
     e.offer.currency = offered.currency;
-    await offerDeal(db, e, side, offered.amount, q, q, offeredQuantity(q, e.offer.unit), !perUnit(q, e.offer.unit));
+    await offerDeal(db, e, side, offered.amount, q, q, count, isTotal);
     return load(db, e.id);
   }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });
