@@ -46,7 +46,7 @@ import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
 import { offeredMoney, explicitOffer, offeredQuantity, perUnit } from "./core/direct.ts";
-import { moneyText } from "./market/types.ts";
+import { currencyOf, moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
@@ -952,7 +952,23 @@ app.post("/api/engagements/:id/paid-outside", route(async req => {
   e.payment = { ...e.payment, status: "outside", by: side, paidAt: now() };
   (e.outcome ??= {})[side] = "happened";
   e.events.push({ at: now(), who: side, text: "Settled outside the app (cash or UPI).", by: "owner" });
+  // Paid is paid, however it was paid: the held units leave the seller's stock, as with an in-app payment. A hold that
+  // lapsed meanwhile is taken again if the units are still there; if not, both sides are told.
+  if (e.reservation && ["held", "released"].includes(e.reservation.state) && e.reservation.qty > 0) {
+    const r = e.reservation;
+    try {
+      let holdId = r.holdId;
+      if (r.state !== "held" || !holdId || (r.expiresAt ?? 0) <= now()) holdId = (await holdResource(db, r.resourceId, { holder: e.requester.uid ?? "", engagementId: e.id, qty: r.qty, ttlSec: 300 }, now())).id;
+      await commitResource(db, r.resourceId, holdId, now());
+      e.reservation = { ...r, holdId, state: "committed" };
+    } catch (err) {
+      e.reservation = { ...r, state: "unavailable", reason: (err as Error).message };
+      e.events.push({ at: now(), who: "system", text: "Paid, but the stock count couldn't be updated — the seller should check how many are left.", by: "rules" });
+      log.warn("stock not committed after an outside payment", { id: e.id, error: String(err).slice(0, 160) });
+    }
+  }
   await saveEngagement(db, e);
+  event("paid", { currency: currencyOf(e), amount: e.payment.cart?.total?.value ?? e.negotiation.deal?.price ?? 0, instrument: "outside" });
   return e;
 }));
 app.post("/api/engagements/:id/outcome", route(async req => {

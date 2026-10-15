@@ -125,8 +125,11 @@ async function agreed(price: number) {
 
 test("paid outside the app (cash/UPI): the buyer still gets a pass, it says who marked it, and the shop scans it once", async () => {
   const e = await agreed(380);
+  const before = (await as("shop", "/api/resources")).find((r: any) => r.factId === shopFact).onHand;
   const settled = await as("buyer", `/api/engagements/${e.id}/paid-outside`, {});
   assert.equal(settled.payment.status, "outside");
+  assert.equal(settled.reservation.state, "committed", "paid in cash: the unit is sold, not just held");
+  assert.equal((await as("shop", "/api/resources")).find((r: any) => r.factId === shopFact).onHand, before - 1, "it left the stock");
   const pass = await as("buyer", `/api/engagements/${e.id}/pickup`);
   assert.equal(pass.kind, "pickup"); assert.equal(pass.payment, "outside"); assert.equal(pass.markedBy, "buyer");
   const code = pass.path.split(".html#")[1].split(".")[1];
