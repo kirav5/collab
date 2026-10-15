@@ -36,7 +36,7 @@ export function forOffer(f: Fact, tracked: Tracked = null): Suggestion[] {
       price(`What's your best price for ${it}?`, `How much is ${it}?`),
       k === "supply" ? s("Lead time", `What's your lead time for ${it}, and do you give a GST invoice?`) : s("Collect", `Can I order now and collect today?`)];
     case "vehicle": return [s("Available?", `Is the ${it} still available?`), price(`What's your best price for the ${it}?`, `How much is the ${it}?`),
-      s("See it", "Can I see it this weekend? Are the RC and insurance in order?")];
+      s("Papers", "Are the RC and insurance in order?")];
     case "lesson": case "service": case "pet": return [
       s("When free?", tracked === "slots" ? `What times are free this week for ${it}?` : `Are you free this week for ${it}?`),
       price(`What's your best rate for ${it}?`, `What do you charge for ${it}?`),
@@ -44,7 +44,8 @@ export function forOffer(f: Fact, tracked: Tracked = null): Suggestion[] {
     case "rent": case "sale": case "stay": return [
       s("Available?", k === "stay" ? `Is ${it} free this weekend?` : `Is ${it} still available?`),
       price(k === "rent" ? "Is the rent negotiable?" : `What's your best price for ${it}?`, `What's the price for ${it}?`),
-      s("Visit", "Can I visit this weekend?")];
+      // (Visiting is the card's main button, so the third question is about what it costs to live there or own it.)
+      k === "rent" ? s("Deposit", "What's the deposit and the monthly maintenance?") : k === "sale" ? s("Papers", "Are the papers clear for registration?") : s("Included", "What's included, and are there extra charges?")];
     case "ride": return [s("Pick up?", "Can you pick me up this evening?"), price("Is the fare negotiable?", "What's the fare?"), s("Book", "Can I book a ride for tomorrow morning?")];
     case "job": return [s("Open?", `Is the ${it} position still open?`), price("What's the salary range?", "What's the salary range?"), s("Process", "What's the interview process?")];
     case "freight": return [s("Vehicle?", "Is a vehicle free this week?"), price("Is the rate per trip negotiable?", "What's the rate per trip?"), s("Insurance", "Is transit insurance included?")];
