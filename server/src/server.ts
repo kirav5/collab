@@ -28,10 +28,11 @@ import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
 import { getSafe } from "./a2a/webhooks.ts";
-import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock } from "./core/resources.ts";
+import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
+import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
 import { turnQueue } from "./core/queue.ts";
@@ -342,7 +343,8 @@ app.get("/api/people/:handle", route(async req => {
   const facts = all.filter(f => f.tier === "public").map(publicFact);
   const tracked = Object.fromEntries(resources.filter(r => r.factId).map(r => [r.factId!, r.type])) as Record<string, Tracked>;
   return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: record, facts,
-    offers: facts.filter(f => f.offer).length, suggestions: suggestionsFor(p.name, facts as Fact[], tracked), agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
+    offers: facts.filter(f => f.offer).length, suggestions: suggestionsFor(p.name, facts as Fact[], tracked),
+    shop: storefront(all, resources, now(), !!p.paused), paused: !!p.paused, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
 }));
 // Direct: a QR code (or a link) opens a conversation with one person's or shop's agent — no search. Questions go over
 // A2A like any engagement; their agent answers from what they share and can quote, negotiate and close.
@@ -356,19 +358,61 @@ app.post("/api/people/:handle/ask", route(async req => {
   if (t.length < 2) throw new HttpError(400, "Ask something.");
   // The offering this is about: named, or the only match. Otherwise no price yet — the shop's agent asks which.
   const f = (await chooseOffering(db, p.uid, typeof req.body?.offerFactId === "string" ? req.body.offerFactId : null, t)).fact;
+  const { e, brief } = await directConversation(me_, p, f, t, "question");
+  e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };
+  await saveEngagement(db, e);
+  return e;
+}));
+
+/** A conversation opened directly with one person's agent (QR, link or their card), with its own goal. */
+async function directConversation(me_: Profile, p: Profile, f: Fact | null, t: string, via: "question" | "order") {
   const questions = (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
   const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length ? questions : [t.slice(0, 160)] };
   const e = fresh({ briefId: null, brief, requester: { uid: me_.uid, handle: me_.handle, name: me_.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
     offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
   e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
-  e.events.push({ at: now(), who: "system", text: `You asked ${p.name}'s agent directly.` });
+  e.events.push({ at: now(), who: "system", text: via === "order" ? `You ordered from ${p.name}'s card.` : `You asked ${p.name}'s agent directly.` });
   // A direct question is its own goal: information until a price is involved.
-  const goal = await createGoal(db, req.uid, t, f?.offer ? "purchase" : "information", null, now());
-  e.goalId = goal.id; await linkTask(db, goal.id, req.uid, e.id, now());
-  event("agents_contacted", { category: e.offer.category ?? "none", via: "qr" });
-  e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };
-  await saveEngagement(db, e);
-  return e;
+  const goal = await createGoal(db, me_.uid, t, f?.offer ? "purchase" : "information", null, now());
+  e.goalId = goal.id; await linkTask(db, goal.id, me_.uid, e.id, now());
+  event("agents_contacted", { category: e.offer.category ?? "none", via: via === "order" ? "card" : "qr" });
+  return { e, brief };
+}
+
+// Ordering from someone's card: buy a number of items, book a free time, or offer a price — one step. The seller
+// confirms (nothing is final until both do); stock and slots are checked now and held when they confirm.
+app.post("/api/people/:handle/order", route(async req => {
+  const me_ = await me(req.uid);
+  const p = await byHandle(db, String(req.params.handle));
+  if (!p) throw new HttpError(404, "no one by that handle");
+  if (p.uid === req.uid) throw new HttpError(400, "that's you");
+  if (p.paused) throw new HttpError(409, `${p.name} isn't taking requests right now.`, "PAUSED");
+  await spend(req.uid, 2);
+  const f = (await db.get(FACTS, text(req.body?.offerFactId, 60))) as Fact | null;
+  if (!f || f.owner !== p.uid || f.tier !== "public" || !f.offer || f.offer.status === "sold") throw new HttpError(404, "That isn't on offer any more.");
+  const quantity = Number(req.body?.quantity ?? 1);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) throw new HttpError(400, "Choose how many: 1 to 99.");
+  const listed = f.offer.price?.amount ?? null;
+  const each = req.body?.price == null ? listed : Number(req.body.price);
+  if (each == null || !Number.isFinite(each) || each <= 0 || each > 1e9) throw new HttpError(400, "Name a price.");
+  const r = await resourceFor(db, f.id), t = now();
+  if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity)
+    throw new HttpError(409, availableIn(r, t) ? `Only ${availableIn(r, t)} left.` : "Out of stock right now.", "CAPACITY_UNAVAILABLE");
+  let slotLabel: string | null = null, slotId: string | null = null;
+  if (req.body?.slotId) {
+    slotId = text(req.body.slotId, 40);
+    const s = r?.type === "slots" ? r.slots.find(x => x.id === slotId) : null;
+    if (!s || availableIn(r!, t, slotId) < 1) throw new HttpError(409, "That time was just taken — pick another.", "CAPACITY_UNAVAILABLE");
+    slotLabel = new Date(s.start * 1000).toLocaleString("en-IN", { timeZone: r!.timezone, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  }
+  const item = storefront([f], r ? [r] : [], t)[0];
+  const said = orderText(item, quantity, each, listed, slotLabel);
+  const { e } = await directConversation(me_, p, f, said, "order");
+  e.preferredSlotId = slotId;
+  try { await offerDeal(db, e, "requester", each, said, said, quantity > 1 ? quantity : null, false); }
+  catch (err) { if (err instanceof Refused) throw new HttpError(409, err.message); throw err; }
+  event("order_sent", { category: f.offer.category, quantity, offer: each !== listed, slot: !!slotId });
+  return load(db, e.id);
 }));
 // A follow-up in an open conversation, from either side: it goes over A2A like any turn, and the other agent answers
 // from what its owner shares or asks its owner (who gets a notification).

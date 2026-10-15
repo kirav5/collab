@@ -154,7 +154,19 @@ export async function reserveFor(db: Docs, e: Engagement) {
   const r = await resourceFor(db, e.offer.factId!);
   if (!r) return;
   // A service with time slots: the buyer picks one (held when picked), before paying.
-  if (r.type === "slots") { e.reservation = { resourceId: r.id, holdId: null, qty: 1, state: "choose_slot", expiresAt: null, slotId: null, slot: null }; say(e, "system", "Pick a time slot to book it."); return; }
+  if (r.type === "slots") {
+    // The time picked on the seller's card is held at once if it's still free; otherwise the buyer picks again.
+    const s = e.preferredSlotId ? r.slots.find(x => x.id === e.preferredSlotId) : null;
+    if (s) {
+      try {
+        const h = await hold(db, r.id, { holder: e.requester.uid ?? "", engagementId: e.id, qty: 1, slotId: s.id, ttlSec: policy().timing.holdTtlSec }, now());
+        e.reservation = { resourceId: r.id, holdId: h.id, qty: 1, state: "held", expiresAt: h.expiresAt, slotId: s.id, slot: { start: s.start, end: s.end } };
+        say(e, "system", "Your time is held — pay to keep it.");
+        return;
+      } catch { say(e, "system", "The time you picked was taken meanwhile — pick another."); }
+    }
+    e.reservation = { resourceId: r.id, holdId: null, qty: 1, state: "choose_slot", expiresAt: null, slotId: null, slot: null }; say(e, "system", "Pick a time slot to book it."); return;
+  }
   const qty = (e.negotiation.deal?.items?.reduce((n, l) => n + l.quantity, 0)) ?? (Number.isInteger(e.negotiation.deal?.terms?.quantity) && e.negotiation.deal!.terms.quantity > 1 ? e.negotiation.deal!.terms.quantity : 1);
   try {
     const h = await hold(db, r.id, { holder: e.requester.uid ?? "", engagementId: e.id, qty, ttlSec: policy().timing.holdTtlSec }, now());

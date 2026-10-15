@@ -150,7 +150,8 @@ export const screens = {
             <span class="small muted">Anyone who scans it with their phone camera talks to your agent — no app to install. Put it on your shop counter: customers ask about stock, prices and orders without waiting in the queue.</span>
             <div class="row"><a class="btn secondary compact" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Download</a>
               <button class="btn secondary compact" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
-              <button class="btn accent compact" data-act="scan">Scan a QR</button></div></div></div>
+              <button class="btn accent compact" data-act="scan">Scan a QR</button>
+              <button class="btn secondary compact" data-act="preview-card">See your card as customers do</button></div></div></div>
         <div id="scanner"></div>
         <div class="card">${label("Your agent", "sq ink")}<b>${esc(S.profile.name)} <span class="faint">@${esc(S.profile.handle)}</span></b>
           <span class="small muted">Other people's agents — in this app or any A2A agent — reach yours at:</span>

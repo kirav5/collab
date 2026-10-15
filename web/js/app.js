@@ -7,7 +7,7 @@ import { api, cached, insightsLines, ios, session, signIn, standalone } from "./
 import { chat, detectNano, engine, itemOf, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, onChange, refresh, start } from "./live.js";
-import { PASS, engagementCard, messageHTML } from "./cards.js";
+import { PASS, engagementCard, messageHTML, storeCard } from "./cards.js";
 import { payWithGoogle, preload as preloadGooglePay } from "./gpay.js";
 import { screens } from "./screens.js";
 import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
@@ -207,6 +207,7 @@ function savedFacts() {
 async function chatHTML() {
   const cur = S.sessions.find(s => s.id === S.current);
   if (!cur || !cur.messages.length) return emptyChat();
+  refreshStoreCard(cur);
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
     for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
@@ -239,19 +240,51 @@ function emptyChat() {
 
 /** A chat with one person's or shop's agent, opened by scanning their QR code (or a /?to=handle link). */
 const people = new Map();
-/** Someone's public profile, offerings and suggested questions — one request however many places ask. */
-function person(handle) {
+/** Someone's public profile, offerings (with stock and free times) and questions — one request per 30 s however many ask. */
+function person(handle, fresh = false) {
   handle = String(handle).replace(/^@/, "").toLowerCase();
-  if (!people.has(handle)) people.set(handle, api(`/api/people/${encodeURIComponent(handle)}`).catch(() => { people.delete(handle); return null; }));
-  return people.get(handle);
+  const hit = people.get(handle);
+  if (hit && !fresh && Date.now() - hit.at < 30_000) return hit.p;
+  const p = api(`/api/people/${encodeURIComponent(handle)}`).catch(() => { people.delete(handle); return null; });
+  people.set(handle, { at: Date.now(), p });
+  return p;
+}
+const storeCardOf = p => ({ type: "store", profile: p.profile, facts: p.facts, suggestions: p.suggestions ?? [], shop: p.shop ?? null, paused: !!p.paused });
+
+/** A conversation's saved card shows what they offer now (stock, free times): refreshed whenever the chat is shown. */
+const refreshedCards = new Set();
+function refreshStoreCard(cur) {
+  if (!cur?.to || refreshedCards.has(cur.id)) return;
+  refreshedCards.add(cur.id);
+  setTimeout(() => refreshedCards.delete(cur.id), 30_000);
+  person(cur.to).then(async p => {
+    if (!p) return;
+    const m = cur.messages.find(x => x.cards?.some(c => c.type === "store"));
+    if (!m) return;
+    m.cards = m.cards.map(c => (c.type === "store" ? storeCardOf(p) : c));
+    await saveSession(cur);
+    if (S.current === cur.id) paintContent(true);
+  });
+}
+
+/** The owner's own card, as customers see it — nothing can be sent from it. */
+async function previewCard() {
+  const p = await person(S.profile.handle, true);
+  if (!p) return toast("Couldn't load your card.");
+  document.querySelector(".overlay")?.remove();
+  const o = document.createElement("div");
+  o.className = "overlay";
+  o.innerHTML = `<div class="sheet">${storeCard(storeCardOf(p), { preview: true })}<button class="btn secondary" data-act="overlay-close">Close preview</button></div>`;
+  document.body.append(o);
+  o.addEventListener("click", e => { if (e.target === o || e.target.closest('[data-act="overlay-close"]')) o.remove(); });
 }
 
 async function openDirect(handle) {
   handle = String(handle).replace(/^@/, "").toLowerCase();
   const p = await person(handle);
   if (!p) return toast(`No one is called @${handle}.`);
-  if (p.profile.uid === session.uid) return toast("That's your own QR code.");
-  const card = { type: "store", profile: p.profile, facts: p.facts, suggestions: p.suggestions ?? [] };
+  if (p.profile.uid === session.uid) return previewCard();
+  const card = storeCardOf(p);
   let cur = S.sessions.find(x => x.to === handle);
   if (!cur) {
     cur = { id: id(), title: `${p.profile.name} (@${handle})`, to: handle, toName: p.profile.name, updatedAt: now(),
@@ -281,17 +314,81 @@ function timing(what) {
 }
 
 /** In a direct chat, what you type goes to their agent (the first message opens the conversation). */
-async function sendDirect(cur, text) {
+async function sendDirect(cur, text, offerFactId = null) {
   const open = cur.engagementId ? live.engagements.get(cur.engagementId) : null;
-  const e = open && !["agreed", "closed", "declined"].includes(open.phase)
+  const sameOffer = !offerFactId || !open || open.offer?.factId === offerFactId;
+  const e = open && sameOffer && !["agreed", "closed", "declined"].includes(open.phase)
     ? await api(`/api/engagements/${open.id}/ask`, { text })
-    : await api(`/api/people/${encodeURIComponent(cur.to)}/ask`, { text });
+    : await api(`/api/people/${encodeURIComponent(cur.to)}/ask`, { text, ...(offerFactId ? { offerFactId } : {}) });
   cur.engagementId = e.id;
   live.engagements.set(e.id, e);
   // One live card per conversation: it moves to the latest message.
   for (const m of cur.messages) m.cards = (m.cards ?? []).filter(c => !(c.type === "engagement" && c.id === e.id));
   run(e.id);
   return { text: `Asked ${cur.toName ?? "their"}'s agent.`, cards: [{ type: "engagement", id: e.id }] };
+}
+
+// MARK: - Ordering from someone's card
+
+/** The stepper, the time chips and the offer box only change what the card's main button says. */
+function shopControl(a, el) {
+  const item = el.closest("[data-shop-item]");
+  if (!item) return;
+  if (a === "qty") {
+    const input = item.querySelector(".qty"), max = Number(item.dataset.max) || 20;
+    input.value = String(Math.min(max, Math.max(1, (Number(input.value) || 1) + Number(el.dataset.d))));
+  }
+  if (a === "slot-pick") {
+    item.querySelectorAll('[data-act="slot-pick"]').forEach(c => c.classList.toggle("on", c === el));
+    item.dataset.slot = el.dataset.slot; item.dataset.slotLabel = el.dataset.label;
+  }
+  if (a === "store-offer-open") { const box = item.querySelector(".offer-box"); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("input")?.focus(); }
+  shopLabels(item);
+}
+function shopLabels(item) {
+  const price = Number(item.dataset.price), cur = item.dataset.currency || "INR", buy = item.querySelector('[data-act="store-order"]');
+  if (!buy) return;
+  if (buy.dataset.kind === "buy") {
+    const max = Number(item.dataset.max) || 20, input = item.querySelector(".qty");
+    const n = Math.min(max, Math.max(1, Number(input.value) || 1));
+    buy.textContent = n > 1 ? `Buy ${n} for ${money(price * n, null, cur)}` : `Buy for ${money(price, null, cur)}`;
+    item.querySelector('[data-d="1"]')?.toggleAttribute("disabled", n >= max);
+    item.querySelector('[data-d="-1"]')?.toggleAttribute("disabled", n <= 1);
+  } else if (item.dataset.slot) {
+    buy.disabled = false;
+    buy.textContent = `Book ${item.dataset.slotLabel} · ${money(price, null, cur)}`;
+  }
+}
+document.addEventListener("input", e => { const item = e.target.closest?.("[data-shop-item]"); if (item && e.target.matches(".qty")) shopLabels(item); });
+
+async function orderFromCard(a, el) {
+  const item = el.closest("[data-shop-item]");
+  if (!item) return;
+  const handle = item.dataset.handle, body = { offerFactId: item.dataset.fact, quantity: Math.max(1, Number(item.querySelector(".qty")?.value) || 1) };
+  if (item.dataset.slot) body.slotId = item.dataset.slot;
+  if (a === "store-offer-send") {
+    const v = Number(item.querySelector("[data-offer-price]")?.value);
+    if (!(v > 0)) return toast("Type the price you'd like to pay.");
+    body.price = v;
+  }
+  busy(el, true, "Sending");
+  try {
+    const e = await api(`/api/people/${encodeURIComponent(handle)}/order`, body);
+    let cur = S.sessions.find(s => s.to === handle);
+    if (!cur) { cur = { id: id(), title: `${e.provider.name} (@${handle})`, to: handle, toName: e.provider.name, messages: [], updatedAt: now() }; S.current = cur.id; }
+    cur.engagementId = e.id;
+    live.engagements.set(e.id, e);
+    for (const m of cur.messages) m.cards = (m.cards ?? []).filter(c => !(c.type === "engagement" && c.id === e.id));
+    cur.messages.push({ id: id(), role: "user", text: e.brief.summary, at: now() },
+      { id: id(), role: "agent", text: `Sent to ${e.provider.name}. They confirm or say no — then you pay and get your pass.`, at: now(), cards: [{ type: "engagement", id: e.id }] });
+    await saveSession(cur);
+    session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
+    S.screen = "chat"; paint();
+  } catch (err) {
+    toast(err.message);
+    // Stock or a time may have changed: show the card as it is now.
+    if (err.status === 409) { const cur = S.sessions.find(s => s.to === handle); refreshedCards.delete(cur?.id); await person(handle, true); refreshStoreCard(cur); }
+  } finally { busy(el, false); }
 }
 
 // MARK: - Sessions
@@ -325,7 +422,7 @@ async function syncChats() {
   }
 }
 
-async function send(text) {
+async function send(text, offerFactId = null) {
   text = text.trim();
   if (!text || S.sending) return;
   S.sending = true;
@@ -342,7 +439,7 @@ async function send(text) {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
     // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
     const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
-    const r = cur.to ? await sendDirect(cur, text) : await chat(text, recent, S.profile.area, open);
+    const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open);
     Object.assign(reply, r, { pending: null, engine: r.cards?.some(c => c.on === "device") ? "Gemini Nano · on device" : "Gemini" });
   } catch (e) {
     Object.assign(reply, { pending: null, text: e.status === 429 ? e.message : `Something went wrong: ${e.message}` });
@@ -403,7 +500,10 @@ async function onClick(e) {
     if (a === "new-chat") { S.current = null; return openScreen("chat"); }
     if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
-    if (a === "send-text") return send(el.dataset.text);
+    if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
+    if (a === "preview-card") return previewCard();
+    if (a === "qty" || a === "slot-pick" || a === "store-offer-open") return shopControl(a, el);
+    if (a === "store-order" || a === "store-offer-send") return orderFromCard(a, el);
     if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
     if (a.startsWith("inbox-")) return inboxAction(a, el);
     if (a === "eng-ask") {

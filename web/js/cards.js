@@ -28,21 +28,78 @@ export function renderCard(card, m, i) {
 
 // MARK: - A person's or shop's agent, opened from a QR code
 
-function storeCard(c) {
-  const p = c.profile, offers = c.facts.filter(f => f.offer), notes = c.facts.filter(f => !f.offer), first = esc(p.name.split(" ")[0]);
-  // From the server (the same questions their agent card publishes); a card saved before that falls back to plain ones.
-  const quick = (c.suggestions?.length ? c.suggestions.map(s => s.text)
-    : offers.length ? ["Is it available?", "What's your best price?", "Can I pick it up today?"] : ["What are you looking for right now?", "Are you free this weekend?"]);
-  return `<div class="card">
-    <div class="row eng-head"><span class="avatar" aria-hidden="true">${esc(p.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(p.name)}</b><span class="small faint">@${esc(p.handle)}${p.bio ? ` · ${esc(p.bio)}` : ""}</span></div>
-      <button class="btn secondary compact end" data-act="add-contact-direct" data-handle="${esc(p.handle)}">Add to people</button></div>
-    ${offers.length ? `<div class="stack" style="gap:4px">${offers.slice(0, 5).map(f => `<div class="row small"><span>${esc(f.offer.title)}</span><b class="end">${money(f.offer.price.amount, f.offer.price.period)}</b></div>`).join("")}</div>` : ""}
-    ${!offers.length && notes.length ? `<span class="small muted">${esc(notes[0].text.slice(0, 160))}</span>` : ""}
-    <span class="small faint">${offers.length
-      ? `Tap a question or type your own. ${esc(p.name)}'s agent answers from what they share and asks them the rest — no queue.`
-      : `${first} hasn't listed anything for sale. Their agent answers from what they share and passes anything else to them.`}</span>
-    <div class="row">${quick.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+/**
+ * Someone's card, opened from their QR code or a link: what they offer, with what can be done right there — pick how
+ * many and buy (stock shown), pick a free time and book, ask to visit, or make an offer — and questions to ask. A person
+ * with nothing on offer gets questions about them. `preview`: the owner looking at their own card (nothing is sent).
+ */
+export function storeCard(c, { preview = false } = {}) {
+  const p = c.profile, first = esc(p.name.split(" ")[0]);
+  const items = c.shop ?? fallbackItems(c);
+  const off = preview ? "disabled" : "";
+  const head = `<div class="row eng-head"><span class="avatar" aria-hidden="true">${esc(p.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(p.name)}</b><span class="small faint">@${esc(p.handle)}${p.bio ? ` · ${esc(p.bio)}` : ""}</span></div>
+      ${preview ? tag("Your card · preview", "accent") : `<button class="btn secondary compact end" data-act="add-contact-direct" data-handle="${esc(p.handle)}">Add to people</button>`}</div>`;
+  if (c.paused) return `<div class="card">${head}<span class="small">${esc(p.name)} isn't taking requests right now.</span></div>`;
+  if (!items.length) {
+    const qs = c.suggestions?.length ? c.suggestions.map(x => x.text) : ["What are you looking for right now?", "Are you free this weekend?"];
+    return `<div class="card">${head}
+      <span class="small faint">${first} hasn't listed anything for sale. Their agent answers from what they share and passes anything else to them.</span>
+      <div class="row">${qs.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}" ${off}>${esc(q)}</button>`).join("")}</div></div>`;
+  }
+  const shown = items.slice(0, 3), more = items.slice(3);
+  return `<div class="card">${head}
+    ${preview ? `<span class="small muted">This is what customers see when they scan your QR. Buttons are off in the preview.</span>` : ""}
+    ${shown.map(it => shopItem(it, p, off)).join("")}
+    ${more.length ? `<details class="more"><summary>${more.length} more on offer</summary>${more.map(it => shopItem(it, p, off)).join("")}</details>` : ""}
+    <span class="small faint">Or type any question below — ${esc(p.name)}'s agent answers from what they share and asks them the rest. No queue.</span>
   </div>`;
+}
+
+const slotText = (s, tz) => new Date(s.start * 1000).toLocaleString([], { timeZone: tz || undefined, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+function shopItem(it, p, off) {
+  const price = it.price != null ? money(it.price, it.unit === "each" ? null : it.unit, it.currency) : "Price on request";
+  const stock = !it.stock ? "" : it.stock.state === "out" ? tag("Out of stock", "danger") : it.stock.state === "low" ? tag(`Only ${it.stock.available} left`, "stale")
+    : it.stock.state === "in" ? tag(`${it.stock.available} in stock`, "fresh") : tag("Stock not confirmed", "");
+  const data = `data-shop-item data-handle="${esc(p.handle)}" data-fact="${esc(it.factId)}" data-price="${it.price ?? ""}" data-currency="${esc(it.currency)}" data-unit="${esc(it.unit ?? "")}" data-max="${it.maxQuantity}" data-name="${esc(it.name)}"`;
+  const offer = it.price != null ? `<button class="btn secondary compact" data-act="store-offer-open" ${off}>Make an offer</button>` : "";
+  let act = "";
+  if (it.action === "buy") {
+    const out = it.stock?.state === "out";
+    act = out
+      ? `<div class="row"><button class="btn compact" disabled>Out of stock</button><button class="chip" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(`When will ${it.name} be back in stock?`)}" ${off}>Ask when it's back</button></div>`
+      : `<div class="row">${it.maxQuantity <= 1 ? "" : `<div class="stepper" role="group" aria-label="How many"><button class="btn quiet compact" data-act="qty" data-d="-1" aria-label="One fewer" ${off}>−</button><input class="qty" type="number" inputmode="numeric" min="1" max="${it.maxQuantity}" value="1" aria-label="How many" ${off}><button class="btn quiet compact" data-act="qty" data-d="1" aria-label="One more" ${off}>+</button></div>`}
+          <button class="btn accent compact" data-act="store-order" data-kind="buy" ${off}>Buy for ${money(it.price, null, it.currency)}</button>${offer}</div>`;
+  } else if (it.action === "book") {
+    act = it.slots?.length
+      ? `<span class="small muted">Pick a time:</span><div class="row slots">${it.slots.map(s => `<button class="chip" data-act="slot-pick" data-slot="${esc(s.id)}" data-label="${esc(slotText(s, it.timezone))}" ${off}>${esc(slotText(s, it.timezone))}</button>`).join("")}</div>
+         <div class="row"><button class="btn accent compact" data-act="store-order" data-kind="book" disabled>Pick a time to book</button>${offer}</div>`
+      : it.slots ? `<div class="row"><span class="small muted">No free times in the next two weeks.</span><button class="chip" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(`When are you next free for ${it.name}?`)}" ${off}>Ask when they're free</button></div>`
+      : `<div class="row"><button class="btn accent compact" data-act="store-order" data-kind="book" ${off}>Request a booking · ${price}</button>${offer}</div>`;
+  } else if (it.action === "visit") {
+    act = `<div class="row"><button class="btn accent compact" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(`I'm interested in ${it.name}. Can I visit this weekend?`)}" ${off}>I'm interested — ask to visit</button>${offer}</div>`;
+  } else {
+    act = `<div class="row"><button class="btn accent compact" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(`How much is ${it.name}?`)}" ${off}>Ask for a price</button></div>`;
+  }
+  return `<div class="shop-item" ${data}>
+    <div class="row"><b>${esc(it.title.split(" · ")[0])}</b><b class="end">${price}</b></div>
+    ${it.details && it.details !== it.title ? `<span class="small muted">${esc(it.details)}</span>` : ""}
+    ${stock ? `<div class="row">${stock}</div>` : ""}
+    ${act}
+    <div class="offer-box" hidden><div class="row"><input class="field compact" type="number" inputmode="numeric" min="1" placeholder="Your price${it.action === "buy" ? " each" : ""} (${esc(it.currency)})" data-offer-price><button class="btn accent compact" data-act="store-offer-send" ${off}>Send offer</button></div>
+      <span class="small faint">${esc(p.name.split(" ")[0])} confirms or says no. Nothing is final until both of you do.</span></div>
+    <div class="row qs">${(it.questions ?? []).map(q => `<button class="chip" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(q.text)}" ${off}>${esc(q.text)}</button>`).join("")}</div>
+  </div>`;
+}
+
+/** A card saved before cards carried the storefront: its offerings, with plain questions that name the item. */
+function fallbackItems(c) {
+  return (c.facts ?? []).filter(f => f.offer).map(f => {
+    const name = f.offer.title.split(" · ")[0];
+    return { factId: f.id, title: f.offer.title, name, details: "", category: f.offer.category, price: f.offer.price?.amount ?? null, currency: f.offer.price?.currency ?? "INR",
+      unit: f.offer.price?.period ?? null, action: f.offer.price?.amount != null ? "buy" : "ask", stock: null, maxQuantity: 20, slots: null, timezone: null,
+      questions: [{ text: `Do you have ${name}?` }, { text: `What's your best price for ${name}?` }] };
+  });
 }
 
 // MARK: - A request, shaped with Gemini
