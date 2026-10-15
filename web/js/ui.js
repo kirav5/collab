@@ -40,3 +40,13 @@ export function busy(btn, on, text = "…") {
   if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> ${esc(text)}`; }
   else { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
 }
+
+/**
+ * How to call someone in a sentence: a person by their first name ("Riya"), a business by its whole name ("Steel
+ * Bottle Store" — never "Steel").
+ */
+export function shortName(name = "") {
+  const words = String(name).trim().split(/\s+/);
+  const business = words.length >= 3 || /\b(store|stores|shop|mart|traders?|enterprises?|academy|studio|services?|centre|center|kitchen|cafe|café|bakery|clinic|salon|agency|rentals?|motors|pvt|ltd|llp|co\.?|tiffins?|foods?)\b/i.test(name);
+  return business ? String(name).trim() : words[0] ?? "";
+}

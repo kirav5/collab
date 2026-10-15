@@ -5,7 +5,7 @@
 import { session } from "./api.js";
 import { drafts, needsLimit } from "./agent.js";
 import { live } from "./live.js";
-import { byTag, esc, label, money, tag, tierTag, time } from "./ui.js";
+import { byTag, esc, label, money, shortName, tag, tierTag, time } from "./ui.js";
 
 const PHASE = { asking: ["Agents talking", "accent"], negotiating: ["Negotiating", "accent"], deal: ["Deal to confirm", "fresh"], agreed: ["Agreed", "fresh"], declined: ["Declined", "danger"], closed: ["Closed", ""] };
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -34,7 +34,7 @@ export function renderCard(card, m, i) {
  * with nothing on offer gets questions about them. `preview`: the owner looking at their own card (nothing is sent).
  */
 export function storeCard(c, { preview = false } = {}) {
-  const p = c.profile, first = esc(p.name.split(" ")[0]);
+  const p = c.profile, first = esc(shortName(p.name));
   const items = c.shop ?? fallbackItems(c);
   const off = preview ? "disabled" : "";
   const head = `<div class="row eng-head"><span class="avatar" aria-hidden="true">${esc(p.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(p.name)}</b><span class="small faint">@${esc(p.handle)}${p.bio ? ` · ${esc(p.bio)}` : ""}</span></div>
@@ -87,7 +87,7 @@ function shopItem(it, p, off) {
     ${stock ? `<div class="row">${stock}</div>` : ""}
     ${act}
     <div class="offer-box" hidden><div class="row"><input class="field compact" type="number" inputmode="numeric" min="1" placeholder="Your price${it.action === "buy" ? " each" : ""} (${esc(it.currency)})" data-offer-price><button class="btn accent compact" data-act="store-offer-send" ${off}>Send offer</button></div>
-      <span class="small faint">${esc(p.name.split(" ")[0])} confirms or says no. Nothing is final until both of you do.</span></div>
+      <span class="small faint">${esc(shortName(p.name))} confirms or says no. Nothing is final until both of you do.</span></div>
     <div class="row qs">${(it.questions ?? []).map(q => `<button class="chip" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(q.text)}" ${off}>${esc(q.text)}</button>`).join("")}</div>
   </div>`;
 }
@@ -234,7 +234,7 @@ function stepper(e) {
 
 /** A resting conversation: who spoke last, and that either person can carry on. */
 function openLine(e, mine, them) {
-  const first = esc(them.name.split(" ")[0]);
+  const first = esc(shortName(them.name));
   const last = e.qa.filter(q => q.answer).at(-1);
   if (!last) return `Open — send ${first}'s agent a message below.`;
   return last.from === mine ? `${first} answered. Ask something else, or tap Done.` : `You answered ${first}. Send something back, or tap Done.`;
@@ -242,7 +242,7 @@ function openLine(e, mine, them) {
 
 /** One sentence: what's happening now, from this owner's side. */
 function statusLine(e, mine, them, items, talking) {
-  const first = them.name.split(" ")[0];
+  const first = shortName(them.name);
   const mineOffers = mine === "requester" ? e.negotiation.requester : e.negotiation.provider;
   const theirOffers = mine === "requester" ? e.negotiation.provider : e.negotiation.requester;
   if (e.phase === "agreed") return `Deal agreed at <b>${dealAmount(e)}</b>.`;
@@ -329,7 +329,7 @@ export function engagementCard(e, id) {
     ${e.phase === "agreed" ? "" : `<p class="status ${talking ? "busy" : ""}">${talking ? `<span class="spinner"></span>` : ""}<span>${open ? openLine(e, mine, them) : statusLine(e, mine, them, items, talking)}</span>${e.offer.price ? `<span class="end faint small">listed ${money(e.offer.price, e.offer.unit)}</span>` : ""}</p>`}
     ${items.length || e.phase === "agreed" ? "" : keyAnswer(e, mine)}
     ${items.map(inboxBlock).join("")}
-    ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(them.name.split(" ")[0])}'s agent…" aria-label="Follow-up">
+    ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(shortName(them.name))}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">To make an offer, name a price — “${mine === "requester" ? "I'll buy it for ₹350" : "I'll sell it for ₹400"}”. They confirm or say no; nothing is final until both do.</span>` : ""}
     ${["asking", "deal", "agreed", "negotiating"].includes(e.phase) && mine === "requester" ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
@@ -363,7 +363,7 @@ function reservationLine(e, mine, buyer) {
 
 function dealBlock(e, mine) {
   const p = e.payment, seller = e.seller ?? "provider", buyer = seller === "requester" ? "provider" : "requester";
-  const them = esc((mine === "requester" ? e.provider : e.requester).name.split(" ")[0]);
+  const them = esc(shortName((mine === "requester" ? e.provider : e.requester).name));
   const amount = dealAmount(e);
   const id = esc(e.id);
   // AP2: the seller's agent signed a cart for the agreed terms; the buyer pays against it (test mode: no money moves).
@@ -402,7 +402,7 @@ function whoLabel(who, mine, themName) {
   const sideOf = who.startsWith("requester") ? "requester" : "provider";
   const agent = who.endsWith("_agent");
   if (sideOf === mine) return agent ? "Your agent" : "You";
-  return agent ? `${themName.split(" ")[0]}'s agent` : themName.split(" ")[0];
+  return agent ? `${shortName(themName)}'s agent` : shortName(themName);
 }
 
 /** What the owner's device is asked, inline in the conversation. */
