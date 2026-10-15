@@ -143,6 +143,9 @@ test("paid outside the app (cash/UPI): the buyer still gets a pass, it says who 
   assert.equal((await raw("shop", `/api/pickup/${e.id}/collect`, { code })).status, 409, "once only");
   const after = await as("buyer", `/api/engagements/${e.id}`);
   assert.equal(after.fulfilment.state, "delivered");
+  const done = await as("buyer", `/api/engagements/${e.id}/received`, { ok: true });
+  assert.equal(done.fulfilment.state, "accepted");
+  assert.equal(await inboxFor("shop", e.id), undefined, "a finished deal asks the shop nothing");
   assert.ok([400, 409].includes((await raw("buyer", `/api/engagements/${e.id}/pay`, {})).status), "already settled outside: nothing to pay in the app");
   const byShop = await agreed(390);
   await as("shop", `/api/engagements/${byShop.id}/paid-outside`, {});

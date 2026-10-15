@@ -83,8 +83,9 @@ export async function closeInbox(db: Docs, engagementId: string) {
 
 export async function save(db: Docs, e: Engagement) {
   e.updatedAt = now();
-  // An ended conversation asks nobody anything: its open questions and decisions close, on both sides (once).
-  if ((e.phase === "closed" || e.phase === "declined") && !e.inboxClosed) { e.inboxClosed = true; e.waiting = { requester: null, provider: null }; await closeInbox(db, e.id); }
+  // An ended conversation — or a deal that's done (received) — asks nobody anything: its open questions and decisions
+  // close, on both sides (once).
+  if ((e.phase === "closed" || e.phase === "declined" || e.fulfilment?.state === "accepted") && !e.inboxClosed) { e.inboxClosed = true; e.waiting = { requester: null, provider: null }; await closeInbox(db, e.id); }
   // The outbox flag is derived on every save, so a waiting turn can always be found by the recovery scan.
   e.outboxPending = !!e.outbox;
   e.outboxAt = e.outbox ? (e.outboxAt ?? now()) : null;

@@ -22,7 +22,7 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -981,8 +981,10 @@ app.post("/api/engagements/:id/received", route(async req => {
     if (!cur || ["accepted", "disputed", "cancelled"].includes(cur.fulfilment?.state ?? "")) return null;
     return { ...cur, fulfilment: { ...(cur.fulfilment ?? { state: "not_started" }), state: ok ? "accepted" : "disputed", acceptedAt: t, ...(note ? { note } : {}) },
       outcome: { ...(cur.outcome ?? {}), [buyer]: ok ? "happened" : "fell_through" },
-      events: [...cur.events, { at: t, who: buyer, text: ok ? "Received it — all good." : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t };
+      events: [...cur.events, { at: t, who: buyer, text: ok ? "Received it — all good." : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t,
+      ...(ok ? { inboxClosed: true } : {}) };
   });
+  if (ok) await closeInbox(db, e.id); // done: nothing more to ask either side
   await clearStats(db, e);
   const seller = e[sellerOf(e)];
   if (seller.uid) void pushTo(seller.uid, ok ? `Accepted · ${e.title}` : `Problem reported · ${e.title}`, ok ? "The buyer confirmed it arrived as agreed." : "The buyer reported a problem.", `/?engagement=${e.id}`);
@@ -1047,7 +1049,7 @@ async function inboxFor(uid: string): Promise<InboxItem[]> {
   const mine = (await db.find(INBOX, [["owner", "==", uid], ["status", "==", "open"]], 100)) as InboxItem[];
   const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 100)) as Engagement[];
   // A conversation that has ended asks nobody anything: leftovers from before that rule are closed as they're found.
-  const ended = new Set(es.filter(e => e.phase === "closed" || e.phase === "declined").map(e => e.id));
+  const ended = new Set(es.filter(e => e.phase === "closed" || e.phase === "declined" || e.fulfilment?.state === "accepted").map(e => e.id));
   // Demo people's devices are simulated: their items show up for the person talking to them.
   const demo: InboxItem[] = [];
   for (const e of es) {
