@@ -659,7 +659,7 @@ app.post("/api/alerts/:id/done", route(async req => {
 }));
 
 app.post("/api/price-check", route(async req => {
-  try { return await checkPrice(db, model, req.uid, text(req.body?.item, 200), text(req.body?.area, 120), now()); }
+  try { return await checkPrice(db, model, req.uid, text(req.body?.item, 200), text(req.body?.area, 120), now(), req.body?.unit); }
   catch (err) { if (err instanceof PriceCheckError) throw new HttpError(err.status, err.message); throw err; }
 }));
 app.get("/api/price-check", route(async req => db.get(PRICE_CHECKS, req.uid)));

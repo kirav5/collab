@@ -95,3 +95,15 @@ test("App Check: writes and model-running reads need it; plain reads don't wait 
   assert.equal(appCheckRequired("GET", "/people/bottle-store"), false);
   assert.equal(appCheckRequired("GET", "/goalsx"), false);
 });
+
+test("fair prices for services are read per hour (or night, order…), not per item", async () => {
+  const { priceEvidence, priceUnit } = await import("../src/core/price-check.ts");
+  assert.equal(priceUnit("hour"), "hour"); assert.equal(priceUnit("each"), "item"); assert.equal(priceUnit("<script>"), "item"); assert.equal(priceUnit(undefined), "item");
+  const s1 = "Rhythm School guitar classes for beginners costs INR 700 per hour.", s2 = "Jayanagar Music Academy guitar lessons costs INR 900 per hour.";
+  const g = { text: `${s1} ${s2}`, sources: [{ title: "a", url: "https://a.example" }, { title: "b", url: "https://b.example" }],
+    supports: [{ text: s1, indices: [0] }, { text: s2, indices: [1] }], searchEntryPoint: "" };
+  const r = priceEvidence(g, "hour");
+  assert.equal(r.status, "evidence"); assert.equal(r.unit, "hour"); assert.equal(r.low, 700); assert.equal(r.high, 900);
+  assert.equal(r.items[0].label, "Rhythm School guitar classes for beginners");
+  assert.equal(priceEvidence(g, "item").status, "insufficient_evidence", "per-hour prices aren't read as per item");
+});

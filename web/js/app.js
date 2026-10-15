@@ -445,7 +445,7 @@ async function onClick(e) {
       busy(el, true, "Checking sources");
       const box = el.parentElement.querySelector("[data-price-result]");
       try {
-        const r = await api("/api/price-check", { item: el.dataset.item, area: el.dataset.area });
+        const r = await api("/api/price-check", { item: el.dataset.item, area: el.dataset.area, unit: el.dataset.unit || undefined });
         const left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
         box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
           <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(s => `<a class="small" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
