@@ -755,8 +755,10 @@ app.get("/public/receipts/:id", route(async req => {
  * must also carry a valid payment signature. Paid outside the app (cash, UPI) has no payment signature to check —
  * the pass says who marked it paid instead.
  */
-async function passVerified(e: Engagement, check: ReturnType<typeof checkPayment>) {
-  if (!check?.cartOk || !(await verifyReceipt(db, e)).matches) return false;
+async function passVerified(e: Engagement, _check?: unknown) {
+  if (!(await verifyReceipt(db, e)).matches) return false;
+  const check = checkPayment(e, verifySigned);
+  if (!check?.cartOk) return false;
   return e.payment?.status === "outside" || !!check.paymentOk;
 }
 app.get("/api/engagements/:id/pickup", route(async req => {

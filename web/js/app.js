@@ -561,7 +561,8 @@ async function onClick(e) {
     }
     if (a === "eng-pickup") {
       busy(el, true);
-      const p = await api(`/api/engagements/${el.dataset.id}/pickup`);
+      const p = await api(`/api/engagements/${el.dataset.id}/pickup`).catch(err => { toast(`Couldn't open the pass: ${err.message}`); busy(el, false); return null; });
+      if (!p) return;
       const link = `${location.origin}${p.path}`;
       let qr = "";
       try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1 }); } catch {}

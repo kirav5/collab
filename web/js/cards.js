@@ -332,7 +332,7 @@ export function engagementCard(e, id) {
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(shortName(them.name))}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">To make an offer, name a price — “${mine === "requester" ? "I'll buy it for ₹350" : "I'll sell it for ₹400"}”. They confirm or say no; nothing is final until both do.</span>` : ""}
-    ${["asking", "deal", "agreed", "negotiating"].includes(e.phase) && mine === "requester" ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
+    ${["asking", "deal", "agreed", "negotiating"].includes(e.phase) && mine === "requester" && !["paid", "outside"].includes(e.payment?.status) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>
@@ -365,6 +365,8 @@ function dealBlock(e, mine) {
   const p = e.payment, seller = e.seller ?? "provider", buyer = seller === "requester" ? "provider" : "requester";
   const them = esc(shortName((mine === "requester" ? e.provider : e.requester).name));
   const amount = dealAmount(e);
+  // The buttons say the total to pay; the line above them says what it's for.
+  const total = money(e.payment?.cart?.total?.value ?? e.negotiation.deal.price, null, e.payment?.cart?.total?.currency ?? e.offer.currency);
   const id = esc(e.id);
   // AP2: the seller's agent signed a cart for the agreed terms; the buyer pays against it (test mode: no money moves).
   // A payment settles whether it went ahead — nobody is asked separately.
@@ -372,7 +374,7 @@ function dealBlock(e, mine) {
   if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
   else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span><span class="small faint">Test payment · no money moved</span>`;
   else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
-  else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.payment?.cart?.total?.value ?? e.negotiation.deal.price}" data-currency="${esc(e.offer.currency ?? "INR")}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${amount} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${amount}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
+  else if (mine === buyer) pay = `<div class="row"><button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.payment?.cart?.total?.value ?? e.negotiation.deal.price}" data-currency="${esc(e.offer.currency ?? "INR")}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${total} with Google Pay</button><button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${total}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button></div>
       <span class="small faint">Test payment: nothing is charged. Your agent records it so ${them} can hand over.</span>`;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
   // After payment: handover / delivery, then the buyer's acceptance — tracked apart from the payment.

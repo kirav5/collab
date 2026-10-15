@@ -317,3 +317,24 @@ test("ordering from a card: buy several (bounded by stock), offer a price, book 
   assert.equal((await raw("o-b", "/api/people/o-s/order", { offerFactId: bottles.id, quantity: 1 })).status, 409, "paused: no orders");
   await as("o-s", "/api/me/pause", { paused: false });
 });
+
+test("paying in the app for several items: the pass, the receipt and every signature verify", async () => {
+  await as("m-b", "/api/me", { handle: "m-b", name: "Multi Buyer", areaName: "Indiranagar" });
+  await as("m-s", "/api/me", { handle: "m-s", name: "Multi Shop", areaName: "Indiranagar" });
+  const f = await as("m-s", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Indiranagar, ₹450 each" });
+  await as("m-s", "/api/resources", { factId: f.id, type: "quantity", onHand: 5 });
+  let e = await as("m-b", "/api/people/m-s/order", { offerFactId: f.id, quantity: 2 });
+  await as("m-s", `/api/inbox/${(await inboxFor("m-s", e.id, "confirm")).id}`, { confirm: true });
+  e = await as("m-b", `/api/engagements/${e.id}/pay`, { idempotencyKey: "multi-1" });
+  assert.equal(e.payment.status, "paid");
+  const pass = await raw("m-b", `/api/engagements/${e.id}/pickup`);
+  const body = await pass.json();
+  assert.equal(pass.status, 200, JSON.stringify(body));
+  assert.equal(body.quantity, 2); assert.equal(body.amount.value, 900);
+  const r = await as("m-b", `/api/engagements/${e.id}/receipt`);
+  const code = r.verifyPath.split(".html#")[1].split(".")[1];
+  const bundle = await (await fetch(`${B}/public/receipts/${e.id}?code=${code}`)).json();
+  // @ts-ignore browser module
+  const { verifyReceiptBundle } = await import("../../web/js/verify-receipt.js");
+  assert.deepEqual(await verifyReceiptBundle(bundle, bundle.publicKey), { receipt: true, cart: true, payment: true, ap2: { merchant: true, mandates: true } });
+});
