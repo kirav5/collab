@@ -128,8 +128,20 @@ export function leaks(text: string, ctx: Context): boolean {
 /** One line, and amounts in rupees (models sometimes write "$630" for a ₹ price). */
 const clean = (s: string) => { const t = s.replace(/[\r\n]+/g, " ").replace(/(?:US)?\$\s?(?=\d)/g, "₹").replace(/\bRs\.?\s?(?=\d)/gi, "₹").trim(); return t ? t.slice(0, 240) : null; };
 
+/** A message that adds what isn't in the offer — a credit period, a deposit, "30 days", a second price — says something
+ *  the deal doesn't: the plain wording is used instead. Only the offer's own numbers may appear. */
+export function invents(message: string, p: Proposal): boolean {
+  const qty = Number(p.terms?.quantity) || 1;
+  const ok = new Set([p.price, p.price * qty, qty, ...Object.values(p.terms ?? {}), ...(p.items ?? []).flatMap(l => [l.unitPrice, l.quantity, l.unitPrice * l.quantity])].map(n => Math.round(Number(n))));
+  const nums = (message.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map(n => Math.round(Number(n.replace(/,/g, ""))));
+  if (nums.some(n => !ok.has(n))) return true;
+  return /\b(credit|payment terms?|installments?|emi|advance|deposit|warranty|guarantee|free delivery|delivery charges?|bulk|refund)\b/i.test(message)
+    && !Object.keys(p.terms ?? {}).some(k => /credit|deposit|warranty|delivery/i.test(k));
+}
+
 export const NegotiateTask: Task<{ ctx: Context; listPrice: number }, Move> = {
   name: "negotiate",
+  tier: "cheap",
   maxTokens: 300,
   // Accepting and escalating are pure arithmetic: no model call for those.
   settled: ({ ctx }) => { const m = next(ctx); return m.action === "propose" ? null : m; },
@@ -168,7 +180,7 @@ for price when it helps; escalate to your owner when no deal fits the limits.`,
       case "accept": {
         const t = ctx.theirs.at(-1);
         if (!t || t.id !== move.acceptId || !acceptable(t, ctx)) return null;
-        return { ...move, message: (!leaks(move.message, ctx) && clean(move.message)) || `Agreed: ${describe(t, ctx)}.` };
+        return { ...move, message: (!leaks(move.message, ctx) && !invents(move.message, t) && clean(move.message)) || `Agreed: ${describe(t, ctx)}.` };
       }
       case "escalate":
         return move.message ? { ...move, message: move.message.slice(0, 240) } : null;
@@ -183,7 +195,7 @@ for price when it helps; escalate to your owner when no deal fits the limits.`,
         // Pacing: no faster than the schedule allows by the next round, with a little slack.
         if (Math.abs(opening - limit) > 0.5 && (opening - p.price) / (opening - limit) > concession(ctx.mine.length + 1, ctx.mandate.maxRounds) + 0.15) return null;
         for (const [k, v] of Object.entries(p.terms)) if (direction(ctx, k) * (v - ctx.mandate.terms[k].opening) > 0.0001) return null;
-        return { action: "propose", proposal: p, message: (!leaks(move.message, ctx) && clean(move.message)) || `We can do ${describe(p, ctx)}.` };
+        return { action: "propose", proposal: p, message: (!leaks(move.message, ctx) && !invents(move.message, p) && clean(move.message)) || `We can do ${describe(p, ctx)}.` };
       }
     }
   },

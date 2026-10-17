@@ -278,19 +278,31 @@ export const screens = {
           <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
           <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}">Suggest terms for this offering</button></div></details>`;
       };
+      const remembered = facts.filter(f => f.source === "answer" && f.question && f.answer);
       return frame("About me", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
           <textarea class="field" name="text" rows="2" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
           <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Only me (never shared)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
-        <div class="stack">${facts.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
+        ${remembered.length ? `<details class="card slim memory" open><summary>${label(`Answers your agent remembers · ${remembered.length}`, "sq peri")}</summary>
+          <span class="small faint">Everything you've answered, so you're never asked twice. When it comes up again, your agent answers on its own — it shows in Privacy › What your agent shared.</span>
+          ${remembered.map(f => `<div class="mem-row"><div class="stack" style="gap:2px;min-width:0;flex:1"><span class="small muted">${esc(f.question)}${f.about ? ` · ${esc(f.about)}` : ""}</span><b class="small">${esc(f.answer)}</b></div>
+            <div class="seg compact" role="group" aria-label="When it's asked again"><button class="${f.reuse ? "on" : ""}" data-act="fact-reuse" data-id="${esc(f.id)}" data-reuse="1">Answers</button><button class="${f.reuse ? "" : "on"}" data-act="fact-reuse" data-id="${esc(f.id)}" data-reuse="0">Asks me</button></div>
+            <button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this answer">✕</button></div>`).join("")}</details>` : ""}
+        <div class="stack">${facts.filter(f => f.source !== "answer").map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           ${factText(f)}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
     },
     async act(a, el, S, h) {
+      if (a === "fact-reuse") {
+        busy(el, true);
+        await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/reuse`, { reuse: el.dataset.reuse === "1" });
+        h.toast(el.dataset.reuse === "1" ? "Your agent answers this on its own." : "Your agent asks you first next time.");
+        await h.paint(); return true;
+      }
       if (a === "add-fact") {
         const form = el.closest("form"); const f = new FormData(form);
         const text = String(f.get("text") ?? "").trim(), tier = String(f.get("tier"));
@@ -441,18 +453,22 @@ export const screens = {
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
       let qr = "";
       try { qr = await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
-      return frame("My card", "How others reach your agent", `${insights}
-        <div class="card qr-card">
+      // The card people get when they scan: who, what's on offer, and a record that comes from signed receipts.
+      const [facts, rec] = await Promise.all([cached("/api/facts").catch(() => []), fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null)]);
+      const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
+      return frame("My card", "Share it — anyone can reach your agent", `
+        <div class="card share-card">
+          <div class="share-top">${avatarHTML(S.profile.name, S.profile.handle, 56)}<div class="stack" style="gap:2px;min-width:0"><b class="share-name">${esc(S.profile.name)}</b>
+            <span class="small faint">@${esc(S.profile.handle)}${S.profile.area?.name ? ` · ${esc(S.profile.area.name)}` : ""}</span>${S.profile.bio ? `<span class="small muted">${esc(S.profile.bio)}</span>` : ""}</div></div>
+          <div class="share-stats"><div><b>${offers.length}</b><span>on offer</span></div><div><b>${rec?.verified ?? 0}</b><span>verified deals</span></div><div><b>${rec?.problems ?? 0}</b><span>problems</span></div></div>
           <div class="qr" aria-label="Your QR code">${qr}</div>
-          <div class="stack" style="gap:6px">${label("Your QR code", "sq ink")}
-            <span class="small muted">Anyone can scan it with a phone camera to reach your agent — no app needed. Share it or print it.</span>
-            <div class="row"><a class="btn secondary compact" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Download</a>
-              <button class="btn secondary compact" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
-              <button class="btn accent compact" data-act="scan">Scan a QR</button>
-              <button class="btn secondary compact" data-act="preview-card">See your card as others see it</button></div></div></div>
+          <span class="small muted" style="text-align:center">Scan with any phone camera to talk to ${esc(S.profile.name.split(" ")[0])}'s agent — no app needed.</span>
+          <div class="row share-actions"><button class="btn accent" data-act="share-card" data-link="${esc(link)}" data-name="${esc(S.profile.name)}">Share</button>
+            <button class="btn secondary compact" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
+            <a class="btn secondary compact" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Save QR</a></div>
+          <div class="row share-actions"><button class="btn quiet compact" data-act="preview-card">See it as others do</button><button class="btn quiet compact" data-act="agent-card">Agent card ›</button><button class="btn quiet compact" data-act="scan">Scan someone's QR</button></div></div>
         <div id="scanner"></div>
-        <div class="card"><div class="row">${avatarHTML(S.profile.name, S.profile.handle, 40)}<div><b>${esc(S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)}</span></div>
-          <button class="btn secondary compact end" data-act="agent-card">Agent card ›</button></div><span class="small muted">How any agent — here or elsewhere — finds and talks to yours.</span></div>
+        ${insights}
         <form class="card" data-form="add-contact">${label("Add someone by handle", "sq")}<div class="row"><input class="field" name="handle" placeholder="@handle" style="max-width:260px"><button class="btn" data-act="add-contact">Add</button></div>
           <span class="small faint">Contacts can be named in rules (Privacy). Try @riya, @kabir, @arjun, @meera, @dev, @sana or @nikhil — demo people.</span></form>
         <div class="stack">${contacts.map(c => `<div class="card slim"><div class="row"><b>${esc(c.name)}</b><span class="faint small">@${esc(c.handle)}</span>
@@ -461,6 +477,12 @@ export const screens = {
     },
     async act(a, el, S, h) {
       if (a === "copy-link") { await navigator.clipboard.writeText(el.dataset.link).catch(() => {}); h.toast("Link copied."); return true; }
+      if (a === "share-card") {
+        // The phone's own share sheet where there is one (WhatsApp, Messages…); otherwise the link is copied.
+        const data = { title: `${el.dataset.name} on Collab`, text: `Talk to ${el.dataset.name}'s agent on Collab`, url: el.dataset.link };
+        if (navigator.share) { await navigator.share(data).catch(() => {}); return true; }
+        await navigator.clipboard.writeText(el.dataset.link).catch(() => {}); h.toast("Link copied — paste it anywhere."); return true;
+      }
       if (a === "scan") { await scan(h); return true; }
       if (a === "add-contact") { const handle = new FormData(el.closest("form")).get("handle"); busy(el, true); await api("/api/contacts", { handle: String(handle).replace(/^@/, "") }); h.paint(); return true; }
       if (a === "remove-contact") { await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
@@ -575,7 +597,7 @@ export const screens = {
       return frame("Privacy", "Who sees what", `
         <div class="card ${S.profile.paused ? "accent" : ""}"><div class="row">${label(S.profile.paused ? "Paused" : "Your agent is answering", "sq " + (S.profile.paused ? "stale" : "fresh"))}
           <button class="btn ${S.profile.paused ? "accent" : "secondary"} compact end" data-act="pause">${S.profile.paused ? "Resume" : "Pause"}</button></div>
-          <span class="small muted">${S.profile.paused ? "Your agent answers no one until you resume." : "It answers from Public facts and from Protected facts a rule below allows."} Private facts are never shared.</span></div>
+          <span class="small muted">${S.profile.paused ? "Your agent answers no one until you resume." : "It answers from Public facts and from Protected facts a rule below allows."} Private facts are never shared. A question you've answered before gets your same answer again — never contact details; change any in About me.</span></div>
         <form class="card" data-form="rule">${label("Share Protected facts", "sq")}
           <div class="row"><span class="small">With</span><select class="field" name="audience" style="max-width:280px"><option value="anyone">Anyone who contacts your agent</option>${contacts.map(c => `<option value="${esc(c.handle)}">${esc(c.name)} (@${esc(c.handle)})</option>`).join("")}</select></div>
           <div class="stack" style="gap:6px"><span class="small">About</span>
@@ -612,6 +634,52 @@ export const screens = {
           input.value = el.dataset.value;
         }
         return true;
+      }
+    },
+  },
+
+  receipts: {
+    async html(S) {
+      // Every deal both people confirmed has a signed receipt. They're the owner's proof, and they're what the network
+      // learns from: the record on their card (no names or prices) and the anonymised prices others bargain with.
+      const mine = e => (e.requester.uid === session.uid ? "requester" : "provider");
+      const list = [...live.engagements.values()].filter(e => e.agreedAt || e.phase === "agreed").sort((a, b) => (b.agreedAt ?? 0) - (a.agreedAt ?? 0));
+      const f = ["all", "bought", "sold"].includes(S.receiptsFilter) ? S.receiptsFilter : "all";
+      const sold = e => mine(e) === (e.seller ?? "provider");
+      const shown = list.filter(e => f === "all" || (f === "sold") === sold(e));
+      const rec = await fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+      const cats = [...new Map(list.map(e => [e.offer.category, e])).values()].slice(0, 3);
+      const market = (await Promise.all(cats.map(e => cached(`/api/insights?category=${encodeURIComponent(e.offer.category)}&item=${encodeURIComponent((e.offer.title ?? "").split(" · ")[0])}&unit=${encodeURIComponent(e.offer.unit ?? "")}`, 300_000)
+        .then(r => (r?.insights ? { e, i: r.insights } : null)).catch(() => null)))).filter(Boolean);
+      const status = e => { const p = e.payment?.status; return p === "paid" ? ["Paid", "fresh"] : p === "outside" ? ["Settled", "fresh"] : ["closed", "declined"].includes(e.phase) ? ["Ended", "stale"] : ["To pay", "wait"]; };
+      const v = S.verified ?? {};
+      const row = e => { const side = mine(e), them = side === "provider" ? e.requester : e.provider, [st, tone] = status(e);
+        const when = e.agreedAt ? new Date(e.agreedAt * 1000).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
+        return `<div class="rrow"><button class="rrow-main" data-act="eng-receipt" data-id="${esc(e.id)}">${avatarHTML(them.name, them.handle, 40)}<span class="rrow-text"><b>${esc((e.offer.title || e.title).split(" · ")[0])}</b><span class="small faint">${sold(e) ? "Sold to" : "From"} ${esc(them.name)} · ${esc(when)}</span></span></button>
+          <span class="rrow-side"><b class="small">${dealAmount(e)}</b><span class="row" style="gap:6px">${tag(st, tone)}${v[e.id] === true ? tag("✓ verified", "fresh") : v[e.id] === false ? tag("✗ changed", "danger") : ""}</span></span></div>`; };
+      return frame("Receipts", "Every deal, signed — anyone can check it", `
+        <div class="card slim net-card">${label("What your receipts do", "sq ink")}
+          <div class="net-grid">
+            <div><b>${rec?.verified ?? 0}</b><span>verified ${rec?.verified === 1 ? "sale" : "sales"} on your card — other agents read your record before they deal with you</span></div>
+            <div><b>${list.length}</b><span>${list.length === 1 ? "deal" : "deals"} adding to the prices people see when they set a limit (anonymised)</span></div>
+          </div>
+          ${market.map(({ e, i }) => `<span class="small muted">${esc((e.offer.title ?? "").split(" · ")[0])}: ${i.n} deals, most closed at ${money(Math.round(i.p25), e.offer.unit, e.offer.currency)}–${money(Math.round(i.p75), e.offer.unit, e.offer.currency)}, median ${money(Math.round(i.median), e.offer.unit, e.offer.currency)}${i.demo ? " (incl. demo deals)" : ""}.</span>`).join("")}
+          <span class="small faint">No names, no private limits — only what was agreed, signed by both agents.</span></div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">${[["all", "All"], ["bought", "Bought"], ["sold", "Sold"]].map(([k, t]) => `<button class="chip ${f === k ? "on" : ""}" data-act="receipts-filter" data-k="${k}">${t} · ${list.filter(e => k === "all" || (k === "sold") === sold(e)).length}</button>`).join("")}
+          ${list.length ? `<button class="btn secondary compact end" data-act="receipts-verify">Verify all</button>` : ""}</div>
+        <div class="rlist">${shown.map(row).join("") || `<p class="small muted">${list.length ? "None here." : "No receipts yet. When both of you confirm a deal, its signed receipt appears here."}</p>`}</div>`);
+    },
+    async act(a, el, S, h) {
+      if (a === "receipts-filter") { S.receiptsFilter = el.dataset.k; h.paint(); return true; }
+      if (a === "receipts-verify") {
+        // Each receipt is fetched and its signature checked against the agreed terms; a changed one says so.
+        busy(el, true, "Checking");
+        const ids = [...live.engagements.values()].filter(e => e.agreedAt || e.phase === "agreed").map(e => e.id);
+        const out = await Promise.all(ids.map(id => api(`/api/engagements/${id}/receipt`).then(r => [id, !!r.matches]).catch(() => [id, null])));
+        S.verified = Object.fromEntries(out.filter(([, ok]) => ok !== null));
+        const bad = out.filter(([, ok]) => ok === false).length;
+        h.toast(bad ? `${bad} receipt${bad === 1 ? " no longer matches" : "s no longer match"} what was agreed.` : out.length === 1 ? "Your receipt checks out — signed and unchanged." : `All ${out.length} receipts check out — signed and unchanged.`);
+        h.paint(); return true;
       }
     },
   },
@@ -845,7 +913,6 @@ export const screens = {
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card set-card">
           <div class="set-row"><div><b>Theme</b><span class="small faint">Auto follows your device</span></div><div class="seg">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" data-act="theme" data-value="${k}">${v}</button>`).join("")}</div></div>
-          <div class="set-row"><div><b>Animations</b><span class="small faint">Motion when things change</span></div><div class="seg">${[["on", "On"], ["off", "Off"]].map(([k, v]) => `<button class="${(document.documentElement.dataset.motion ?? "on") === k ? "on" : ""}" data-act="motion" data-value="${k}">${v}</button>`).join("")}</div></div>
           <div class="set-row"><div><b>Don't keep history</b><span class="small faint">${S.incognito ? "On — new chats aren't kept or synced, and nothing you say is remembered" : "New chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
         <div class="card set-card">${label("Privacy & AI", "sq")}<dl class="kv small">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
           <div class="set-row"><div><b>Answer my notes with</b><span class="small faint">${{ "device-only": "Gemma on this device — nothing sent", "my-devices": "Gemma on your devices — never the cloud", cloud: "Your devices, else Gemini", "cloud-only": "Always Gemini in the cloud" }[engine.mode] ?? ""}</span></div></div>
@@ -878,10 +945,6 @@ export const screens = {
         session.incognito = S.incognito;
         h.toast(S.incognito ? "On — new chats aren't kept, and nothing is remembered." : "History is kept again.");
         h.paint(); return true;
-      }
-      if (a === "motion") {
-        try { localStorage.setItem("collab-motion", el.dataset.value); } catch { /* this session only */ }
-        window.applyLook?.(); h.paint(); return true;
       }
       if (a === "theme") {
         // Light, dark, or the device's own setting — kept on this device.

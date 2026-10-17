@@ -22,7 +22,8 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms } from "./core/engage.ts";
+import { rememberAnswer } from "./core/memory.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -910,6 +911,14 @@ app.post("/api/facts/:id/delete", route(async req => {
   for (const a of await db.find(ANSWERS, [["factId", "==", f.id]], 200)) await db.delete(ANSWERS, docId(`${f.id}:${savedKey(a.question)}`));
   return { ok: true };
 }));
+/** A remembered answer: given by the agent on its own when the question comes up again, or brought to the owner first. */
+app.post("/api/facts/:id/reuse", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || f.source !== "answer") throw new HttpError(404, "not found");
+  const reuse = req.body?.reuse === true && !hasContact(f.answer ?? "");
+  await db.merge(FACTS, f.id, { reuse, updatedAt: now() });
+  return publicFact({ ...f, reuse });
+}));
 /** Hand an offering's floor to the always-on agent (so it negotiates while the owner is away), or take it back. */
 app.post("/api/facts/:id/limit", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
@@ -989,13 +998,19 @@ app.post("/api/offers/draft", route(async req => {
     const hints = (dom?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).map(x => ({ label: x.label, ask: x.ask! }));
     return (await decide(model, SellerAsksTask, { text: t, category: dom?.label ?? "", known: Object.entries(attrs).map(([k, v]) => `${k}: ${v}`), hints })).output;
   };
+  // The likely answers come back with the questions — one wait, not two (the card shows them at once).
+  const answersFor = async (missing: Awaited<ReturnType<typeof asks>>) => {
+    const qs = missing.filter(q => q.options?.length).slice(0, 6).map(q => ({ label: q.label, ask: q.ask, options: q.options!.slice(0, 6) }));
+    return qs.length ? (await decide(model, AnswersTask, { text: t, questions: qs })).output : {};
+  };
+  const asking = async (attrs: Record<string, unknown>) => { const missing = await asks(attrs); return { missing, answers: await answersFor(missing) }; };
   if (r.draft?.kind !== "offer") {
     if (!dom) return { offer: null, floor: null, publicText: t, problem: r.problem ?? null };
     // An offering too vague to list (no price, or no place): the card asks for the basics, then reads it again. A
     // written floor is kept for the card, never in the text.
     const written = statedFloor(t);
-    const [missing, gate] = await Promise.all([asks({}), qualityOf(model, t, "sell", dom.label, [])]);
-    return { offer: null, floor: written, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, gate,
+    const [{ missing, answers }, gate] = await Promise.all([asking({}), qualityOf(model, t, "sell", dom.label, [])]);
+    return { offer: null, floor: written, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, answers, gate,
       basics: { category: dom.id, label: dom.label, unit: dom.priceUnit ?? null, area: here?.name ?? null } };
   }
   // The model reads a stated floor; a written one ("lowest 600", "won't go below 600") is caught either way, so the
@@ -1006,8 +1021,8 @@ app.post("/api/offers/draft", route(async req => {
   const publicText = floor ? withoutAmount(t, floor) : t;
   // What buyers of this kind usually ask that the offering doesn't say yet — the seller can answer now, publicly.
   const o = r.draft.offer;
-  const [missing, gate] = await Promise.all([asks(o.attributes), qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
-  return { offer: { ...o, details: publicText }, floor, publicText, missing, gate };
+  const [{ missing, answers }, gate] = await Promise.all([asking(o.attributes), qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
+  return { offer: { ...o, details: publicText }, floor, publicText, missing, answers, gate };
 }));
 
 // What others charge for this kind of thing near here, for the price a seller is about to set: Google-grounded
@@ -1086,6 +1101,15 @@ app.post("/api/briefs/refine", route(async req => {
   }
   if (r.limit) { shared.budget = budgetBand({ ...need, maxPrice: r.limit, mandate: null }); changes.push("new limit (private)"); }
   return { need, shared, limit: r.limit ?? limit, changes };
+}));
+
+/** Answers the owner gave while making a request or a listing: kept Private, filled in the next time they're asked. */
+app.post("/api/memory/answers", route(async req => {
+  await me(req.uid);
+  const list = Array.isArray(req.body?.answers) ? req.body.answers.slice(0, 12) : [];
+  let kept = 0;
+  for (const a of list) if (await rememberAnswer(db, req.uid, { question: text(a?.question, 200), answer: text(a?.answer, 400), about: text(a?.about, 80) }, now())) kept++;
+  return { kept };
 }));
 
 app.post("/api/briefs", route(async req => {
@@ -1208,6 +1232,12 @@ app.get("/api/engagements/:id", route(async req => participant(req.uid, String(r
 app.post("/api/engagements/:id/run", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (e.requester.uid === req.uid && e.outbox) { await spend(req.uid, 2); await sendTurn(cfg, e.id, null); }
+  // A conversation where nobody is waiting, nothing is asked and it's the seller's agent's move (a stall left by an
+  // older turn rule) is picked up again: an empty turn wakes the seller's agent, which answers the latest offer.
+  else if (e.requester.uid === req.uid && ["negotiating", "asking"].includes(e.phase) && !e.waiting.requester && !e.waiting.provider && myTurnToMove(e, "provider")) {
+    await spend(req.uid, 2);
+    await sendTurn(cfg, e.id, { kind: "collab.turn/v1", from: "requester", engagementId: e.id });
+  }
   return load(db, e.id);
 }));
 app.get("/api/engagements/:id/receipt", route(async req => {
@@ -1642,6 +1672,10 @@ app.post("/api/inbox/:id", route(async req => {
   await offerFromAnswer(item, typeof b.text === "string" ? b.text : "");
   const r = await resolveItem(db, model, item, { text: typeof b.text === "string" ? b.text : undefined, share: b.share, decline: !!b.decline, confirm: !!b.confirm,
     mandate: item.kind === "move" ? mandateFrom(b.mandate) ?? undefined : undefined }).catch(async err => { await reopen(); throw err; });
+  // What the owner answered is kept (Private), so the same question is filled in for them next time — never for a
+  // demo person answered on their behalf.
+  if (item.kind === "answer" && !asDemo && !b.decline && typeof b.text === "string" && b.text.trim() && item.question)
+    await rememberAnswer(db, req.uid, { question: item.question, answer: b.text, about: e.offer?.title?.split(" · ")[0] ?? e.title, reuse: b.reuse !== false }, now());
   if (r.turn) {
     if (item.side === "requester") await sendTurn(cfg, e.id, r.turn);
     else await deliverProviderTurn(cfg, a2a.store, e.id, r.turn);

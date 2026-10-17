@@ -121,7 +121,7 @@ export async function seedDemo(db: Docs, model: Model | null, now: number) {
     const d = domain(p.offer.category);
     const offer: Offer = { id: `${uid}-offer`, category: p.offer.category, title: p.offer.title, details: p.offer.text,
       price: { amount: p.offer.price, currency: "INR", period: d?.priceUnit ?? null }, place: area!,
-      attributes: { ...p.offer.attributes, ...(p.offer.floor < p.offer.price ? { negotiable: "yes" } : {}) }, askBuyer: d?.sellerAsks.slice(0, 1) ?? [],
+      attributes: { ...p.offer.attributes, ...(p.offer.floor < p.offer.price ? { negotiable: "yes" } : {}) }, askBuyer: [],
       publishedAt: now, expiresAt: now + 365 * 86_400, status: "active",
       ...(p.offer.policies ? { policies: p.offer.policies } : {}), ...(p.offer.instant ? { instant: true } : {}) };
     const embedding = (await model?.embed?.([`${offer.title}. ${p.offer.text}`], "document"))?.[0];

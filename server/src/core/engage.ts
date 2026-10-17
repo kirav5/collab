@@ -23,6 +23,7 @@ import { linesOf, totalOf } from "./pay.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, trackRecord } from "./deals.ts";
+import { matchSaved, savedAnswers } from "./memory.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
@@ -311,6 +312,11 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
   }
+  // An answer the owner gave before and said their agent may give again: their exact words, no model.
+  if (!paused && owner) {
+    const mine = matchSaved(await savedAnswers(db, owner), q.question, true);
+    if (mine?.answer) return { text: mine.answer, src: "memory", review: false, byModel: false };
+  }
   const key = s === "provider" && e.offer.factId ? docId(`${e.offer.factId}:${savedKey(q.question)}`) : null;
   const allowed = owner ? await allowedFor(db, owner, asker, now()) : [];
   let facts = asFacts(allowed);
@@ -364,7 +370,7 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
       q.status = "answered";
       (out.answers ??= []).push({ id: q.id, question: q.question, answer: q.answer });
       say(e, agentOf(s), q.answer, by(a.byModel));
-      if (a.src === "public" || a.src === "protected") await audit(db, uidOf(e, s), toName, q.question, q.answer, a.src);
+      if (a.src === "public" || a.src === "protected" || a.src === "memory") await audit(db, uidOf(e, s), toName, q.question, q.answer, a.src === "public" ? "public" : "protected");
     } else if (hasOwner(e, s)) {
       q.status = "pending";
       (out.pending ??= []).push(q.question);
@@ -402,6 +408,7 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
   if (mv.action === "propose") {
     mv.proposal = sized(e, mv.proposal);
     (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(mv.proposal);
+    e.negotiation.lastBy = s;
     out.proposal = mv.proposal;
     out.note = mv.message;
     e.phase = "negotiating";
@@ -448,10 +455,14 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
   if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", listPrice: e.offer.price ?? undefined, hint: await hint() });
 }
 
-const myTurnToMove = (e: Engagement, s: Side) => {
+export const myTurnToMove = (e: Engagement, s: Side) => {
   const n = e.negotiation, mine = s === "provider" ? n.provider.length : n.requester.length, theirs = s === "provider" ? n.requester.length : n.provider.length;
-  // The provider opens with its quote once the questions are settled; then turns alternate.
-  return s === "provider" ? mine === theirs : theirs > mine;
+  // The provider opens with its quote once the questions are settled; then turns alternate: whoever made the last
+  // offer waits for the other. A buyer can make more than one offer in a row (typed offers, then their agent's), so
+  // counting offers isn't enough — that once left a conversation where neither side moved. Conversations from before
+  // `lastBy` was kept fall back to the counts.
+  if (n.lastBy) return n.lastBy !== s;
+  return s === "provider" ? mine <= theirs : theirs > mine;
 };
 
 const pendingFor = (e: Engagement, s: Side) => !!e.waiting[s];
@@ -470,7 +481,7 @@ export async function providerTurn(db: Docs, model: Model | null, e: Engagement,
   if (!e.gathered && e.offer.factId && !e.briefId?.startsWith("direct-")) {
     e.gathered = true;
     const fact = (await db.get(FACTS, e.offer.factId)) as Fact | null;
-    const usual = domainOf(e.offer.category ?? "")?.sellerAsks ?? [];
+    const usual: string[] = []; // written per listing and request by Gemini — no canned questions by category
     const g = await decide(model, GatherTask, { offering: fact?.text ?? e.offer.title, brief: e.brief, answered: e.qa.filter(q => q.answer).map(q => q.question), usual });
     // With bookable time slots the buyer picks a time when booking — asking "what time suits you?" only stalls the
     // conversation on a question the slot picker already answers.
@@ -590,6 +601,7 @@ function applyTheirs(e: Engagement, me: Side, t: Turn) {
   if (t.proposal && !t.proposal.items?.length && t.proposal.terms?.quantity === undefined) t.proposal = sized(e, t.proposal);
   if (t.proposal && !(them === "provider" ? e.negotiation.provider : e.negotiation.requester).some(p => p.id === t.proposal!.id)) {
     (them === "provider" ? e.negotiation.provider : e.negotiation.requester).push(t.proposal);
+    e.negotiation.lastBy = them;
     e.phase = "negotiating";
   }
   if (t.accept) {
@@ -722,6 +734,7 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
     else { p.price = unit; p.items = [{ id: "item_1", title: e.offer.title, quantity: units - 1, unitPrice: unit }, { id: "item_2", title: e.offer.title, quantity: 1, unitPrice: total - unit * (units - 1) }]; }
   }
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
+  e.negotiation.lastBy = s;
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
   e.negotiation.confirmed = { requester: s === "requester", provider: s === "provider" };
   (e.negotiation.confirmedBy ??= {})[s] = "owner";

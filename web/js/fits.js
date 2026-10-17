@@ -67,7 +67,8 @@ export function fitsReasons(notes, listing, asked = "") {
   const found = [];
   for (const n of notes ?? []) {
     let best = null;
-    for (const said of clauses(n?.text)) {
+    // A remembered answer counts by what the owner said, not by the question they were asked.
+    for (const said of clauses(n?.source === "answer" ? n.answer : n?.text)) {
       if (NEGATION.test(said)) continue;
       const mine = [...new Set(words(said))].filter(w => !skip.has(w));
       for (const p of sides) {

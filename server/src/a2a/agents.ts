@@ -14,6 +14,7 @@ import { ClientFactory, JsonRpcTransportFactory, type Client } from "@a2a-js/sdk
 import type { Model } from "../ai/gemini.ts";
 import type { Docs } from "../docs.ts";
 import { moneyText } from "../market/types.ts";
+import { brandCase } from "../market/read.ts";
 import type { Engagement, Fact, Profile } from "../core/model.ts";
 import { FACTS, PROFILES } from "../core/policy.ts";
 import { byHandle, chooseOffering } from "../core/directory.ts";
@@ -182,8 +183,8 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
     },
     // Each thing on offer, with what it costs and the questions this agent can answer about it.
     ...offers.filter(f => f.offer && f.offer.status !== "sold").slice(0, 8).map(f => ({
-      id: `offer-${f.id}`, name: f.offer!.title.split(" · ")[0].slice(0, 80),
-      description: `${f.offer!.title}${f.offer!.price?.amount != null ? ` — ${moneyText({ amount: f.offer!.price.amount, currency: f.offer!.price.currency ?? "INR", period: f.offer!.price.period })}` : ""}. ${tracked[f.id] === "quantity" ? "Stock is tracked: ask whether it's in." : tracked[f.id] === "slots" ? "Bookable time slots." : ""}`.trim(),
+      id: `offer-${f.id}`, name: brandCase(f.offer!.title.split(" · ")[0]).slice(0, 80),
+      description: `${brandCase(f.offer!.title)}${f.offer!.price?.amount != null ? ` — ${moneyText({ amount: f.offer!.price.amount, currency: f.offer!.price.currency ?? "INR", period: f.offer!.price.period })}` : ""}. ${tracked[f.id] === "quantity" ? "Stock is tracked: ask whether it's in." : tracked[f.id] === "slots" ? "Bookable time slots." : ""}`.trim(),
       tags: [f.offer!.category].filter(Boolean) as string[],
       examples: forOffer(f, tracked[f.id] ?? null).map(x => x.text),
       inputModes: ["text/plain", "application/json"], outputModes: ["text/plain", "application/json"],

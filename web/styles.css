@@ -522,3 +522,62 @@ details.improve.done .improve-title { color: var(--fresh); }
 .danger-zone > summary { color: var(--danger); }
 .danger-card { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
 .danger-card b { color: var(--danger); font-family: var(--mono); }
+
+/* About me › answers your agent remembers */
+.memory summary { cursor: pointer; list-style: none; }
+.mem-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
+.mem-row:first-of-type { border-top: 0; }
+.seg.compact button { padding: 4px 9px; min-height: 28px; font-size: 12px; }
+@media (max-width: 520px) { .mem-row { flex-wrap: wrap; } }
+.chip.skel { height: 34px; border-color: transparent; background: linear-gradient(90deg, var(--surface) 0%, var(--hairline) 50%, var(--surface) 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+@keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .chip.skel { animation: none; } }
+
+/* My card: the share card (who, what's on offer, record from receipts, the QR) */
+.share-card { display: grid; gap: 14px; justify-items: stretch; max-width: 460px; }
+.share-top { display: flex; gap: 12px; align-items: center; }
+.share-name { font-size: 20px; letter-spacing: -0.01em; }
+.share-stats { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
+.share-stats > div { display: grid; gap: 2px; padding: 10px 12px; text-align: center; }
+.share-stats > div + div { border-left: 1px solid var(--hairline); }
+.share-stats b { font-size: 20px; }
+.share-stats span { font-size: 12px; color: var(--text2); }
+.share-card .qr { width: 200px; height: 200px; justify-self: center; padding: 8px; border-radius: 10px; }
+.share-actions { justify-content: center; }
+.share-actions .btn.accent { min-width: 140px; }
+
+/* The agent card, readable */
+.ac-head { display: flex; gap: 12px; align-items: center; }
+.ac-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+.ac-caps span { font-size: 12px; padding: 5px 9px; border-radius: 999px; border: 1px solid var(--hairline); background: var(--surface); }
+.ac-offer { display: flex; gap: 10px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--hairline); }
+.ac-offer:first-child { border-top: 0; }
+.ac-offer b { flex: 1; min-width: 0; }
+
+/* Checkout (side panel) */
+.co-order, .co-pay { display: grid; gap: 10px; }
+.co-lines { display: grid; gap: 6px; padding-top: 10px; border-top: 1px dashed var(--hairline); }
+.co-total { font-size: 17px; padding-top: 6px; border-top: 1px solid var(--hairline); }
+.btn.gpay.co-gpay { width: 100%; min-height: 48px; font-size: 17px; border-radius: 10px; }
+.co-pay .btn.secondary { width: 100%; min-height: 44px; }
+.co-next { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.co-done { justify-items: center; text-align: center; gap: 8px; padding: 22px 16px; }
+.co-tick { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; color: #fff; background: var(--fresh); animation: rise .35s cubic-bezier(.2,.8,.2,1) both; }
+
+/* Receipts: what they do for the network */
+.net-card { display: grid; gap: 10px; }
+.net-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.net-grid > div { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; }
+.net-grid b { font-size: 22px; }
+.net-grid span { font-size: 12px; color: var(--text2); line-height: 1.4; }
+@media (max-width: 520px) { .net-grid { grid-template-columns: 1fr; } }
+
+/* Discovery: one request, several agents at once */
+.disc { display: grid; gap: 10px; }
+.disc-list { display: grid; gap: 6px; }
+.disc-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .15s; }
+.disc-row:hover { border-color: var(--accent); }
+.disc-row.needs { border-color: var(--wait, #e0a100); box-shadow: inset 3px 0 0 var(--wait, #e0a100); }
+.disc-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.disc-text .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.disc-side { display: grid; justify-items: end; gap: 4px; }
