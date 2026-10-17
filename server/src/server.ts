@@ -854,7 +854,8 @@ app.post("/api/offers/photo", route(async req => {
 app.get("/public/photos/:id", async (req, res) => {
   const p = await loadPhoto(db, String(req.params.id).slice(0, 40), env.PHOTO_BUCKET).catch(() => null);
   if (!p) { res.status(404).json({ error: "photo not found" }); return; }
-  res.set({ "content-type": p.mimeType, "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" }).send(p.body);
+  // Kept by browsers only, not the CDN: a photo whose listing is deleted (or made private) stops showing at once.
+  res.set({ "content-type": p.mimeType, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" }).send(p.body);
 });
 app.post("/api/facts/:id/delete", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
