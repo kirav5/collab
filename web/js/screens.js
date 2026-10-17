@@ -804,7 +804,7 @@ export const screens = {
         <div class="card set-card">
           <div class="set-row"><div><b>Theme</b><span class="small faint">Auto follows your device</span></div><div class="seg">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" data-act="theme" data-value="${k}">${v}</button>`).join("")}</div></div>
           <div class="set-row"><div><b>Animations</b><span class="small faint">Motion when things change</span></div><div class="seg">${[["on", "On"], ["off", "Off"]].map(([k, v]) => `<button class="${(document.documentElement.dataset.motion ?? "on") === k ? "on" : ""}" data-act="motion" data-value="${k}">${v}</button>`).join("")}</div></div>
-          <div class="set-row"><div><b>Incognito</b><span class="small faint">${S.incognito ? "On — chats aren't kept or synced, and nothing you say is remembered" : "Chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
+          <div class="set-row"><div><b>Don't keep history</b><span class="small faint">${S.incognito ? "On — new chats aren't kept or synced, and nothing you say is remembered" : "New chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
         <div class="card set-card">${label("Privacy & AI", "sq")}<dl class="kv small">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
           <div class="set-row"><div><b>Answer my notes with</b><span class="small faint">${{ "device-only": "Gemma on this device — nothing sent", "my-devices": "Gemma on your devices — never the cloud", cloud: "Your devices, else Gemini", "cloud-only": "Always Gemini in the cloud" }[engine.mode] ?? ""}</span></div></div>
           <div class="seg wide">${[["device-only", "This device"], ["my-devices", "My devices"], ["cloud", "Devices, then cloud"], ["cloud-only", "Cloud"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
@@ -834,7 +834,7 @@ export const screens = {
         S.incognito = el.dataset.value === "on";
         try { localStorage.setItem("collab-incognito", S.incognito ? "on" : "off"); } catch {}
         session.incognito = S.incognito;
-        h.toast(S.incognito ? "Incognito on — new chats aren't kept, and nothing is remembered." : "Incognito off.");
+        h.toast(S.incognito ? "On — new chats aren't kept, and nothing is remembered." : "History is kept again.");
         h.paint(); return true;
       }
       if (a === "motion") {

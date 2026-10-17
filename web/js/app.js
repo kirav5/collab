@@ -203,7 +203,7 @@ function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
   const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
-    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="Chats aren't kept; nothing is remembered">◐ Incognito</span> ` : ""}@${esc(S.profile.handle)}</span>`;
+    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="New chats aren't kept; nothing is remembered">◐ Not kept</span> ` : ""}@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
   $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
@@ -508,7 +508,7 @@ function logStream(ids, filter = "all") {
   rows.sort((a, b) => a.at - b.at);
   const who = r => (r.who === "system" ? "" : r.who.startsWith(r.side) ? (r.who.endsWith("_agent") ? "your agent" : "you") : `${r.them.split(" ")[0]}'s agent`);
   const kind = r => (r.who === "system" ? "note" : /offer|counter|\₹|price/i.test(r.text) ? "propose" : /confirm|agreed|accept/i.test(r.text) ? "accept" : /declin|walk|no deal|end/i.test(r.text) ? "decline" : "say");
-  return rows.length ? rows.map(r => `<div class="lg ${r.who === "system" ? "sys" : r.who.startsWith(r.side) ? "me" : "them"}"><span class="lg-t">${new Date(r.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+  return rows.length ? rows.map(r => `<div class="lg ${r.who === "system" ? "sys" : r.who.startsWith(r.side) ? "me" : "them"}"><span class="lg-t">${new Date(r.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
     <span class="lg-who">${ids.length > 1 ? `<span class="lg-name">${esc(r.them.split(" ")[0])}</span> ` : ""}${esc(who(r))}${r.who === "system" ? "" : ` → <span class="lg-kind ${kind(r)}">${kind(r)}</span>`}</span>
     <span class="lg-text">${esc(r.text)}</span></div>`).join("") : `<p class="small muted">Nothing here yet.</p>`;
 }
