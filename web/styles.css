@@ -106,13 +106,22 @@ textarea.field { resize: vertical; min-height: 64px; }
 .needs { position: sticky; top: 0; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 /* A screen (Deals, About me…) opens beside the chat on a wide window, and in place of it on a narrow one. */
-.app.split { grid-template-columns: 290px minmax(0, 1fr) minmax(440px, 46%); }
-.panel { border-left: 1px solid var(--hairline); display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.app.split { grid-template-columns: 290px minmax(320px, 1fr) var(--panel-w, minmax(440px, 46%)); }
+.panel { border-left: 1px solid var(--hairline); display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); position: relative; }
+/* The divider: a wide, invisible grip on the panel's edge that shows the brand colour when it's used. */
+.resizer { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; z-index: 5; touch-action: none; }
+.resizer::after { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: transparent; transition: background .15s; }
+.resizer:hover::after, .resizer:focus-visible::after, .app.resizing .resizer::after { background: var(--accent); }
+.resizer::before { content: ""; position: absolute; left: 2px; top: 50%; width: 6px; height: 36px; margin-top: -18px; border-radius: 3px; background: color-mix(in srgb, var(--text3) 45%, var(--surface)); border: 1px solid var(--surface); z-index: 1; transition: background .15s; }
+.resizer:hover::before, .resizer:focus-visible::before, .app.resizing .resizer::before { background: var(--accent); }
+.app.resizing { cursor: col-resize; user-select: none; }
+.app.resizing iframe { pointer-events: none; }
+@media (max-width: 899px) { .resizer { display: none; } }
 .panel .inner { max-width: none; }
 .panel-top .close { margin-left: auto; }
 /* Middle widths (900–1180 px): the chat stays in the middle and what's open is squeezed to the right; the menu narrows.
    Narrower than that, what's open covers the chat (one thing at a time on a tablet or phone). */
-@media (max-width: 1180px) and (min-width: 900px) { .app.split { grid-template-columns: 230px minmax(320px, 1fr) minmax(340px, 44%); } }
+@media (max-width: 1180px) and (min-width: 900px) { .app.split { grid-template-columns: 230px minmax(320px, 1fr) var(--panel-w, minmax(340px, 44%)); } }
 @media (max-width: 899px) { .app.split { grid-template-columns: 290px 1fr; } .app.split .main { display: none; } .panel { border-left: 0; } }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--hairline); min-height: 49px; }
 .topbar .menu { display: none; }

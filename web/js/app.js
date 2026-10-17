@@ -124,8 +124,9 @@ async function boot() {
       <div class="composer" id="composer"><form class="box" id="compose">
         <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section>
-      <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
+      <aside class="panel" id="panel" hidden><div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize" tabindex="0" title="Drag to resize · double-click to reset"></div><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
   startPanel(paint);
+  startResizer();
   // Sending stops the microphone first, so nothing it still hears is written back into the cleared box.
   $("#compose").onsubmit = e => { e.preventDefault(); const text = $("#input").value; stopVoice(); $("#input").value = ""; send(text); };
   voiceInput();
@@ -870,6 +871,34 @@ const findCard = el => {
 };
 
 // MARK: - Actions
+
+/**
+ * The divider between the chat and what's open beside it: drag (or arrow keys) to give either more room; double-click
+ * puts it back. The width is kept on this device.
+ */
+function startResizer() {
+  const app = $("#app"), bar = $("#resizer");
+  if (!app || !bar) return;
+  const KEY = "collab.panelWidth", min = 320;
+  const max = () => app.getBoundingClientRect().width - ($("#sidebar")?.getBoundingClientRect().width ?? 0) - 320;
+  const set = w => { const v = Math.round(Math.max(min, Math.min(max(), w))); app.style.setProperty("--panel-w", `${v}px`); return v; };
+  const save = v => { try { localStorage.setItem(KEY, String(v)); } catch { /* this session only */ } };
+  try { const kept = Number(localStorage.getItem(KEY)); if (kept > 0) app.style.setProperty("--panel-w", `${kept}px`); } catch { /* none kept */ }
+  bar.addEventListener("pointerdown", e => {
+    e.preventDefault(); bar.setPointerCapture(e.pointerId); app.classList.add("resizing");
+    const right = app.getBoundingClientRect().right;
+    const move = ev => set(right - ev.clientX);
+    const up = ev => { bar.releasePointerCapture(ev.pointerId); app.classList.remove("resizing"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up); save(set(right - ev.clientX)); };
+    bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up);
+  });
+  bar.addEventListener("keydown", e => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const now = $("#panel").getBoundingClientRect().width;
+    save(set(now + (e.key === "ArrowLeft" ? 32 : -32)));
+  });
+  bar.addEventListener("dblclick", () => { app.style.removeProperty("--panel-w"); try { localStorage.removeItem(KEY); } catch { /* none kept */ } });
+}
 
 /** Wide enough for the chat and a screen side by side (styles.css: below 900 px what's open covers the chat). */
 const sideBySide = () => matchMedia("(min-width: 900px)").matches;
