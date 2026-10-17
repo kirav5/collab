@@ -136,7 +136,7 @@ export async function chat(text, recent, area, open = null) {
       const d = await api("/api/briefs/draft", { text, here: area });
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
-      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before sellers' agents can act on this — tap what fits, or send it as it is." : "Here's what your agent will ask for. Adjust it, then send.",
+      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before others' agents can act on this — tap what fits, or send it as it is." : "Here's what your agent will ask for. Adjust it, then send.",
         cards: [{ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" }] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
@@ -156,7 +156,7 @@ export async function chat(text, recent, area, open = null) {
       // A plain answer first; finding sellers is offered, never started on its own. The question and its answer are
       // kept as a Private chat memory (your agent can recall them; they're never shared).
       api("/api/facts", { tier: "private", source: "chat", text: `Asked: “${text.slice(0, 300)}” — answer: ${route.reply}` }).catch(() => {});
-      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: "Find sellers near me", text: route.find }] }] : [] };
+      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: "Find people near me", text: route.find }] }] : [] };
     }
     default:
       return { text: route.reply ?? "I can remember things for you, answer from your notes, find people for anything you need, or publish what you offer.", cards: [] };
@@ -183,10 +183,22 @@ export async function offerReply(text, d, extra = {}) {
   const said = d.offer ? "Here's your listing. Answer what you can — your agent handles those questions for you."
     : d.basics ? `Looks like ${d.basics.label.toLowerCase()}. Add a price and area to list it.`
     : "This will be a public note others' agents can find.";
-  // A count the seller stated ("4 available") starts their stock, so it doesn't have to be typed again.
+  // A count stated in the words ("4 available") starts the stock, so it doesn't have to be typed again.
   const stated = Number(d.offer?.attributes?.quantity);
+  // Common questions the listing already answers start answered: a question whose name matches one of the listing's own
+  // details (its attributes, or the condition Gemini read from the photo) takes that value; the owner can change it.
+  const norm = x => String(x ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const known = Object.entries(d.offer?.attributes ?? {}).map(([k, v]) => [norm(k.replace(/_/g, " ")), String(v)]);
+  if (extra.photo?.condition && extra.photo.condition !== "n/a") known.push(["condition", extra.photo.condition]);
+  const missingAnswers = {};
+  for (const m of d.missing ?? []) {
+    // Same name, or the same last word, which names the thing ("Item condition" ↔ "condition"; "item" ↔ no).
+    const last = x => x.split(" ").at(-1), l = norm(m.label), hit = known.find(([k]) => k && (l === k || last(l) === last(k)));
+    if (hit) missingAnswers[m.label] = m.options?.find(o => norm(o) === norm(hit[1])) ?? hit[1];
+  }
   return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review",
-    ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}), ...extra }] };
+    ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}),
+    ...(Object.keys(missingAnswers).length ? { missingAnswers, answeredMissing: (d.missing ?? []).every(m => missingAnswers[m.label]) } : {}), ...extra }] };
 }
 
 // MARK: - What only this device can do

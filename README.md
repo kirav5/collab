@@ -78,7 +78,7 @@ the seller sees the buyer's name.
 
 ## For shops and shoppers
 
-Menu: **Deals · My shop · About me · Privacy · Settings**. Each match has one main button (Book within your limit,
+Menu: **Activity · My card · About me · Privacy · Settings** — the same words for anyone, whether they run a shop, teach, or sell one phone. Each match has one main button (Book within your limit,
 else Negotiate). **Buy again** repeats a paid deal in one tap; Deals filters by To do · Sold · Bought · Done. Speak
 instead of typing (Indian English or Hindi). Sellers list from a **photo** (Gemini reads the item; the seller sets
 the price), publish first and improve the listing after, see stock on the card and get a **low-stock alert**. A

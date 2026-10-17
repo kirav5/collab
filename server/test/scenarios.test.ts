@@ -545,7 +545,7 @@ test("rules in the seller's words: at most 10 per buyer, closes alone at ₹420+
   await as("ru-s", "/api/resources", { factId: f.id, type: "quantity", onHand: 100 });
   const words = "Don't go below ₹400 a lamp, max 10 per buyer, pickups only on weekdays after 5 pm, and close deals yourself above ₹420";
   const read = await as("ru-s", "/api/rules/read", { text: words, side: "seller", factId: f.id });
-  assert.ok(read.lines.some((l: any) => /Most per buyer: 10/.test(l.text)));
+  assert.ok(read.lines.some((l: any) => /Most per person: 10/.test(l.text)));
   const saved = await as("ru-s", `/api/facts/${f.id}/rules`, { text: words, rules: read.rules });
   assert.equal(saved.fact.offer.maxPerBuyer, 10); assert.ok(saved.fact.offer.policies.some((p: any) => p.label === "Pickup"));
   const item = (await as("ru-b", "/api/people/ru-shop")).shop.find((i: any) => i.factId === f.id);

@@ -55,7 +55,7 @@ test("a manual count goes stale: availability becomes unknown, not a number, unt
   assert.equal((await hold(db, r.id, { holder: "a", ttlSec: 900 }, later)).qty, 1);
   await assert.rejects(setStock(db, r.id, "intruder", 99, later), /No such resource/);
   await assert.rejects(setStock(db, r.id, "shop", -1, later), /zero or more/);
-  assert.equal(availabilityText(null, T), "Availability isn't tracked — the seller will confirm.");
+  assert.equal(availabilityText(null, T), "Availability isn't tracked — they'll confirm.");
 });
 
 test("asked about free times, the agent names the next ones, not a count", async () => {

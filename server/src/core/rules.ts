@@ -68,7 +68,7 @@ export function readRulesPlain(text: string, c: RulesContext): AgentRules {
       if (label && !r.terms.some(x => x.label === label)) r.terms.push({ label, text: sentence(cl) });
     }
   } else {
-    r.limit = num(t.match(new RegExp(String.raw`(?:up to|upto|at most|no more than|not more than|max(?:imum)?|budget(?: is)?|pay up to)\s*${RS}${NUM}(?!\s*(?:[a-z]+\s+)?(?:per buyer|pieces|units))`)));
+    r.limit = num(t.match(new RegExp(String.raw`(?:up to|upto|at most|no more than|not more than|max(?:imum)?|budget(?: is)?|pay up to)\s*${RS}${NUM}(?!\s*(?:[a-z]+\s+)?(?:per (?:buyer|person|customer)|pieces|units))`)));
     r.closeAt = num(t.match(new RegExp(String.raw`(?:close|agree|accept|confirm|buy)[^.;]*?(?:below|under|at or below|for less than)\s*${RS}${NUM}`)));
     r.quantity = offeredQuantity(text);
     for (const cl of clauses) {
@@ -170,7 +170,7 @@ export function rulesLines(r: AgentRules, currency = "INR", unit: string | null 
     if (r.floor != null) out.push({ text: `Lowest price: ${m(r.floor)}`, private: true });
     if (r.autonomy === "close") out.push({ text: r.closeAt != null ? `Your agent agrees on its own at ${m(r.closeAt)} or more${r.floor != null ? `; between ${m(r.floor)} and ${m(r.closeAt - 1)} you give the final yes` : ""}` : "Your agent agrees on its own inside your lowest price", private: true });
     else out.push({ text: "Your agent negotiates; you give the final yes", private: true });
-    if (r.maxPerBuyer != null) out.push({ text: `Most per buyer: ${r.maxPerBuyer}`, private: false });
+    if (r.maxPerBuyer != null) out.push({ text: `Most per person: ${r.maxPerBuyer}`, private: false });
     for (const t of r.terms) out.push({ text: `${t.label}: ${t.text}`, private: false });
   } else {
     if (r.limit != null) out.push({ text: `Most you'll pay: ${m(r.limit)}`, private: true });

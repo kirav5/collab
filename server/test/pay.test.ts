@@ -33,7 +33,7 @@ test("a chat deal gets a seller-signed cart; only the buyer pays; tampering show
   assert.equal(agreed.payment?.cart.total.value, 100);
   assert.deepEqual(checkPayment(agreed, verify), { cartOk: true, paymentOk: null });
 
-  assert.throws(() => pay(structuredClone(agreed), "requester", sign, 1), /Only the buyer/);
+  assert.throws(() => pay(structuredClone(agreed), "requester", sign, 1), /Only the person getting it pays/);
   const paid = structuredClone(agreed);
   pay(paid, "provider", sign, Math.floor(Date.now() / 1000));
   assert.equal(paid.payment?.status, "paid");
