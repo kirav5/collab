@@ -17,18 +17,22 @@ export async function passQR(link) {
  * The pass. `qr`: show the code to scan (the buyer's view). `seller`: the viewer is the seller — they mark it done here.
  * Payment is stated as it was made: in the app, or outside it (and who said so).
  */
-export function passHTML(d, { qr = "", seller = false, link = "" } = {}) {
+export function passHTML(d, { qr = "", seller = false, link = "", manage = false } = {}) {
   const k = passKind(d), item = d.quantity > 1 ? `${d.quantity} × ${d.item.split(" · ")[0]}` : d.item.split(" · ")[0];
   const paid = d.payment === "outside" ? (d.markedBy === "seller" ? "Paid outside the app" : "Buyer says paid outside the app — check you received it") : "Paid in the app";
   // In-app payments are simulated: one quiet tag, so a seller never hands over thinking money arrived.
   const demo = d.payment !== "outside" && (d.mode === "test" || d.payment === "in_app_test") ? ` <span class="tag stale">Demo payment</span>` : "";
-  const state = d.collectedAt ? `<span class="pass-state done">✓ ${k.done} · ${esc(at(d.collectedAt))}</span>` : `<span class="pass-state">${k.ready}</span>`;
+  const state = d.cancelled ? `<span class="pass-state" style="color:var(--danger)">Cancelled</span>`
+    : d.collectedAt ? `<span class="pass-state done">✓ ${k.done} · ${esc(at(d.collectedAt))}</span>` : `<span class="pass-state">${k.ready}</span>`;
+  // A booking can still move or be called off until it happens — by either side, from the pass.
+  const changeable = manage && d.kind === "booking" && d.slot && d.slot > Date.now() / 1000 && !d.collectedAt && !d.cancelled;
   return `<div class="pass ${d.collectedAt ? "is-done" : ""}">
     <div class="pass-top"><span class="label sq ink">${k.name}</span>${state}</div>
-    ${qr && !d.collectedAt ? `<div class="pass-qr" aria-label="${esc(k.name)} QR code">${qr}</div>` : ""}
+    ${qr && !d.collectedAt && !d.cancelled ? `<div class="pass-qr" aria-label="${esc(k.name)} QR code">${qr}</div>` : ""}
     <div class="pass-item"><b>${esc(item)}</b><span class="pass-amount">${rupees(d.amount)}</span></div>
     <dl class="pass-kv"><dt>Payment</dt><dd>${esc(paid)}${demo}</dd>${d.slot ? `<dt>Time</dt><dd>${esc(at(d.slot))}</dd>` : ""}<dt>Buyer</dt><dd>${esc(d.buyer)}</dd><dt>Seller</dt><dd>@${esc(d.sellerHandle)}</dd></dl>
-    ${d.collectedAt ? "" : seller ? `<button class="btn accent" data-act="pass-collect">Mark ${k.done.toLowerCase()}</button><span class="small faint">Check the buyer's name first.</span>`
+    ${changeable ? `<div class="row"><button class="btn secondary compact" data-act="pass-move">Change time</button><button class="btn quiet compact" data-act="pass-cancel">Cancel booking</button></div><div class="row pass-times" style="flex-wrap:wrap;gap:6px"></div>` : ""}
+    ${d.collectedAt || d.cancelled ? "" : seller ? `<button class="btn accent" data-act="pass-collect">Mark ${k.done.toLowerCase()}</button><span class="small faint">Check the buyer's name first.</span>`
       : link ? `<span class="small faint">${qr ? `Show this to @${esc(d.sellerHandle)} — they scan it once.` : `Send @${esc(d.sellerHandle)} this pass's link — keep it private.`}</span><button class="btn quiet compact" data-act="pass-copy" data-link="${esc(link)}">Copy link</button>` : ""}
   </div>`;
 }

@@ -4,13 +4,13 @@
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
-import { autonomyOf, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
+import { autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, storeCard } from "./cards.js";
+import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { screens } from "./screens.js";
@@ -116,10 +116,11 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><label class="mic" for="photo-in" title="Sell from a photo" aria-label="Sell something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
   voiceInput();
+  $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
   document.addEventListener("click", e => {
     const el = e.target.closest?.('[data-act="eng-pay"][data-gpay]');
@@ -258,6 +259,8 @@ async function chatHTML() {
     const facts = await savedFacts();
     for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
   }
+  // Matches: "Fits you" reasons come from the private notes kept on this device, read here and never sent anywhere.
+  if (cur.messages.some(m => m.cards?.some(c => c.type === "brief" && c.step === "matches"))) setNotesHere(await cachedNotes());
   return cur.messages.map(messageHTML).join("");
 }
 
@@ -277,6 +280,27 @@ function emptyChat() {
   return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It deals with anyone's agent for you.</span></h1>
     <div class="grid-tiles">${tiles.map(([l, p, short, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(short)}</p><span class="arrow">↗</span></button>`).join("")}</div>
     ${privacyCard()}`;
+}
+
+/**
+ * Sell from a photo: made small on the phone (longest side 1024 px, JPEG), read by Gemini into a listing sentence,
+ * then the usual listing card (with the photo on it) — the seller still sets the price and publishes. What's typed in
+ * the box goes with it as a caption ("₹450, two available").
+ */
+async function sellFromPhoto(file) {
+  const input = $("#input"), caption = input.value.trim();
+  toast("Reading your photo…");
+  try {
+    const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
+    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    const image = cv.toDataURL("image/jpeg", 0.82);
+    const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
+    input.value = "";
+    // The preview is the copy on this phone: the server shows the photo to others only once it's on a public listing.
+    const preview = URL.createObjectURL(await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.82)));
+    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: preview }))) toast("Couldn't make a listing from that — try typing what it is.");
+  } catch (err) { toast(err.message || "Couldn't read that photo."); }
 }
 
 /** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
@@ -360,11 +384,31 @@ async function openPass(path) {
   const o = document.createElement("div");
   o.className = "overlay";
   o.setAttribute("role", "dialog"); o.setAttribute("aria-modal", "true");
-  const draw = () => { o.innerHTML = `<div class="sheet">${passHTML(d, { qr, seller, link })}<button class="btn secondary" data-act="overlay-close">Close</button></div>`; };
+  const draw = () => { o.innerHTML = `<div class="sheet">${passHTML(d, { qr, seller, link, manage: !!eng })}<button class="btn secondary" data-act="overlay-close">Close</button></div>`; };
+  // Changing or cancelling a booking, from the pass: the result is the same pass, redrawn.
+  const booking = async body => {
+    const x = await api(`/api/engagements/${encodeURIComponent(pid)}/booking`, body);
+    live.engagements.set(x.id, x); d = await load(); draw(); refresh(openScreen);
+  };
   draw();
   document.body.append(o);
   o.addEventListener("click", async e => {
     if (e.target === o || e.target.closest('[data-act="overlay-close"]')) return o.remove();
+    if (e.target.closest('[data-act="pass-move"]')) {
+      const box = o.querySelector(".pass-times");
+      box.innerHTML = `<span class="spinner"></span>`;
+      const r = await api(`/api/engagements/${encodeURIComponent(pid)}/slots`).catch(err => ({ slots: [], error: err.message }));
+      const label_ = sl => new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined });
+      box.innerHTML = r.slots?.length ? r.slots.slice(0, 8).map(sl => `<button class="chip" data-act="pass-move-to" data-slot="${esc(sl.id)}">${esc(label_(sl))}</button>`).join("") : `<span class="small muted">${esc(r.error ?? "No other free times right now.")}</span>`;
+      return;
+    }
+    const to = e.target.closest('[data-act="pass-move-to"]');
+    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message); } return; }
+    if (e.target.closest('[data-act="pass-cancel"]')) {
+      if (!confirm("Cancel this booking? The time is freed for others and they're told.")) return;
+      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message); }
+      return;
+    }
     const copy = e.target.closest('[data-act="pass-copy"]');
     if (copy) { await navigator.clipboard.writeText(copy.dataset.link).catch(() => {}); return toast("Link copied — keep it private."); }
     const b = e.target.closest('[data-act="pass-collect"]');
@@ -1010,26 +1054,26 @@ async function cardAction(a, el, { s, m, c }) {
     const r = await api("/api/terms/suggest", { category: c.offer?.category ?? "", text: c.publicText ?? c.text }).catch(err => { toast(err.message); return null; });
     if (r?.terms.length) c.terms = r.terms;
     else if (r) toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own.");
-    c.instant = !!el.closest(".card")?.querySelector("[data-instant-new]")?.checked;
   }
   if (a === "offer-publish") {
     if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
     busy(el, true, "Publishing");
     // The details buyers usually ask about, answered here, join the public text; the terms are saved as the seller's own.
-    const card = el.closest(".card");
-    const extra = [...card.querySelectorAll("[data-missing]")].filter(i => i.value.trim()).map(i => `${i.dataset.missing}: ${i.value.trim().replace(/[.]+$/, "")}.`)
-      .filter(x => !String(c.publicText ?? c.text).includes(x)).join(" ");
-    const terms = [...card.querySelectorAll("[data-term-text]")].map(i => ({ label: i.previousElementSibling?.value.trim() ?? "", text: i.value.trim() })).filter(t => t.label && t.text);
-    const instant = !!card.querySelector("[data-instant-new]")?.checked;
+    // All read from the card's state (what was typed is kept there), not from whichever improvement panel is open.
+    const base = String(c.publicText ?? c.text);
+    const extra = (c.missing ?? []).map(m => [m.label, String(c.missingAnswers?.[m.label] ?? "").trim()]).filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${v.replace(/[.]+$/, "")}.`).filter(x => !base.includes(x)).join(" ");
+    const terms = (c.terms ?? []).map(t => ({ label: String(t.label ?? "").trim(), text: String(t.text ?? "").trim() })).filter(t => t.label && t.text);
+    const instant = !!c.instant;
     if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
     // A note being made public is published in place (no private copy left behind).
-    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount) });
+    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount), ...(c.photo ? { photoId: c.photo.id } : {}) });
     factsCache = null;
     if (fact.floorKeptPrivate) toast("Your lowest price was left out of the public text — it stays private.");
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
     // How many they have: tracked from the start, so "is it in stock?" never needs them.
-    const stock = Number(card.querySelector('[data-edit="stock"]')?.value);
-    if (fact.offer && Number.isInteger(stock) && stock >= 0 && card.querySelector('[data-edit="stock"]')?.value !== "") await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
+    const stock = c.stock;
+    if (fact.offer && Number.isInteger(stock) && stock >= 0) await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
     // Weekly hours: bookable times two weeks ahead, in the seller's own time zone, refilled by the server.
     if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message));
     if (c.offer && c.floor) {
@@ -1040,6 +1084,8 @@ async function cardAction(a, el, { s, m, c }) {
     if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
     c.step = "published"; c.publicText = fact.text;
   }
+  // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
+  if (a === "offer-improve") c.improve = c.improve === el.dataset.k ? null : el.dataset.k;
   // Making a note public goes through the offering card when it's something offered.
   if (a === "tier" && el.dataset.tier === "public" && c.fact && c.fact.tier !== "public") { busy(el, true, "Reading"); if (await publicIntake(c.fact.text, c.fact.id)) return; }
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
@@ -1052,12 +1098,12 @@ async function cardAction(a, el, { s, m, c }) {
  * as an offering card (price and where asked for if missing, buyers' usual questions with tap-to-answer options, a
  * written floor kept private) and publishes in place of the note. Anything else is published as it is (false).
  */
-async function publicIntake(text, noteId = null) {
+async function publicIntake(text, noteId = null, photo = null) {
   const d = await api("/api/offers/draft", { text, here: S.profile?.area, note: true }).catch(() => null);
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 Sell this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
   S.screen = "chat"; paint();
   return true;

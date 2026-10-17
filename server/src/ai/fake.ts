@@ -66,6 +66,11 @@ function answer(req: CompleteRequest): object {
       : /visit/.test(how) ? [{ label: "Available?", text: `Is ${item} still available?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Visit", text: "When can I come to see it?" }]
       : [{ label: "In stock?", text: `Do you have ${item} in stock?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Collect", text: "Can I order now and collect today?" }] };
   }
+  if (ins.startsWith("Read a photo of something")) {
+    // Offline there's no seeing: the stand-in names a generic item (tests send the caption they expect read).
+    const caption = quoted(p, "Seller's caption");
+    return { item: caption ? caption.split(/[,.]/)[0].slice(0, 40) || "Desk lamp" : "Desk lamp", details: "From the photo", condition: "good", text: `${caption ? caption.split(/[,.]/)[0] : "Desk lamp"}, good condition, for sale` };
+  }
   if (ins.startsWith("Shape a community post")) {
     const m = quoted(p, "Post");
     const trip = /\b(cab|ride|drive|driving|auto|carpool|commute)\b/i.test(m), group = /\b(pool|bulk|together|team|need \d+ (?:more )?people)\b/i.test(m);

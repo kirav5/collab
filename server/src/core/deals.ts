@@ -184,7 +184,8 @@ export async function trackRecord(db: Docs, uid: string, now = Math.floor(Date.n
   const cached = (await db.get(RECORDS, uid)) as (TrackRecord & { at: number }) | null;
   if (cached && now - cached.at < STATS_TTL) { const { at: _a, ...rest } = cached; return rest; }
   const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
-  const sold = es.filter(e => e.phase === "agreed" && e.negotiation.deal && e[e.seller ?? "provider"].uid === uid);
+  // A cancelled booking isn't a sale.
+  const sold = es.filter(e => e.phase === "agreed" && e.negotiation.deal && e[e.seller ?? "provider"].uid === uid && e.fulfilment?.state !== "cancelled");
   const rows = await Promise.all(sold.map(async e => {
     const seller = e.seller ?? "provider", buyer = seller === "provider" ? "requester" : "provider", d = e.negotiation.deal!;
     const r = (await db.get(RECEIPTS, e.id)) as { hash: string; receipt?: Receipt } | null;
@@ -204,7 +205,7 @@ export async function stats(db: Docs, uid: string, now = Math.floor(Date.now() /
   const cached = (await db.get(STATS, uid)) as { deals: number; kept: number; fellThrough: number; at: number } | null;
   if (cached && now - cached.at < STATS_TTL) { const { at: _a, ...rest } = cached; return rest; }
   const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
-  const agreed = es.filter(e => e.phase === "agreed");
+  const agreed = es.filter(e => e.phase === "agreed" && e.fulfilment?.state !== "cancelled");
   const said = (e: Engagement) => (e.requester.uid === uid ? e.outcome?.provider : e.outcome?.requester);
   const out = { deals: agreed.length, kept: agreed.filter(e => said(e) === "happened").length, fellThrough: agreed.filter(e => said(e) === "fell_through").length };
   await db.set(STATS, uid, { ...out, at: now });

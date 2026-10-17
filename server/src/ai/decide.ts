@@ -18,6 +18,8 @@ export interface Task<I, O> {
   tier?: "cheap" | "standard";
   /** A deterministic answer that needs no model. */
   settled?(input: I): O | null;
+  /** A photo the model reads along with the prompt. */
+  image?(input: I): { mimeType: string; data: string } | null;
 }
 
 export interface Decision<O> { output: O; byModel: boolean; /** True when the task's `settled` hook answered (vs. the fallback). */ settled?: boolean }
@@ -34,7 +36,7 @@ export async function decide<I, O>(model: Model | null, task: Task<I, O>, input:
   const s = task.settled?.(input);
   if (s != null) return { output: s, byModel: false, settled: true };
   if (model) {
-    const raw = await model.complete({ instructions: task.instructions, prompt: task.prompt(input), schema: task.schema, maxTokens: task.maxTokens, task: task.name, tier: task.tier });
+    const raw = await model.complete({ instructions: task.instructions, prompt: task.prompt(input), schema: task.schema, maxTokens: task.maxTokens, task: task.name, tier: task.tier, image: task.image?.(input) ?? null });
     const parsed = firstJSON(raw);
     const candidate = parsed === null ? null : task.parse(parsed, input);
     const checked = candidate === null ? null : task.validate(candidate, input);

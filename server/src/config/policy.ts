@@ -15,6 +15,8 @@ export interface Policy {
   timing: { checkoutValiditySec: number; cartValidityDays: number; paymentClaimStaleSec: number; a2aTurnBudgetMs: number;
     holdTtlSec: number; decisionTtlSec: number; anonymousTokenDays: number };
   money: { currencies: string[]; defaultCurrency: string };
+  /** A seller hears once when an item's available stock falls to this many or fewer. */
+  stock: { lowAt: number };
   models: { grounding: string };
   features: { priceCheck: boolean; mapsNearby: boolean; googlePayTest: boolean };
 }
@@ -26,6 +28,7 @@ export const DEFAULT_POLICY: Policy = {
   timing: { checkoutValiditySec: 600, cartValidityDays: 7, paymentClaimStaleSec: 120, a2aTurnBudgetMs: 35_000,
     holdTtlSec: 900, decisionTtlSec: 86_400, anonymousTokenDays: 7 },
   money: { currencies: ["INR", "USD"], defaultCurrency: "INR" },
+  stock: { lowAt: 3 },
   models: { grounding: "gemini-3.8-flash" },
   features: { priceCheck: true, mapsNearby: true, googlePayTest: true },
 };
@@ -35,7 +38,7 @@ const RANGES: Record<string, [number, number]> = {
   "quotas.priceChecksPerDay": [0, 10_000], "quotas.nearbyPerDay": [0, 10_000], "negotiation.maxRounds": [1, 20],
   "timing.checkoutValiditySec": [60, 3600], "timing.cartValidityDays": [1, 60], "timing.paymentClaimStaleSec": [30, 900],
   "timing.a2aTurnBudgetMs": [5_000, 50_000], "timing.holdTtlSec": [60, 7 * 86_400], "timing.decisionTtlSec": [300, 30 * 86_400],
-  "timing.anonymousTokenDays": [1, 30],
+  "timing.anonymousTokenDays": [1, 30], "stock.lowAt": [0, 1000],
 };
 export const KNOWN_CURRENCIES = ["INR", "USD"];
 

@@ -5,11 +5,11 @@ import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
 import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
-import { dealAmount, defaultHours, engagementCard, hoursOk, hoursText, rulesList } from "./cards.js";
+import { dealAmount, dealStage, defaultHours, engagementCard, hoursOk, hoursText, rulesList } from "./cards.js";
 import { local } from "./local.js";
 import { privacyFacts } from "./processing.js";
 import { live, needsYou, needsYouCount } from "./live.js";
-import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
+import { busy, byTag, esc, label, money, tag, tierTag, time } from "./ui.js";
 import { pendingWrites, saveNote } from "./outbox.js";
 
 /** Rules read from a seller's words on the About me screen, waiting for them to confirm (by offering). */
@@ -23,6 +23,45 @@ async function sharedLog() {
   const items = await cached("/api/activity").catch(() => []);
   return { count: items.length, html: items.map(x => `<div class="card slim"><div class="row">${tag(x.tier === "protected" ? "Protected" : "Public", x.tier === "protected" ? "accent" : "fresh")}<b class="small">To ${esc(x.to)}</b><span class="end faint small">${new Date(x.at * 1000).toLocaleString()}</span></div>
     <span class="small faint">${esc(x.question)}</span><span class="small">→ ${esc(x.answer)}</span></div>`).join("") || `<p class="small muted">Nothing shared yet.</p>` };
+}
+
+/**
+ * Insights, at the top of My shop, for someone with at least one public offering: what to do first (Gemini's lines, or
+ * the plain reading of the numbers when the model isn't there — the server checks every number either way), then the
+ * numbers behind it in small tiles, each edged by what it is: yellow for demand you missed, magenta for demand you
+ * could meet (asked near you, bought alongside yours), cyan for what buyers ask and what's coming, green for deals done.
+ * Other people only ever appear as counts — the server sends nothing else. Read at most once a minute (each read is a
+ * metered call); an empty part is left out, and a forecast is shown only when the response has one.
+ */
+/** The last insights card drawn (kept between repaints so the slot never flickers empty). */
+let shopInsightsHTML = "";
+
+async function insightsCard() {
+  const facts = await cached("/api/facts").catch(() => []);
+  if (!facts.some(f => f.tier === "public" && f.offer)) return "";
+  const i = await cached("/api/shop/insights", 60_000).catch(() => null);
+  if (!i) return "";
+  const n = x => Math.round(Number(x) || 0);
+  // One line per item: the name (cut short, whole on hover), its numbers on the right — or below, if the name is long.
+  const row = (name, value, q = false) => `<div class="ins-row"><span class="grow${q ? " q" : ""}" title="${esc(name)}">${esc(name)}</span><b>${value}</b></div>`;
+  const tile = (lbl, cls, rows, note = "") => (rows.length ? `<div class="ins-tile ${cls}">${label(lbl, cls.split(" ")[0])}${note ? `<span class="faint ins-note">${esc(note)}</span>` : ""}${rows.join("")}</div>` : "");
+  const b = i.buyers ?? {}, f = i.forecast;
+  const tiles = [
+    tile("Demand you missed", "wait", (i.missed ?? []).slice(0, 3).map(m => row(m.item, `${n(m.wanted)}<span class="faint">/${n(m.had)}</span>`)), "wanted / had"),
+    tile("Asked near you", "accent", (i.unmet ?? []).slice(0, 3).map(u => row(u.item, n(u.requests))), "people, none filled"),
+    tile("Buyers ask most", "talk wide", (i.asked ?? []).slice(0, 3).map(a => row(a.question, `×${n(a.times)}`, true))),
+    tile("Prices agreed", "fresh", (i.prices ?? []).slice(0, 3).map(p => row(p.item, `${esc(money(p.agreed))}${p.listed != null ? `<span class="faint">/${esc(money(p.listed))}</span>` : ""}`)), "agreed / listed"),
+    tile("Your buyers", "fresh", b.total ? [row("New", n(b.total - b.repeat)), row("Repeat", n(b.repeat)), row("Bargained", n(b.bargained)), row("At your price", n(b.atListed))] : []),
+    tile("Often bought together", "accent", (i.together ?? []).slice(0, 3).map(t => row(t.item, n(t.buyers))), "by your buyers"),
+    tile("Next 7 days", "talk", f?.available ? (f.items ?? []).slice(0, 3).map(x => row(x.label, n(x.next7))) : [], "requests expected near you"),
+  ].filter(Boolean);
+  const lines = (i.summary ?? []).filter(Boolean);
+  const head = `<div class="row">${label("Insights", "sq ink")}<span class="small faint end">${n(i.days) || 30} days</span></div>`;
+  if (!lines.length && !tiles.length) return `<div class="card insights">${head}<span class="small faint">Insights appear after your first conversations.</span></div>`;
+  return `<div class="card insights">${head}
+    ${lines.length ? `<div class="ins-say">${i.byModel ? byTag("gemini") : ""}${lines.map(l => `<p>${esc(l)}</p>`).join("")}</div>` : ""}
+    ${tiles.length ? `<div class="ins-tiles">${tiles.join("")}</div>` : ""}
+    ${f && f.available === false ? `<span class="small faint">Next 7 days: ${esc(f.reason || "not enough sales yet")}</span>` : ""}</div>`;
 }
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
@@ -167,7 +206,8 @@ export const screens = {
           <button class="btn quiet compact" data-act="slots-track" data-id="${esc(f.id)}">Use time slots</button></div>`;
         if (r.type === "quantity") {
           const held = r.holds.filter(h => h.state === "held" && h.expiresAt > now_).reduce((n, h) => n + h.qty, 0);
-          return `<div class="row small stock"><b>Stock ${r.onHand}</b>${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+          const low = r.onHand - held <= (session.policy?.stock?.lowAt ?? 3);
+          return `<div class="row small stock"><b>Stock ${r.onHand}</b>${low ? tag(r.onHand - held > 0 ? "Low" : "Sold out", "danger") : ""}${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
             <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>
             ${connected(r) || `<div class="row small"><button class="btn quiet compact" data-act="conn-pos" data-id="${esc(r.id)}">Connect billing software</button><span class="faint">its sales update this count</span></div>`}<div data-conn="${esc(r.id)}"></div>`;
         }
@@ -353,11 +393,15 @@ export const screens = {
   people: {
     async html(S) {
       const contacts = await cached("/api/contacts").catch(() => []);
+      // Insights take a moment (they read a month of conversations and ask Gemini): the screen draws at once with the
+      // last card (or a placeholder), and the card fills its slot when it's ready.
+      insightsCard().then(h => { if (h === shopInsightsHTML) return; shopInsightsHTML = h; const slot = document.getElementById("shop-insights"); if (slot) slot.innerHTML = h; }).catch(() => {});
+      const insights = `<div id="shop-insights">${shopInsightsHTML}</div>`;
       const card = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
       let qr = "";
       try { qr = await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
-      return frame("My shop", "Your QR and your agent", `
+      return frame("My shop", "Your QR and your agent", `${insights}
         <div class="card qr-card">
           <div class="qr" aria-label="Your QR code">${qr}</div>
           <div class="stack" style="gap:6px">${label("Your QR code", "sq ink")}
@@ -643,8 +687,7 @@ export const screens = {
       const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
       const dealIn = (e, k) => k === "all" || (k === "todo" ? !finishedDeal(e) : k === "done" ? finishedDeal(e) : k === "sold" ? sold.includes(e) : bought.includes(e));
       const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "all";
-      const STAGE = e => { const f = e.fulfilment?.state, p = e.payment?.status;
-        return f === "accepted" ? ["Completed", "fresh"] : f === "disputed" ? ["Problem", "danger"] : off(e) ? ["Fell through", ""] : f === "delivered" ? (toConfirm(e) ? ["Confirm receipt", "wait"] : ["Handed over", "peri"]) : p === "paid" || p === "outside" ? ["Paid", "accent"] : ["To pay", "stale"]; };
+      const STAGE = e => dealStage(e, me(e));
       const dealRow = e => {
         const side = me(e), them = side === "provider" ? e.requester : e.provider, mineSold = sellerOf(e) === side;
         const d = e.negotiation.deal, n = d.items?.length ? d.items.reduce((t, l) => t + l.quantity, 0) : d.terms?.quantity > 1 ? d.terms.quantity : 1;
