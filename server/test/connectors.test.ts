@@ -68,3 +68,36 @@ test("iCal local times use the event's zone; all-day events block the day", () =
   assert.equal(new Date(busy[0].start * 1000).toISOString(), "2027-01-15T04:30:00.000Z");
   assert.equal(busy[1].end - busy[1].start, 86_400);
 });
+
+test("Google Calendar: the state through Google's page is signed and expires; busy times land on the resource; a failure degrades the grant", async () => {
+  const { makeState, readState, syncGcal } = await import("../src/core/gcal.ts");
+  const { GRANTS } = await import("../src/core/connectors.ts");
+  const { RESOURCES } = await import("../src/core/resources.ts");
+  const { memoryDocs } = await import("../src/docs.ts");
+  const c = { clientId: "id", clientSecret: "s", redirectUri: "https://x/cb", secret: "k" };
+  const st = makeState(c, "u1", "r1", 1000);
+  assert.deepEqual(readState(c, st, 1500), { uid: "u1", resourceId: "r1" });
+  assert.equal(readState(c, st, 1000 + 901), null, "expired");
+  assert.equal(readState(c, st.slice(0, -2) + "zz", 1500), null, "tampered");
+  assert.equal(readState({ ...c, secret: "other" }, st, 1500), null, "another server's key");
+  const db = memoryDocs();
+  await db.set(RESOURCES, "r1", { id: "r1", owner: "u1", type: "slots", busy: [], revision: 1, timezone: "Asia/Kolkata", observedAt: 0, staleAfterSec: 3600, updatedAt: 0, source: "manual", slots: [], holds: [] });
+  const g: any = { id: "g1", owner: "u1", provider: "google-calendar", resourceId: "r1", status: "active", scopes: ["availability.read"] };
+  await db.set(GRANTS, "g1", g);
+  await db.set("connector_secrets", "g1", { grantId: "g1", owner: "u1", refreshToken: "rt" });
+  // No network: the access token and Google's free/busy answer are stood in for.
+  const { OAuth2Client } = await import("google-auth-library");
+  const real = OAuth2Client.prototype.getAccessToken;
+  OAuth2Client.prototype.getAccessToken = async () => ({ token: "at" }) as any;
+  try {
+    const r = await syncGcal(db, c, g, 2000, async () => [{ start: "2026-10-20T04:30:00Z", end: "2026-10-20T05:30:00Z" }, { start: "bad", end: "x" }]);
+    assert.deepEqual(r, { synced: true, busy: 1 });
+    const res = await db.get(RESOURCES, "r1");
+    assert.deepEqual(res.busy, [{ start: Date.parse("2026-10-20T04:30:00Z") / 1000, end: Date.parse("2026-10-20T05:30:00Z") / 1000 }]);
+    assert.equal(res.source, "connector");
+    assert.equal((await db.get(GRANTS, "g1")).status, "active");
+    const bad = await syncGcal(db, c, g, 3000, async () => { throw new Error("Google Calendar answered 401"); });
+    assert.equal(bad.synced, false);
+    assert.equal((await db.get(GRANTS, "g1")).status, "degraded");
+  } finally { OAuth2Client.prototype.getAccessToken = real; }
+});

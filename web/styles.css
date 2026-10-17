@@ -32,6 +32,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -102,6 +103,12 @@ textarea.field { resize: vertical; min-height: 64px; }
 .session.on { background: var(--surface2); }
 .needs { position: sticky; top: 0; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* A screen (Deals, About me…) opens beside the chat on a wide window, and in place of it on a narrow one. */
+.app.split { grid-template-columns: 290px minmax(0, 1fr) minmax(440px, 46%); }
+.panel { border-left: 1px solid var(--hairline); display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.panel .inner { max-width: none; }
+.panel-top .close { margin-left: auto; }
+@media (max-width: 1180px) { .app.split { grid-template-columns: 290px 1fr; } .app.split .main { display: none; } .panel { border-left: 0; } }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--hairline); min-height: 49px; }
 .topbar .menu { display: none; }
 .content { flex: 1; overflow-y: auto; }
@@ -121,6 +128,7 @@ textarea.field { resize: vertical; min-height: 64px; }
 .mic.on { color: var(--on-accent, #fff); background: var(--hot); border-color: var(--hot); animation: flash 1.2s ease-out infinite; }
 .send { width: 34px; height: 34px; border-radius: 4px; border: 0; background: var(--accent); color: var(--on-accent, #fff); font-weight: 700; cursor: pointer; }
 .send:disabled { opacity: .35; }
+.thinking .label { display: inline-block; min-width: 9ch; }
 .thinking { display: flex; align-items: center; gap: 8px; }
 .spinner { width: 12px; height: 12px; border: 2px solid var(--text3); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -153,10 +161,10 @@ dialog { border: 1px solid var(--hairline); border-radius: 6px; background: var(
 dialog::backdrop { background: rgb(0 0 0 / 45%); }
 
 @media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; }
+  .app, .app.split { grid-template-columns: 1fr; }
   .sidebar { position: fixed; inset: 0 auto 0 0; width: min(300px, 86vw); z-index: 10; transform: translateX(-100%); transition: transform .2s; }
   .app.nav-open .sidebar { transform: none; box-shadow: 0 0 0 100vmax rgb(0 0 0 / 40%); }
-  .app.nav-open .main { pointer-events: none; } /* a tap beside the menu closes it, never presses what's under the shade */
+  .app.nav-open .main, .app.nav-open .panel { pointer-events: none; } /* a tap beside the menu closes it, never presses what's under the shade */
   .topbar .menu { display: inline-flex; }
   .inner { padding: 16px 16px 32px; }
   .msg-user { max-width: 92%; }
@@ -461,14 +469,7 @@ details.improve.done .improve-title { color: var(--fresh); }
 .ins-big span { color: var(--text2); font-size: 13px; }
 
 /* Side panel: beside the main view on a desktop (the view narrows), over it on a phone. */
-.panel { display: none; min-width: 0; min-height: 0; overflow-y: auto; background: var(--bg); border-left: 1px solid var(--hairline); }
-.app.panel-open { grid-template-columns: 290px minmax(0, 1fr) minmax(360px, 460px); }
-.app.panel-open .panel { display: block; animation: panel-in .25s cubic-bezier(.2,.8,.2,1) both; }
-@keyframes panel-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-.panel-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--hairline); min-height: 48px; }
-.panel-body { padding: 14px; display: grid; gap: 12px; align-content: start; }
-@media (max-width: 1100px) { .app.panel-open { grid-template-columns: 290px minmax(0, 1fr); } .panel { position: fixed; inset: 0; z-index: 30; border-left: 0; width: 100%; } .app.panel-open .panel { animation: rise .25s cubic-bezier(.2,.8,.2,1) both; } }
-@media (max-width: 820px) { .app.panel-open { grid-template-columns: 1fr; } }
+.panel-body { display: grid; gap: 12px; align-content: start; }
 .panel-body .pass { box-shadow: inset 0 3px 0 var(--accent); }
 .panel pre { margin: 0; padding: 12px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; font: 12px/1.5 var(--mono); overflow: auto; max-height: 60vh; }
 
