@@ -68,7 +68,7 @@ function answer(req: CompleteRequest): object {
   }
   if (ins.startsWith("For each question about a listing")) {
     const qs = JSON.parse(p.match(/Questions: (.*)$/m)?.[1] ?? "[]");
-    return { answers: Object.fromEntries(qs.map((q: any) => [q.label, q.options[0] ?? null])) };
+    return { answers: qs.filter((q: any) => q.options[0]).map((q: any) => ({ label: q.label, answer: q.options[0] })) };
   }
   if (ins.startsWith("Read a photo of something")) {
     // Offline there's no seeing: the stand-in names a generic item (tests send the caption they expect read).
