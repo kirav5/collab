@@ -581,3 +581,12 @@ details.improve.done .improve-title { color: var(--fresh); }
 .disc-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .disc-text .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .disc-side { display: grid; justify-items: end; gap: 4px; }
+/* The app's own confirmation (ui.js ask): in the page, never a browser pop-up. Amber marks a decision made for a demo person. */
+dialog.ask { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0; width: min(420px, calc(100vw - 32px)); }
+dialog.ask::backdrop { background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(2px); }
+.ask-body { display: grid; gap: 12px; padding: 18px; margin: 0; }
+.ask-as { justify-self: start; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--stale); border: 1px solid color-mix(in srgb, var(--stale) 45%, transparent); border-radius: 2px; padding: 4px 8px; }
+.ask-title { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.35; text-wrap: balance; }
+.ask-detail { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text2); }
+.ask-field { display: grid; gap: 6px; }
+.ask-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }

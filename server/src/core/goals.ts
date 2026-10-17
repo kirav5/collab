@@ -7,6 +7,8 @@ import type { Engagement, Side } from "./model.ts";
 import { ENGAGEMENTS } from "./engage.ts";
 import { newId } from "../market/types.ts";
 import { buyerOf } from "./pay.ts";
+import { rolesFor, shortName } from "../market/roles.ts";
+import { joinsOnLetter, today } from "./hiring.ts";
 
 export const GOALS = "goals";
 
@@ -43,7 +45,7 @@ export interface TaskView {
 const other = (s: Side): Side => (s === "requester" ? "provider" : "requester");
 
 /** One conversation seen as a task, from its owner's side. */
-export function taskOf(e: Engagement, ownerUid: string): TaskView {
+export function taskOf(e: Engagement, ownerUid: string, now = Math.floor(Date.now() / 1000)): TaskView {
   const mine: Side = e.requester.uid === ownerUid ? "requester" : "provider";
   const them = other(mine);
   const counterparty = (mine === "requester" ? e.provider : e.requester).name;
@@ -57,19 +59,44 @@ export function taskOf(e: Engagement, ownerUid: string): TaskView {
       ? { ...base, state: "succeeded", waitingOn: null, next: "Answered." }
       : { ...base, state: "cancelled", waitingOn: null, next: "Ended." };
   }
+  if (joinsOnLetter(e)) return { ...base, ...joiningTask(e, mine, counterparty, now) };
   if (e.phase === "agreed") {
-    const f = e.fulfilment?.state, paid = e.payment?.status === "paid" || e.payment?.status === "outside";
-    if (f === "accepted") return { ...base, state: "succeeded", waitingOn: null, next: "Done — received as agreed." };
+    const f = e.fulfilment?.state, paid = e.payment?.status === "paid" || e.payment?.status === "outside" || !!e.noPayment;
+    const close = rolesFor(e.offer.category).close;
+    if (f === "accepted") return { ...base, state: "succeeded", waitingOn: null, next: close.done };
     if (f === "disputed") return { ...base, state: "failed", waitingOn: null, next: "A problem was reported." };
     if (f === "cancelled") return { ...base, state: "cancelled", waitingOn: null, next: "Cancelled." };
     const buyer = buyerOf(e);
     if (!paid) return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? "Pay to complete the deal." : "Waiting for payment." };
-    if (f === "delivered") return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? "Confirm you received it." : "Waiting for them to confirm." };
-    return { ...base, state: mine === buyer ? "waiting_for_external" : "waiting_for_input", waitingOn: mine === buyer ? "them" : "you", next: mine === buyer ? "Waiting for the handover." : "Hand it over." };
+    if (f === "delivered") return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? close.confirmTodo : "Waiting for them to confirm." };
+    return { ...base, state: mine === buyer ? "waiting_for_external" : "waiting_for_input", waitingOn: mine === buyer ? "them" : "you", next: mine === buyer ? close.waiting : close.todo };
   }
-  if (e.waiting[mine]) return { ...base, state: "waiting_for_input", waitingOn: "you", next: e.waiting[mine]!.kind === "confirm" ? "Confirm the deal." : "Your agent needs you." };
-  if (e.waiting[them] || e.outbox) return { ...base, state: "waiting_for_external", waitingOn: "them", next: `Waiting for ${counterparty}.` };
+  const k = e.waiting[mine]?.kind;
+  if (e.waiting[mine]) return { ...base, state: "waiting_for_input", waitingOn: "you", next: k === "confirm" ? "Confirm the deal." : k === "offer_letter" ? "Send the offer letter."
+    : k === "offer" ? `Decide on the offer by ${e.offerLetter?.validUntil ?? "its date"}.` : "Your agent needs you." };
+  const theirs = e.waiting[them]?.kind;
+  if (e.waiting[them] || e.outbox) return { ...base, state: "waiting_for_external", waitingOn: "them", next: theirs === "offer_letter" ? "Waiting for the offer letter."
+    : theirs === "offer" ? `Waiting for ${counterparty} to decide on the offer.` : `Waiting for ${counterparty}.` };
   return { ...base, state: "running", waitingOn: null, next: e.offer.price == null && answered ? "Answered — ask more or tap Done." : "Agents are talking." };
+}
+
+/** An accepted offer, from one side: when they start, whether they joined, who withdrew and why. */
+function joiningTask(e: Engagement, mine: Side, counterparty: string, now: number): Pick<TaskView, "state" | "waitingOn" | "next"> {
+  const j = e.joining ?? { state: "awaiting" as const, start: e.offerLetter!.start, at: 0 };
+  const candidate = mine === (e.seller ?? "provider"), them = shortName(counterparty);
+  const started = today(now) >= j.start, on = (d?: string) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
+  switch (j.state) {
+    case "confirmed": return { state: "succeeded", waitingOn: null, next: candidate ? `Joined ${counterparty} on ${on(j.joinedOn)}.` : `${them} joined on ${on(j.joinedOn)}.` };
+    case "joined": return candidate ? { state: "waiting_for_external", waitingOn: "them", next: `You joined on ${on(j.joinedOn)} — waiting for ${them} to confirm.` }
+      : { state: "waiting_for_input", waitingOn: "you", next: `${them} says they joined on ${on(j.joinedOn)} — confirm it.` };
+    case "no_show": return { state: "failed", waitingOn: null, next: candidate ? `${them} says you didn't join.` : `${them} didn't join.` };
+    case "withdrawn": return { state: "cancelled", waitingOn: null, next: j.by === mine ? `You withdrew${candidate ? "" : " the offer"}.` : `${them} withdrew${candidate ? " the offer" : ""}${j.reason ? `: “${j.reason}”` : "."}` };
+    case "disputed": return { state: "failed", waitingOn: null, next: "You disagree on whether they joined — both accounts are on record." };
+  }
+  if (!started) return { state: "waiting_for_external", waitingOn: null, next: candidate ? `Offer accepted — you start on ${on(j.start)}.` : `Offer accepted — ${them} starts on ${on(j.start)}.` };
+  const isToday = j.start === today(now);
+  return candidate ? { state: "waiting_for_input", waitingOn: "you", next: `${isToday ? "You start today" : `Your start date was ${on(j.start)}`} — mark when you've joined.` }
+    : { state: "waiting_for_input", waitingOn: "you", next: `${isToday ? `${them} starts today` : `${them} was due to start on ${on(j.start)}`} — confirm whether they joined.` };
 }
 
 /** A goal's state from its tasks (and the owner's own decision to close it). */
@@ -172,7 +199,7 @@ export async function cancelGoal(db: Docs, owner: string, goalId: string, now: n
   for (const id of g.taskIds) {
     const e = (await db.get(ENGAGEMENTS, id)) as Engagement | null;
     if (!e || !["asking", "negotiating", "deal", "agreed"].includes(e.phase)) continue;
-    if (e.phase === "agreed" && (e.payment?.status === "paid" || e.payment?.status === "outside")) continue; // a paid deal keeps its obligations
+    if (e.phase === "agreed" && (e.payment?.status === "paid" || e.payment?.status === "outside" || e.noPayment)) continue; // a paid deal (or an accepted job offer) keeps its obligations
     if (e.reservation?.state === "held" && e.reservation.holdId) await release(db, e.reservation.resourceId, e.reservation.holdId, now).catch(() => {});
     await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur ? { ...cur, phase: cur.requester.uid === owner ? "closed" : "declined",
       ...(cur.reservation?.state === "held" ? { reservation: { ...cur.reservation, state: "released" } } : {}),

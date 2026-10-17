@@ -21,6 +21,8 @@ export interface ShopItem {
   perBuyer: number | null;
   /** The seller's own stated terms, and whether an order at the listed price is confirmed at once. */
   policies: { label: string; text: string }[]; instant: boolean;
+  /** The owner pays rather than being paid (an employer's job post). */
+  ownerPays: boolean;
   timezone: string | null;
   questions: Suggestion[];
 }
@@ -50,7 +52,7 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
       if (o.maxPerBuyer) max = Math.min(max, o.maxPerBuyer);
       return { factId: f.id, title: o.title, name: itemName(o.title), details: clip(o.details || f.text, 160), category: o.category, ...(o.photo ? { photo: o.photo } : {}),
         price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, perBuyer: o.maxPerBuyer ?? null, slots,
-        timezone: r?.type === "slots" ? r.timezone : null, policies: o.policies ?? [], instant: !!o.instant && price != null, questions: forOffer(f, (r?.type ?? null) as Tracked) };
+        timezone: r?.type === "slots" ? r.timezone : null, policies: o.policies ?? [], instant: !!o.instant && price != null && !o.ownerPays, ownerPays: !!o.ownerPays, questions: forOffer(f, (r?.type ?? null) as Tracked) };
     });
 }
 

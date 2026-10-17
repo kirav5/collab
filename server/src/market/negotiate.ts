@@ -4,10 +4,17 @@
 // nothing the other side *wrote* ever reaches the model choosing a move.
 import type { Task } from "../ai/decide.ts";
 import type { Catalog } from "./domains.ts";
+import { type Voice, fill } from "./roles.ts";
+import { grounded } from "./text.ts";
 import { type Mandate, type Proposal, type Side, moneyText, newId } from "./types.ts";
 
 export interface Context {
+  /** Price: the seller is the one paid. */
   side: Side;
+  /** The other terms, in the category's own sense ("buyer" = the requester); absent: same as `side`. */
+  termsSide?: Side;
+  /** How this side talks (its role, the other side's, its lines); absent: plain "We can offer / We can do / Agreed". */
+  voice?: Voice;
   catalog: Catalog;
   mandate: Mandate;
   unit: string | null;
@@ -25,7 +32,7 @@ export type Move =
 export function direction(ctx: Context, term?: string): number {
   if (!term) return ctx.side === "seller" ? 1 : -1;
   const forBuyer = ctx.catalog.buyerPrefersLower(term) === true ? -1 : 1;
-  return ctx.side === "buyer" ? forBuyer : -forBuyer;
+  return (ctx.termsSide ?? ctx.side) === "buyer" ? forBuyer : -forBuyer;
 }
 
 /** 0 at the first round, 1 at the last; convex, so early rounds concede little. */
@@ -96,6 +103,17 @@ function blockers(p: Proposal, ctx: Context): string {
   return out.length ? ` Blocking: ${out.join("; ")}.` : "";
 }
 
+/** This side's line for a move, in its role's words ("Thanks — Ravi is looking for ₹38,000/month."). */
+export function line(ctx: Pick<Context, "voice">, kind: "open" | "counter" | "accept", amount: string): string {
+  if (ctx.voice) return fill(ctx.voice[kind], ctx.voice, amount);
+  return kind === "accept" ? `Agreed: ${amount}.` : `${kind === "open" ? "We can offer" : "We can do"} ${amount}.`;
+}
+
+/** Which line a new offer gets: the first, or the same price again (a firm price), is the opening line; a real
+ *  move is a counter ("We can come down to…" only when it actually comes down). */
+export const moveKind = (ctx: Pick<Context, "mine">, price: number): "open" | "counter" =>
+  !ctx.mine.length || Math.abs(price - ctx.mine.at(-1)!.price) < 0.5 ? "open" : "counter";
+
 /** Deterministic negotiating: concede from the opening toward the limit over the rounds, accept anything inside the
  *  limits at least as good as what we'd offer next, and hand the decision to the owner when the rounds run out. */
 export function next(ctx: Context): Move {
@@ -104,12 +122,12 @@ export function next(ctx: Context): Move {
   const t = ctx.theirs.at(-1);
   if (t && acceptable(t, ctx)) {
     const close = Math.abs(t.price - plan.price) <= Math.max(1, plan.price * 0.005);
-    if (r >= ctx.mandate.maxRounds || atLeastAsGood(t, plan, ctx) || close) return { action: "accept", acceptId: t.id, message: `Agreed: ${describe(t, ctx)}.` };
+    if (r >= ctx.mandate.maxRounds || atLeastAsGood(t, plan, ctx) || close) return { action: "accept", acceptId: t.id, message: line(ctx, "accept", describe(t, ctx)) };
   }
   if (r >= ctx.mandate.maxRounds) {
     return { action: "escalate", message: `No deal inside your limits after ${r} offers. Their latest: ${t ? describe(t, ctx) : "nothing yet"}.${t ? blockers(t, ctx) : ""}` };
   }
-  return { action: "propose", proposal: plan, message: (r === 0 ? "We can offer " : "We can do ") + describe(plan, ctx) + "." };
+  return { action: "propose", proposal: plan, message: line(ctx, moveKind(ctx, plan.price), describe(plan, ctx)) };
 }
 
 /** Does the text state our price limit (in any common form) when that isn't what we're proposing? */
@@ -118,22 +136,48 @@ export function leaks(text: string, ctx: Context): boolean {
   const phrases = ["limit", "walk away", "walk-away", "maximum i can", "most i can", "lowest i can", "least i can", "floor", "ceiling",
     "my owner said", "my owner allows", "authorized up to", "authorised up to", "budget is"];
   if (phrases.some(p => lower.includes(p))) return true;
+  // Agents now speak about their owner by name ("as high as Brightpath can go", "Ravi's minimum"): the same give-aways
+  // in any person.
+  if (/\b(minimum|maximum|tops? out|as (?:high|low|far) as|can'?t go (?:any )?(?:below|above|under|over|lower|higher)|won'?t go (?:any )?(?:below|above|under|over|lower|higher)|(?:the )?(?:most|least|lowest|highest) (?:\w+ )?(?:can|could|would|will|is willing))\b/i.test(text)) return true;
   const limit = Math.round(ctx.mandate.price.limit);
   if (limit === Math.round(ctx.mandate.price.opening)) return false; // a firm price is the public listing price
   const flat = text.replace(/,/g, "").toLowerCase();
   const forms = [String(limit), moneyText({ amount: limit, currency: "INR" }).replace("₹", "").replace(/,/g, "").toLowerCase()];
-  return forms.some(f => flat.includes(f));
+  // …in any written scale too: "36k", "36 thousand", "0.36 L" all say 36,000.
+  return forms.some(f => flat.includes(f)) || grounded(limit, text) || scaledAmounts(text).some(a => Math.abs(a.value - limit) <= a.tolerance);
+}
+
+/** The ₹ amounts a message names must be this offer's — the price, or what several units come to — and the price
+ *  must be among them, so what's said always matches what's offered. */
+function saysOffer(message: string, p: Proposal, quantity = p.terms.quantity): boolean {
+  const said = scaledAmounts(message, true);
+  const n = Number.isInteger(quantity) && quantity! > 1 ? quantity! : 1, ok = [p.price, p.price * n];
+  const is = (a: { value: number; tolerance: number }, v: number) => Math.abs(a.value - v) <= a.tolerance;
+  return said.some(a => is(a, p.price)) && said.every(a => ok.some(o => is(a, o)));
+}
+
+const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, l: 1e5, lakh: 1e5, lakhs: 1e5, lac: 1e5, lacs: 1e5, cr: 1e7, crore: 1e7, crores: 1e7 };
+/** Amounts written with a scale word ("₹6.4 L", "₹72 lakh", "36k"), each with how precisely it's written ("₹6.4 L" is
+ *  to the nearest ₹10,000). `rupeesOnly`: just the ones written with ₹. */
+function scaledAmounts(text: string, rupeesOnly = false): { value: number; tolerance: number }[] {
+  const re = rupeesOnly ? /₹\s?(\d[\d,]*(?:\.\d+)?)\s?(k|thousand|lakhs?|lacs?|l|crores?|cr)?\b/gi : /(\d[\d,]*(?:\.\d+)?)\s?(k|thousand|lakhs?|lacs?|l|crores?|cr)\b/gi;
+  return [...text.matchAll(re)].map(m => {
+    const digits = m[1].replace(/,/g, ""), scale = m[2] ? SCALE[m[2].toLowerCase()] ?? 1 : 1, decimals = digits.split(".")[1]?.length ?? 0;
+    return { value: Number(digits) * scale, tolerance: Math.max(0.5, (scale * 10 ** -decimals) / 2) };
+  });
 }
 
 /** One line, and amounts in rupees (models sometimes write "$630" for a ₹ price). */
-const clean = (s: string) => { const t = s.replace(/[\r\n]+/g, " ").replace(/(?:US)?\$\s?(?=\d)/g, "₹").replace(/\bRs\.?\s?(?=\d)/gi, "₹").trim(); return t ? t.slice(0, 240) : null; };
+const clean = (s: string) => { const t = s.replace(/[\r\n]+/g, " ").replace(/(?:US)?\$\s?(?=\d)/g, "₹").replace(/\b(?:Rs\.?|INR)\s?(?=\d)/gi, "₹").trim(); return t ? t.slice(0, 240) : null; };
 
 /** A message that adds what isn't in the offer — a credit period, a deposit, "30 days", a second price — says something
  *  the deal doesn't: the plain wording is used instead. Only the offer's own numbers may appear. */
 export function invents(message: string, p: Proposal): boolean {
   const qty = Number(p.terms?.quantity) || 1;
   const ok = new Set([p.price, p.price * qty, qty, ...Object.values(p.terms ?? {}), ...(p.items ?? []).flatMap(l => [l.unitPrice, l.quantity, l.unitPrice * l.quantity])].map(n => Math.round(Number(n))));
-  const nums = (message.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map(n => Math.round(Number(n.replace(/,/g, ""))));
+  // Amounts at the scale they're written: "₹72 lakh", "₹0.72 Cr", "₹72 L", "30k".
+  const SCALE: Record<string, number> = { lakh: 1e5, lakhs: 1e5, lac: 1e5, l: 1e5, crore: 1e7, crores: 1e7, cr: 1e7, k: 1e3 };
+  const nums = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(lakhs?|lac|crores?|cr|l|k)?\b/gi)].map(m => Math.round(Number(m[1].replace(/,/g, "")) * (SCALE[(m[2] ?? "").toLowerCase()] ?? 1)));
   if (nums.some(n => !ok.has(n))) return true;
   return /\b(credit|payment terms?|installments?|emi|advance|deposit|warranty|guarantee|free delivery|delivery charges?|bulk|refund)\b/i.test(message)
     && !Object.keys(p.terms ?? {}).some(k => /credit|deposit|warranty|delivery/i.test(k));
@@ -149,20 +193,29 @@ export const NegotiateTask: Task<{ ctx: Context; listPrice: number }, Move> = {
 {"action":"propose"|"accept"|"escalate","price":number,"terms":{"term_key":number},"message":"one short, polite sentence to the other side"}
 Amounts are Indian rupees: write them with ₹ (e.g. ₹36,000). Rules: never propose a price worse for your owner than their limit; never mention the limit or that one exists; concede gradually;
 accept when their latest offer is inside your limits and close to what you'd offer; trade terms (credit days, delivery days, quantity)
-for price when it helps; escalate to your owner when no deal fits the limits.`,
+for price when it helps; escalate to your owner when no deal fits the limits. In the message, name only the ₹ amount you are offering
+(and, for several units, what they come to) — no other amounts, not theirs and not the listed price.`,
   schema: { type: "object", properties: { action: { type: "string", enum: ["propose", "accept", "escalate"] }, price: { type: "number" },
     terms: { type: "object", additionalProperties: { type: "number" } }, message: { type: "string" } }, required: ["action", "message"] },
   prompt({ ctx, listPrice }) {
-    const per = ctx.unit ? ` per ${ctx.unit}` : "";
-    const lines = [`You are the ${ctx.side}'s agent. Category: ${ctx.catalog.label}.`, `Listed price: ${listPrice}${per}.`,
+    const per = ctx.unit ? ` per ${ctx.unit}` : "", v = ctx.voice;
+    // Who it speaks for, in the category's words, with an example of how that side talks.
+    const who = v ? `You are the ${v.me}'s agent, speaking for ${v.name} to the ${v.them}'s agent about the ${v.price}. Category: ${ctx.catalog.label}.`
+      + ` Write the message the way the ${v.me}'s agent would say it, e.g. "${fill(ctx.mine.length ? v.counter : v.open, v, "₹X")}" — never call either side a buyer or seller unless that's their role.`
+      : `You are the ${ctx.side}'s agent. Category: ${ctx.catalog.label}.`;
+    const lines = [who, `Listed ${v?.price ?? "price"}: ${listPrice}${per}.`,
       `Your opening: ${Math.round(ctx.mandate.price.opening)}${per}. Your limit (${ctx.side === "seller" ? "lowest" : "highest"} you may agree): ${Math.round(ctx.mandate.price.limit)}${per}.`,
       `Offers used: ${ctx.mine.length} of ${ctx.mandate.maxRounds}.`];
     for (const [k, b] of Object.entries(ctx.mandate.terms).sort()) {
       lines.push(`Term ${k} (${ctx.catalog.termLabel(k)}, ${direction(ctx, k) > 0 ? "higher" : "lower"} is better for you): opening ${b.opening}, limit ${b.limit}.`);
     }
     const compact = (p: Proposal) => `price ${p.price}` + Object.entries(p.terms).sort().map(([k, v]) => `, ${k} ${v}`).join("");
-    const history = [...ctx.mine.map(p => [p.round * 2 + (ctx.side === "buyer" ? 0 : 1), `You offered ${compact(p)}`] as const),
-      ...ctx.theirs.map(p => [p.round * 2 + (ctx.side === "buyer" ? 1 : 0), `They offered ${compact(p)}`] as const)].sort((a, b) => a[0] - b[0]);
+    // Moves alternate, so whoever has made at least as many offers as the other moved first (a listing's price
+    // counts as its owner's first offer). Not "the buyer first": a shop or an employer opens with its listing.
+    const mineFirst = ctx.mine.length >= ctx.theirs.length;
+    // Placed by position, not p.round (chat offers and listing counters number rounds differently).
+    const history = [...ctx.mine.map((p, i) => [i * 2 + (mineFirst ? 0 : 1), `You offered ${compact(p)}`] as const),
+      ...ctx.theirs.map((p, i) => [i * 2 + (mineFirst ? 1 : 0), `They offered ${compact(p)}`] as const)].sort((a, b) => a[0] - b[0]);
     lines.push("History:", ...(history.length ? history.map(h => "- " + h[1]) : ["- (none yet)"]), "Your move:");
     return lines.join("\n");
   },
@@ -180,12 +233,15 @@ for price when it helps; escalate to your owner when no deal fits the limits.`,
       case "accept": {
         const t = ctx.theirs.at(-1);
         if (!t || t.id !== move.acceptId || !acceptable(t, ctx)) return null;
-        return { ...move, message: (!leaks(move.message, ctx) && !invents(move.message, t) && clean(move.message)) || `Agreed: ${describe(t, ctx)}.` };
+        const said = clean(move.message);
+        return { ...move, message: (said && !leaks(said, ctx) && !invents(said, t) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
       }
       case "escalate":
         return move.message ? { ...move, message: move.message.slice(0, 240) } : null;
       case "propose": {
         const p: Proposal = { ...move.proposal, terms: Object.fromEntries(Object.entries(move.proposal.terms).filter(([k]) => ctx.mandate.terms[k])), round: ctx.mine.length };
+        // How many it's for (dropped from the terms above when it isn't negotiated): a message may say the total.
+        const n = move.proposal.terms.quantity ?? ctx.theirs.at(-1)?.terms.quantity ?? ctx.mine.at(-1)?.terms.quantity;
         if (p.price <= 0 || !acceptable(p, ctx) || ctx.mine.length >= ctx.mandate.maxRounds) return null;
         const dir = direction(ctx), { opening, limit } = ctx.mandate.price;
         if (dir * (p.price - opening) > 0.5) return null;                                   // beyond our opening
@@ -195,7 +251,9 @@ for price when it helps; escalate to your owner when no deal fits the limits.`,
         // Pacing: no faster than the schedule allows by the next round, with a little slack.
         if (Math.abs(opening - limit) > 0.5 && (opening - p.price) / (opening - limit) > concession(ctx.mine.length + 1, ctx.mandate.maxRounds) + 0.15) return null;
         for (const [k, v] of Object.entries(p.terms)) if (direction(ctx, k) * (v - ctx.mandate.terms[k].opening) > 0.0001) return null;
-        return { action: "propose", proposal: p, message: (!leaks(move.message, ctx) && !invents(move.message, p) && clean(move.message)) || `We can do ${describe(p, ctx)}.` };
+        const said = clean(move.message);
+        const sized = n && n > 1 ? { ...p, terms: { ...p.terms, quantity: n } } : p;
+        return { action: "propose", proposal: p, message: (said && !leaks(said, ctx) && !invents(said, sized) && saysOffer(said, p, n) && said) || line(ctx, moveKind(ctx, p.price), describe(sized, ctx)) };
       }
     }
   },

@@ -83,13 +83,19 @@ export function rank(listings: { key: string; offer: Offer }[], need: Need, now:
       else unknown.push(f.label);
     }
     if (failed) continue;
-    // Above the budget only where prices are negotiable (business categories, or listings marked so).
+    // The money has to flow one way: a listing whose owner pays (a job post) is for a requester who is paid (someone
+    // looking for that job), and the other way round.
+    if (!!o.ownerPays !== !!need.requesterPaid) continue;
+    // Above the budget — or, for a requester who is paid, below the least they'd take — only where prices are
+    // negotiable (business categories, or listings marked so).
     const negotiable = d?.family === "b2b" || o.attributes.negotiable?.toLowerCase().startsWith("y");
     if (need.maxPrice && o.price.amount > need.maxPrice * (negotiable ? 1.15 : 1)) continue;
+    if (need.minPrice && o.price.amount < need.minPrice / (negotiable ? 1.15 : 1)) continue;
     if (o.minBudget && need.maxPrice && need.maxPrice < o.minBudget) continue;
     if (Object.entries(need.attributes).some(([k, v]) => !compatible(k, v, o, d))) continue;
     const near = distanceApplies ? 1 - Math.min(1, dist / Math.max(need.radiusKm, 0.5)) : 0.5;
-    const value = need.maxPrice ? 1 - o.price.amount / Math.max(need.maxPrice, 1) : 0.5;
+    const value = need.maxPrice ? 1 - o.price.amount / Math.max(need.maxPrice, 1)
+      : need.minPrice ? Math.min(1, o.price.amount / Math.max(need.minPrice, 1) - 1) : 0.5;
     const fresh = 1 - Math.min(1, (now - o.publishedAt) / (30 * 86_400));
     const score = near * 0.5 + value * 0.3 + fresh * 0.2 + (o.atprotoHandle ? 0.05 : 0) + Math.min(preferred, 0.2);
     out.push({ key, offer: o, distanceKm: Math.round(dist * 10) / 10, score, met, unknown, missed });
@@ -126,15 +132,28 @@ export const summary = (o: Offer) =>
 /** A coarse budget band (rounded up at the second significant digit) — what providers and matching see, never the
  *  exact limit. Business requests get none: a band on a per-unit price would give the ceiling away. */
 export function budgetUpper(n: Need): number | null {
+  if (n.requesterPaid) return null;
   const max = n.mandate?.price.limit ?? n.maxPrice;
   if (!max || max <= 0 || domainOf(n.category)?.family === "b2b") return null;
-  const magnitude = 10 ** (Math.floor(Math.log10(max)) - 1);
-  const step = Math.max(1, magnitude * 5);
+  const step = bandStep(max);
   // Strictly above the limit: a round limit (₹650) must not come out as itself.
   return Math.ceil((max + 1) / step) * step;
 }
 
+/** For a requester who is paid: the least they'd take, rounded down and strictly below it — never the exact floor. */
+export function budgetLower(n: Need): number | null {
+  if (!n.requesterPaid) return null;
+  const min = n.mandate?.price.limit ?? n.minPrice;
+  if (!min || min <= 0 || domainOf(n.category)?.family === "b2b") return null;
+  const step = bandStep(min);
+  return Math.max(step, Math.floor((min - 1) / step) * step);
+}
+
+const bandStep = (v: number) => Math.max(1, 10 ** (Math.floor(Math.log10(v)) - 1) * 5);
+
 export function budgetBand(n: Need): string | null {
+  const down = budgetLower(n);
+  if (down) return `from ${moneyText({ amount: down, currency: "INR", period: n.unit })}`;
   const up = budgetUpper(n);
   return up ? `up to ${moneyText({ amount: up, currency: "INR", period: n.unit })}` : null;
 }

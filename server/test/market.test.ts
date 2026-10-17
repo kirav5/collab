@@ -65,7 +65,7 @@ test("reading: numbers and places must be written; filters must quote the reques
   const d = domain("property-rent")!;
   const text = "2BHK to rent in Indiranagar, budget 36000 a month";
   const f = ListingFieldsTask.validate({ item: "flat", place: "Indiranagar", placeLatin: null, placeTo: null, price: 39_000, pricePer: null, limit: null,
-    attributes: { bedrooms: "2", deposit_months: "6", made_up: "x" }, questions: [] }, { text, domain: d, side: "find" })!;
+    attributes: { bedrooms: "2", deposit_months: "6", made_up: "x" }, questions: [], payer: null }, { text, domain: d, side: "find" })!;
   assert.equal(f.price, null, "39,000 isn't written");
   assert.deepEqual(f.attributes, { bedrooms: "2" });
   assert.equal(ListingFieldsTask.validate({ ...f, place: "Whitefield" }, { text, domain: d, side: "find" }), null);
