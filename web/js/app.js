@@ -336,7 +336,7 @@ function emptyChat() {
     <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
     <h1 class="headline">What are you looking for right now?</h1>
     <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
-    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="prompt" data-text="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
+    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="send-text" data-text="${esc(i.text)}" title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
     ${privacyCard()}</div>`;
 }
 
