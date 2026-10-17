@@ -25,7 +25,9 @@ export async function pushTo(uid: string, title: string, body: string, link = "/
   try {
     const { getMessaging } = await import("firebase-admin/messaging");
     const r = await getMessaging().sendEachForMulticast({ tokens: rows.map(t => t.token),
-      webpush: { notification: { title: title.slice(0, 80), body: body.slice(0, 160), icon: "/icon.svg" }, fcmOptions: { link } } });
+      // One notification per conversation (a newer one replaces it instead of stacking); a PNG icon Android shows.
+      webpush: { notification: { title: title.slice(0, 80), body: body.slice(0, 160), icon: "/icon-192.png", badge: "/icon-192.png",
+        tag: (link.match(/engagement=([\w-]+)/)?.[1] ?? link).slice(0, 60), renotify: true }, fcmOptions: { link } } });
     // Tokens a browser has dropped are removed.
     await Promise.all(r.responses.map((x, i) => (!x.success && /registration-token-not-registered|invalid-argument/.test(x.error?.code ?? "") ? store!.delete(PUSH, keyOf(rows[i].token)) : null)));
     if (r.failureCount) log.warn("push partly failed", { errors: r.responses.filter(x => !x.success).map(x => x.error?.code).slice(0, 5) });

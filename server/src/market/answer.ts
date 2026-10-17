@@ -22,6 +22,9 @@ export function offerFacts(o: Offer, saved: Record<string, { question: string; a
     facts.push({ label: t?.label ?? k.replace(/_/g, " "), value: `${v}${t?.unit ? ` ${t.unit}` : ""}` });
   }
   if (o.details) facts.push({ label: "Description", value: o.details.slice(0, 600) });
+  // The seller's own terms and per-buyer rule answer questions too ("can I collect this weekend?").
+  for (const p of o.policies ?? []) facts.push({ label: p.label, value: p.text });
+  if (o.maxPerBuyer) facts.push({ label: "Most per person", value: String(o.maxPerBuyer) });
   for (const s of Object.values(saved)) facts.push({ label: `Owner's answer to “${s.question}”`, value: s.answer });
   return facts;
 }

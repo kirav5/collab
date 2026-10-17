@@ -1,22 +1,29 @@
 // Collab on the web: one chat with your agent (it remembers, answers from your notes, shapes requests with Gemini and
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
-// screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
-// agents are doing (Requests) and what was shared (Activity).
+// screens Collab has: what your agents are doing (Activity), your QR and public card (My card), what your agent knows (About me),
+// who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
-import { autonomyOf, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
+import { autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
-import { live, needsYou, onChange, refresh, start } from "./live.js";
-import { PASS, dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, storeCard } from "./cards.js";
+import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
+import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
+import { passHTML, passKind, passQR } from "./pass.js";
+import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
-import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
+import { notesReadBy, privacyFacts } from "./processing.js";
+import { ask, avatarHTML, $, busy, esc, id, label, money, now, shortName, tag, toast } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
+// Incognito (Settings): remembered on this device only as the on/off choice itself.
+try { S.incognito = localStorage.getItem("collab-incognito") === "on"; } catch { S.incognito = false; }
+session.incognito = S.incognito;
+
 const root = $("#root");
 
 // MARK: - Boot
@@ -107,7 +114,7 @@ async function boot() {
   addEventListener("online", () => { toast("Back online — syncing what you did offline."); catchUp().then(() => paint()); });
   addEventListener("offline", () => { toast(engine.here ? "Offline — Gemma answers questions about your notes on this device. New notes are saved here and sync later." : "Offline — showing what's saved on this device. New notes sync when you're back."); paint(); });
   if (navigator.onLine) catchUp();
-  S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
+  S.sessions = (await local.all("sessions")).map(s => ({ ...s, persisted: true })).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
   syncChats();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) syncChats(); });
@@ -115,9 +122,13 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><button class="send" id="send" aria-label="Send">↑</button></div>
-        <div class="row" id="composer-note"></div></form></div></section></div>`;
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="row" id="composer-note"></div></form></div></section>
+      <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
+  startPanel(paint);
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
+  voiceInput();
+  $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
   document.addEventListener("click", e => {
     const el = e.target.closest?.('[data-act="eng-pay"][data-gpay]');
@@ -126,6 +137,14 @@ async function boot() {
     const sheet = openGooglePay(Number(el.dataset.amount), el.dataset.item ?? "Collab", el.dataset.currency ?? "INR");
     sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message));
   }, true);
+  // The menu (phones) closes on a tap anywhere outside it, and that tap does nothing else; Escape closes it too.
+  document.addEventListener("click", e => {
+    const app = $("#app");
+    if (!app?.classList.contains("nav-open") || e.target.closest?.(".sidebar, [data-act=\"nav\"]")) return;
+    e.stopPropagation(); e.preventDefault();
+    app.classList.remove("nav-open");
+  }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") $("#app")?.classList.remove("nav-open"); });
   document.addEventListener("click", onClick);
   document.addEventListener("change", onEdit);
   document.addEventListener("input", onEdit);
@@ -149,26 +168,24 @@ function paint() { paintSidebar(); paintTop(); paintContent(); }
 function paintSidebar() {
   const el = $("#sidebar");
   if (!el) return;
-  const n = needsYou().length;
+  const n = needsYouCount();
   const groups = groupSessions(S.sessions);
   const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
       title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here && engine.mode !== "cloud-only" ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
-      ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
+      ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
       ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
-        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}
-        ${!session.pushOn && session.push ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
+        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
-        ${navRow("context", "▤", "Context", "")}
-        ${navRow("people", "◎", "People", "")}
-        ${navRow("sharing", "◈", "Sharing", "")}
-        ${navRow("requests", "⇄", "Requests", live.engagements.size ? String(live.engagements.size) : "")}
-        ${navRow("activity", "≡", "Activity", "")}
+        ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
+        ${navRow("people", "▦", "My card", "")}
+        ${navRow("context", "▤", "About me", "")}
+        ${navRow("sharing", "◈", "Privacy", "")}
         ${navRow("settings", "⚙", "Settings", "")}
       </div>
-      <div class="stack" style="gap:4px">${label("Your agent's address")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a>
+      <div class="stack" style="gap:4px">${label("Your agent")}<button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
         ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
     </div>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
@@ -179,38 +196,71 @@ const navRow = (screen, ico, title, trail) => `<button class="${S.screen === scr
 function groupSessions(list) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const t = today.getTime() / 1000;
+  // A chat started with "Don't keep history" on is never listed: it lives only while it's open.
+  list = list.filter(s => !s.incognito || s.id === S.current);
   const g = [{ title: "Today", items: list.filter(s => s.updatedAt >= t) }, { title: "Earlier", items: list.filter(s => s.updatedAt < t) }];
   return g.filter(x => x.items.length);
 }
 
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
-  const titles = { context: "Context", people: "People", sharing: "Sharing", requests: "Requests", activity: "Activity", settings: "Settings" };
-  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
-    <span class="end small faint">@${esc(S.profile.handle)}</span>`;
-  $("#composer").hidden = S.screen !== "chat";
-  $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
-  $("#composer-note").innerHTML = label(engine.here && engine.mode !== "cloud-only" ? "Private notes are read by Gemma on this device" : engine.mode === "cloud" || engine.mode === "cloud-only" ? "Private notes are never shared · Gemini sees only what a request needs" : "Private notes are read only by Gemma on your devices · never shared");
+  const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+  const detail = panelDetail();
+  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
+    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="New chats aren't kept; nothing is remembered">◐ Not kept</span> ` : ""}@${esc(S.profile.handle)}</span>`;
+  // The right panel shows a screen, or something opened from it (a deal, a pass, a log…) with a way back.
+  $("#panel-title").innerHTML = detail ? `<button class="btn quiet compact" data-act="panel-close">‹ ${S.screen === "chat" ? "Close" : "Back"}</button>${label(detail.title, "sq ink")}`
+    : S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
+  $("#app").classList.toggle("split", S.screen !== "chat" || !!detail);
+  $("#panel").hidden = S.screen === "chat" && !detail;
+  $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
+  $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
 }
 
 let painting = false, lastHTML = "";
 let again = null;
+// A live repaint while a finger or mouse is down would replace the button being pressed, and the tap would be lost.
+let pointerDown = false, afterPointer = false;
+document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
+for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { pointerDown = false; if (afterPointer) { afterPointer = false; setTimeout(() => paintContent(true), 0); } }, true);
+/** Motion that means something: a new message or card rises in, one that changed (a counter, a payment) flashes once,
+ *  and a screen opens in a short stagger. Live refreshes never replay animations; Settings › Appearance turns it off. */
+const seenAnim = new Map();
+let lastScreen = null;
+function animate(root, opened) {
+  const on = document.documentElement.dataset.motion !== "off";
+  if (on && opened) { root.classList.remove("screen-enter"); void root.offsetWidth; root.classList.add("screen-enter"); }
+  for (const n of root.querySelectorAll("[data-anim]")) {
+    const k = n.dataset.anim, sig = n.dataset.animSig ?? "";
+    if (on && !opened && !seenAnim.has(k) && seenAnim.size) n.classList.add("enter");
+    else if (on && seenAnim.has(k) && seenAnim.get(k) !== sig) n.classList.add("flash");
+    seenAnim.set(k, sig);
+  }
+}
+
 async function paintContent(soft = false) {
-  const el = $("#content");
+  const el = $("#content"), panel = $("#panel-body");
   if (!el) return;
   // One paint at a time; a paint asked for meanwhile runs right after (a hard one wins over a soft one).
   if (painting) { again = again === false ? false : soft; return; }
-  // A live refresh never rewrites what the owner is typing.
-  if (soft && el.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  // A live refresh never rewrites what the owner is typing, nor what's under a pressed pointer.
+  if (soft && (el.contains(document.activeElement) || panel.contains(document.activeElement)) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (soft && pointerDown) { afterPointer = true; return; }
   painting = true;
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
-    const html = `<div class="inner">${S.screen === "chat" ? await chatHTML() : await screens[S.screen].html(S)}</div>`;
+    const detail = panelDetail();
+    const chat = `<div class="inner">${await chatHTML()}</div>`, side = detail ? `<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>` : S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
+    const html = chat + "\u0000" + side;
     // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
     if (soft && html === lastHTML) return;
+    const chatChanged = chat !== lastHTML.split("\u0000")[0];
     lastHTML = html;
-    el.innerHTML = html;
-    if (S.screen === "chat" && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    if (chatChanged || !soft) el.innerHTML = chat;
+    panel.innerHTML = side;
+    animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen && !panelDetail()); lastScreen = S.screen;
+    if (chatChanged && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    if (!soft && (S.screen !== "chat" || panelDetail())) panel.scrollTop = 0;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
     painting = false;
@@ -229,32 +279,97 @@ async function chatHTML() {
   const cur = S.sessions.find(s => s.id === S.current);
   if (!cur || !cur.messages.length) return emptyChat();
   refreshStoreCard(cur);
+  // A listing being made gets its terms suggested at once, in the background (see prefillTerms).
+  cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => {
+    if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i);
+    if (c.type === "offer" && c.step === "review" && c.missing?.length && c.answersTried !== ANSWERS_V) prefillAnswers(cur.id, m.id, i);
+  }));
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
     for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
   }
+  // Matches: "Fits you" reasons come from the private notes kept on this device, read here and never sent anywhere.
+  if (cur.messages.some(m => m.cards?.some(c => c.type === "brief" && c.step === "matches"))) setNotesHere(await cachedNotes());
+  for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "offer" && c.basics && !c.offer) priceHintsFor(c, cur);
   return cur.messages.map(messageHTML).join("");
 }
 
 /** First visit: three lines on how it works, dismissed with one tap (kept on this device). */
 function howItWorks() {
   try { if (localStorage.getItem("collab.intro") === "done") return ""; } catch {}
-  return `<div class="card intro"><div class="row">${label("How Collab works", "sq accent")}<button class="linkish small faint end" data-act="intro-done">Got it</button></div>
-    <div class="steps-plain"><div><b>1</b><span>Tell your agent what you need — or scan a shop's QR.</span></div><div><b>2</b><span>It talks to the shop's agent for you: asks, answers, and bargains inside the limit you set.</span></div><div><b>3</b><span>You confirm, pay (test mode for now), and collect with a one-tap pass. Your private notes never leave your account.</span></div></div></div>`;
+  return `<div class="card intro"><div class="row">${label("How it works", "sq accent")}<button class="linkish small faint end" data-act="intro-done">Got it</button></div>
+    <div class="steps-plain"><div><b>1</b><span>Say what you need</span></div><div><b>2</b><span>Agents ask and bargain</span></div><div><b>3</b><span>You confirm, pay, collect</span></div></div></div>`;
 }
 
+/** The start of a chat: one question, your words, and a few things your agent thinks you might want next. */
+let startIdeas = null;
 function emptyChat() {
-  const tiles = [["Remember", "Remember that I teach guitar on weekends and I'm free after 6 pm", ""],
-    ["Find anything", "Need a 2BHK to rent in Indiranagar, budget 36,000 a month, I have a small dog", "peri"],
-    ["Offer something", "I teach tabla online and at home in Jayanagar, ₹700 an hour, lowest 600", ""],
-    ["Your context", "What did I note about guitar?", ""]];
-  return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It asks anyone's agent for anything — and your private context is never shared.</span></h1>
-    <div class="grid-tiles">${tiles.map(([l, p, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(p)}</p><span class="arrow">↗</span></button>`).join("")}</div>
-    <div class="card">${label("Who sees what", "sq")}
-      <dl class="kv"><dt>${tag("Only me", "peri")}</dt><dd>Private. Stored with your account, but no rule can name it and no one else's agent ever sees it.</dd>
-      <dt>${tag("Protected", "accent")}</dt><dd>Shared with the people your rules name, on the topics they name — answered by your always-on agent, or checked with you first.</dd>
-      <dt>${tag("Public", "fresh")}</dt><dd>Anyone's agent can find it and be told it. What you offer lives here.</dd></dl>
-      <p class="small muted">Requests go agent-to-agent over A2A. Your agent never reveals your limit, and anything it can't answer from what you shared comes to you.</p></div>`;
+  if (startIdeas === null) { startIdeas = []; cached("/api/start", 120_000).then(r => { startIdeas = r.ideas ?? []; if (S.screen === "chat") paintContent(true); }).catch(() => {}); }
+  const ideas = startIdeas ?? [];
+  return `${howItWorks()}<div class="start">
+    <span class="label sq">step 1 of 2 · say it in your words</span>
+    <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
+    <h1 class="headline">What are you looking for right now?</h1>
+    <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
+    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="prompt" data-text="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas"><span class="small faint">Thinking of what you might want…</span></div>`}
+    ${privacyCard()}</div>`;
+}
+
+/**
+ * Sell from a photo: made small on the phone (longest side 1024 px, JPEG), read by Gemini into a listing sentence,
+ * then the usual listing card (with the photo on it) — the seller still sets the price and publishes. What's typed in
+ * the box goes with it as a caption ("₹450, two available").
+ */
+async function sellFromPhoto(file) {
+  const input = $("#input"), caption = input.value.trim();
+  if (!/^image\//.test(file.type)) return toast("That isn't a photo. Choose a JPEG, PNG or WebP.");
+  // The photo shows at once, with what's happening to it, in the chat — not a toast that vanishes.
+  let cur = S.sessions.find(s => s.id === S.current && !s.to);
+  if (!cur) { cur = { id: id(), title: "From a photo", messages: [], updatedAt: now() }; S.current = cur.id; }
+  const preview = URL.createObjectURL(file);
+  const msg = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", photo: preview, cards: [] };
+  cur.messages.push(msg); S.screen = "chat"; paint();
+  const fail = async why => { msg.pending = null; msg.text = `${why} Type what it is instead, or try a closer, brighter photo.`; msg.cards = [{ type: "suggest", options: [{ label: "Try another photo", text: "" }], hint: "" }]; await saveSession(cur); paint(); };
+  try {
+    const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
+    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    const image = cv.toDataURL("image/jpeg", 0.82);
+    const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
+    input.value = "";
+    cur.messages = cur.messages.filter(m => m !== msg); await saveSession(cur);
+    // The preview is the copy on this phone: the server shows the photo to others only once it's on a public listing.
+    const small = URL.createObjectURL(await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.82)));
+    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: small, condition: r.condition }))) await fail("Couldn't make a listing from that.");
+  } catch (err) { await fail(err.status === 422 ? "Couldn't tell what's in the photo." : err.status === 413 ? "That photo is too large." : (err.message || "Couldn't read that photo.")); }
+}
+
+/** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
+ *  Hindi) fills the message box; nothing is sent until the owner taps send. Hidden where the browser can't. */
+function voiceInput() {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition, mic = $("#mic"), input = $("#input");
+  if (!Rec || !mic) return;
+  mic.hidden = false;
+  let rec = null;
+  mic.onclick = () => {
+    if (rec) { rec.stop(); return; }
+    rec = new Rec();
+    rec.lang = /^hi\b/i.test(navigator.language) ? "hi-IN" : "en-IN";
+    rec.interimResults = true;
+    const before = input.value.trim();
+    rec.onresult = ev => { input.value = [before, [...ev.results].map(r => r[0].transcript).join(" ")].filter(Boolean).join(" "); };
+    rec.onerror = ev => { if (ev.error !== "aborted" && ev.error !== "no-speech") toast(ev.error === "not-allowed" ? "Allow the microphone to speak your message." : "Couldn't hear that — try again."); };
+    rec.onend = () => { rec = null; mic.classList.remove("on"); input.focus(); };
+    mic.classList.add("on");
+    rec.start();
+  };
+}
+
+/** Stored / read by / shared — three lines, with the levels one tap away. */
+function privacyCard() {
+  return `<div class="card slim privacy-facts"><dl class="kv">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <details class="more"><summary>Who sees what</summary><dl class="kv small"><dt>${tag("Private", "peri")}</dt><dd>Only your agent uses it.</dd>
+      <dt>${tag("Protected", "accent")}</dt><dd>People your rules name, on their topics.</dd><dt>${tag("Public", "fresh")}</dt><dd>Anyone's agent. What you offer.</dd></dl></details></div>`;
 }
 
 // MARK: - Direct chats (QR codes and links)
@@ -288,18 +403,170 @@ function refreshStoreCard(cur) {
   });
 }
 
+/** Still waiting for suggested terms (a request older than a minute, say from before a reload, has ended). */
+const termsBusy = c => !!c.termsLoading && Date.now() - c.termsLoading < 60_000;
+
+/** A card as it is now (the session may have been saved or synced since a request started). */
+function cardAt(sid, mid, i) { const s = S.sessions.find(x => x.id === sid), m = s?.messages.find(x => x.id === mid); return m?.cards?.[i] ? { s, m, c: m.cards[i] } : null; }
+
+/**
+ * Terms for a listing, suggested from what others offering the same thing state on the web — started as soon as the
+ * listing card appears (or again on request), and written to the card whatever the owner opens or closes meanwhile.
+ * Never over terms the owner already wrote.
+ */
+async function prefillTerms(sid, mid, i, again = false) {
+  const f = cardAt(sid, mid, i);
+  if (!f || termsBusy(f.c) || (!again && (f.c.termsTried || f.c.terms?.length))) return;
+  Object.assign(f.c, { termsTried: true, termsLoading: Date.now() });
+  await saveSession(f.s); paintContent(true);
+  const r = await api("/api/terms/suggest", { category: f.c.offer?.category ?? "", text: f.c.publicText ?? f.c.text, ownerPays: ownerPays(f.c) }).catch(() => null);
+  const now_ = cardAt(sid, mid, i);
+  if (!now_) return;
+  now_.c.termsLoading = false;
+  if (r?.terms?.length && (again || !now_.c.terms?.length)) now_.c.terms = r.terms;
+  // The common terms for this kind of offering, to tap in — minus any already there.
+  const have = new Set((now_.c.terms ?? []).map(t => t.label.trim().toLowerCase()));
+  if (r) now_.c.starters = (r.starters ?? []).filter(t => !have.has(t.label.toLowerCase()));
+  if (again && r && !r.terms?.length && !now_.c.starters?.length) toast("Couldn't suggest terms just now — write your own.");
+  await saveSession(now_.s); paintContent(true);
+}
+
+/** Bumped when suggestions change, so cards made earlier (whose first try came back empty) ask once more. */
+const ANSWERS_V = 2;
+
+/** Likely answers to the listing's common questions, suggested by Gemini from its words; the owner accepts them. */
+async function prefillAnswers(sid, mid, i) {
+  const f = cardAt(sid, mid, i);
+  if (!f || f.c.answersTried === ANSWERS_V) return;
+  f.c.answersTried = ANSWERS_V; await saveSession(f.s);
+  const r = await api("/api/offers/answers", { text: f.c.publicText ?? f.c.text, questions: f.c.missing.map(m => ({ label: m.label, ask: m.ask, options: m.options ?? [] })) }).catch(() => null);
+  const now_ = cardAt(sid, mid, i);
+  if (!now_ || !r?.answers) return;
+  // "answer\u0000guess" marks a guess (the words said nothing); otherwise the words implied it.
+  now_.c.suggestedAnswers = Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, String(v).split("\u0000")[0]]));
+  now_.c.guessedAnswers = Object.fromEntries(Object.entries(r.answers).filter(([, v]) => String(v).includes("\u0000")).map(([k]) => [k, true]));
+  await saveSession(now_.s); paintContent(true);
+}
+
+/** A pass (from its link: "/pickup.html#<id>.<code>") in a modal: the buyer sees the code to show, the seller marks it done. */
+async function openPass(path) {
+  const [pid, code] = new URL(path, location.origin).hash.slice(1).split(".");
+  const link = `${location.origin}/pickup.html#${pid}.${code}`, missing = "This pass doesn't exist or its link is incomplete.";
+  const load = async () => {
+    if (!pid || !code) throw new Error(missing);
+    const r = await fetch(`/public/pickup/${encodeURIComponent(pid)}?code=${encodeURIComponent(code)}`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({ error: "pass not found" }));
+    if (!r.ok) throw new Error(d.error === "pass not found" ? missing : d.error);
+    return d;
+  };
+  let d;
+  try { d = await load(); } catch (err) { return toast(err.message); }
+  // The seller by account, not handle (a handle can change after the deal); a pass scanned from someone else's deal
+  // falls back to the handle the server reports as the seller's current one.
+  const eng = live.engagements.get(pid);
+  const seller = eng ? eng[eng.seller ?? "provider"].uid === session.uid : d.sellerHandle === S.profile.handle;
+  const qr = seller ? "" : await passQR(link);
+  const body = () => passHTML(d, { qr, seller, link, manage: !!eng });
+  const o = { querySelector: s => document.querySelector(`#panel ${s}`), remove: closePanel };
+  const draw = () => paintContent(true);
+  // Changing or cancelling a booking, from the pass: the result is the same pass, redrawn.
+  const booking = async body => {
+    const x = await api(`/api/engagements/${encodeURIComponent(pid)}/booking`, body);
+    live.engagements.set(x.id, x); d = await load(); draw(); refresh(openScreen);
+  };
+  openPanel({ title: passKind(d).name, render: body, handle: async e => {
+    if (e.target.closest('[data-act="pass-move"]')) {
+      const box = o.querySelector(".pass-times");
+      box.innerHTML = `<span class="spinner"></span>`;
+      const r = await api(`/api/engagements/${encodeURIComponent(pid)}/slots`).catch(err => ({ slots: [], error: err.message }));
+      const label_ = sl => new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined });
+      box.innerHTML = r.slots?.length ? r.slots.slice(0, 8).map(sl => `<button class="chip" data-act="pass-move-to" data-slot="${esc(sl.id)}">${esc(label_(sl))}</button>`).join("") : `<span class="small muted">${esc(r.error ?? "No other free times right now.")}</span>`;
+      return;
+    }
+    const to = e.target.closest('[data-act="pass-move-to"]');
+    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message); } return; }
+    if (e.target.closest('[data-act="pass-cancel"]')) {
+      if ((await ask({ title: "Cancel this booking?", detail: "The time is freed for others, and they're told.", ok: "Cancel booking", cancel: "Keep it", danger: true })) === null) return;
+      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message); }
+      return;
+    }
+    const copy = e.target.closest('[data-act="pass-copy"]');
+    if (copy) { await navigator.clipboard.writeText(copy.dataset.link).catch(() => {}); return toast("Link copied — keep it private."); }
+    const b = e.target.closest('[data-act="pass-collect"]');
+    if (!b) return;
+    busy(b, true);
+    try { await api(`/api/pickup/${encodeURIComponent(pid)}/collect`, { code }); d = await load(); draw(); toast(`${passKind(d).done}. They're asked to confirm.`); refresh(openScreen); }
+    catch (err) {
+      d = await load().catch(() => d); draw();
+      o.querySelector(".pass")?.insertAdjacentHTML("afterend", `<p class="small" role="alert" style="color:var(--danger);margin:0">${esc(err.message)}</p>`);
+      refresh(openScreen);
+    }
+  } });
+}
+
+/** A conversation in the side panel (its card, live: redrawn on every refresh while it's open). */
+function showEngagement(id) {
+  const e = live.engagements.get(id);
+  if (!e) return toast("That conversation isn't loaded yet.");
+  const them = e.requester.uid === session.uid ? e.provider : e.requester;
+  S.panelEng = id; S.panelLog = null;
+  openPanel({ title: `Your agent ⇄ ${them.name}'s agent`, render: () => { const x = live.engagements.get(id); return x ? `<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}` : ""; } });
+}
+
+/** What the agents said, as a stream: one conversation, or every conversation, newest last, with filters. */
+function logStream(ids, filter = "all") {
+  const mine = e => (e.requester.uid === session.uid ? "requester" : "provider");
+  const rows = [];
+  for (const id of ids) {
+    const e = live.engagements.get(id); if (!e) continue;
+    const side = mine(e), them = side === "requester" ? e.provider : e.requester;
+    const state = e.phase === "agreed" ? "won" : ["closed", "declined"].includes(e.phase) ? "lost" : "open";
+    if (filter !== "all" && filter !== state) continue;
+    for (const ev of e.events) rows.push({ at: ev.at, who: ev.who, text: ev.text, by: ev.by, them: them.name, id: e.id, side, state });
+  }
+  rows.sort((a, b) => a.at - b.at);
+  const who = r => (r.who === "system" ? "" : r.who.startsWith(r.side) ? (r.who.endsWith("_agent") ? "your agent" : "you") : `${r.them.split(" ")[0]}'s agent`);
+  const kind = r => (r.who === "system" ? "note" : /offer|counter|\₹|price/i.test(r.text) ? "propose" : /confirm|agreed|accept/i.test(r.text) ? "accept" : /declin|walk|no deal|end/i.test(r.text) ? "decline" : "say");
+  return rows.length ? rows.map(r => `<div class="lg ${r.who === "system" ? "sys" : r.who.startsWith(r.side) ? "me" : "them"}"><span class="lg-t">${new Date(r.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
+    <span class="lg-who">${ids.length > 1 ? `<span class="lg-name">${esc(r.them.split(" ")[0])}</span> ` : ""}${esc(who(r))}${r.who === "system" ? "" : ` → <span class="lg-kind ${kind(r)}">${kind(r)}</span>`}</span>
+    <span class="lg-text">${esc(r.text)}</span></div>`).join("") : `<p class="small muted">Nothing here yet.</p>`;
+}
+function showLog(id = null) {
+  const ids = id ? [id] : [...live.engagements.keys()];
+  S.panelLog = { id, filter: S.panelLog?.id === id ? S.panelLog.filter ?? "all" : "all" }; S.panelEng = null;
+  const draw = () => {
+    const f = S.panelLog.filter, n = ids.map(x => live.engagements.get(x)).filter(Boolean);
+    const won = n.filter(e => e.phase === "agreed").length, lost = n.filter(e => ["closed", "declined"].includes(e.phase)).length, open = n.length - won - lost;
+    return `<div class="row small"><span class="muted"><b>${n.length}</b> conversation${n.length === 1 ? "" : "s"} · ${won} ✓ · ${lost} ✕ · ${open} open</span>
+      <span class="seg end">${[["all", "all"], ["won", "won"], ["lost", "lost"], ["open", "open"]].map(([k, t]) => `<button class="${f === k ? "on" : ""}" data-act="log-filter" data-k="${k}">${t}</button>`).join("")}</span></div>
+      <div class="lg-stream">${logStream(ids, f)}</div>`;
+  };
+  const e = id ? live.engagements.get(id) : null, them = e ? (e.requester.uid === session.uid ? e.provider : e.requester).name : null;
+  openPanel({ title: them ? `Agent log · ${them}` : "Agent log", render: draw, handle: ev => { const b = ev.target.closest('[data-act="log-filter"]'); if (b) { S.panelLog.filter = b.dataset.k; paintContent(true); } } });
+  const body = document.querySelector("#panel .lg-stream"); if (body) body.scrollTop = body.scrollHeight;
+}
+
 /** The owner's own card, as customers see it — nothing can be sent from it. */
 async function previewCard(el = null) {
   if (el) busy(el, true, "Loading");
   const p = await person(S.profile.handle, true);
   if (el) busy(el, false);
   if (!p) return toast("Couldn't load your card.");
-  document.querySelector(".overlay")?.remove();
-  const o = document.createElement("div");
-  o.className = "overlay";
-  o.innerHTML = `<div class="sheet">${storeCard(storeCardOf(p), { preview: true })}<button class="btn secondary" data-act="overlay-close">Close preview</button></div>`;
-  document.body.append(o);
-  o.addEventListener("click", e => { if (e.target === o || e.target.closest('[data-act="overlay-close"]')) o.remove(); });
+  openPanel({ title: "Your card, as others see it", html: storeCard(storeCardOf(p), { preview: true }) });
+}
+
+/** Your A2A agent card — how any agent finds and talks to yours — shown readably, with the JSON one tap away. */
+async function showAgentCard() {
+  const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
+  const c = await fetch(url).then(r => r.json()).catch(() => null);
+  if (!c) return toast("Couldn't load your agent card.");
+  const skills = (c.skills ?? []).map(s => `<div class="card slim"><b>${esc(s.name)}</b>${s.description ? `<span class="small muted">${esc(s.description)}</span>` : ""}${s.examples?.length ? `<span class="small faint">e.g. “${esc(s.examples[0])}”</span>` : ""}</div>`).join("");
+  openPanel({ title: "Your agent card", html: `
+    <div class="card"><div class="row">${avatarHTML(S.profile.name, S.profile.handle, 40)}<div><b>${esc(c.name ?? S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)} · A2A v${esc(c.protocolVersion ?? c.version ?? "1.0")}</span></div></div>
+      <span class="small muted">${esc(c.description ?? "")}</span>
+      <div class="row"><button class="btn secondary compact" data-act="copy" data-text="${esc(url)}">Copy link</button><button class="btn quiet compact" data-act="copy" data-text="${esc(JSON.stringify(c, null, 2))}">Copy JSON</button><a class="btn quiet compact" href="${esc(url)}" target="_blank" rel="noopener">Open ↗</a></div></div>
+    ${skills ? `${label("What it offers", "sq")}${skills}` : ""}
+    <details class="more"><summary>JSON</summary><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 
 async function openDirect(handle) {
@@ -357,6 +624,9 @@ async function sendDirect(cur, text, offerFactId = null) {
   return { text: said, cards: [{ type: "engagement", id: e.id }] };
 }
 
+/** Rules read from words in a conversation, waiting for the owner's confirmation (by conversation). */
+const pendingRules = new Map();
+
 /** The AP2 payment step (after Google Pay's sheet, when used). One idempotency key per button: a retry can't pay twice. */
 async function payDeal(el, googlePay, a = "eng-pay") {
   busy(el, true, a === "eng-pay" ? "Paying" : "Saving");
@@ -365,7 +635,7 @@ async function payDeal(el, googlePay, a = "eng-pay") {
     const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);
     live.engagements.set(e.id, e);
     session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
-    toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""} — test mode, no money moved. Their agent has the payment.` : "Marked as paid outside the app.");
+    toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : "Marked as paid outside the app.");
   } catch (err) { toast(err.message); busy(el, false); }
   return refresh(openScreen);
 }
@@ -429,7 +699,7 @@ async function orderFromCard(a, el) {
     for (const m of cur.messages) m.cards = (m.cards ?? []).filter(c => !(c.type === "engagement" && c.id === e.id));
     cur.messages.push({ id: id(), role: "user", text: e.brief.summary, at: now() },
       { id: id(), role: "agent", text: e.phase === "agreed" ? `Done — ${e.provider.name}'s agent confirmed it. Pay below to get your pass.`
-        : `Sent to ${e.provider.name}'s agent — it answers within their limits (it may counter), or asks them. Nothing is final until both of you confirm.`, at: now(), cards: [{ type: "engagement", id: e.id }] });
+        : "Sent. Nothing is final until you both confirm.", at: now(), cards: [{ type: "engagement", id: e.id }] });
     await saveSession(cur);
     session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
     S.screen = "chat"; paint();
@@ -446,7 +716,13 @@ async function orderFromCard(a, el) {
 
 // MARK: - Sessions
 
-async function saveSession(s) { s.updatedAt = now(); await local.put("sessions", s); S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)]; upload(s); }
+async function saveSession(s) {
+  s.updatedAt = now();
+  // Incognito: a chat started while it's on lives only in memory — never on this device, never in the account.
+  if (S.incognito && !s.persisted) s.incognito = true;
+  if (!s.incognito) { s.persisted = true; await local.put("sessions", s); upload(s); }
+  S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)];
+}
 
 // Chat history also lives in the account (owner-only), so the installed app, other browsers and other devices show
 // the same chats. Uploads wait a moment so a burst of edits is one write.
@@ -485,7 +761,7 @@ async function send(text, offerFactId = null) {
   let cur = S.sessions.find(s => s.id === S.current);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
   const user = { id: id(), role: "user", text, at: now() };
-  const reply = { id: id(), role: "agent", text: "", at: now(), pending: "Thinking", cards: [] };
+  const reply = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", cards: [] };
   cur.messages.push(user, reply);
   await saveSession(cur);
   S.screen = "chat";
@@ -494,7 +770,12 @@ async function send(text, offerFactId = null) {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
     // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
     const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
+    // "Say the area you mean" was the last reply: a short answer ("delhi") completes that request.
+    const asked = !cur.to && S.pendingAsk && text.split(/\s+/).length <= 4 && !/\b(need|want|find|remember|sell|book)\b/i.test(text);
+    if (asked) { text = `${S.pendingAsk} in ${text}`; user.text = text; }
+    S.pendingAsk = null;
     const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open);
+    if (r.askArea) S.pendingAsk = r.askArea;
     Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
   } catch (e) {
     // A refusal (not enough in stock, over budget…) is said as it is; when there's an offer that fits, it's one tap away.
@@ -514,7 +795,7 @@ const findCard = el => {
 
 // MARK: - Actions
 
-function openScreen(screen, focus) { S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); paint(); }
+function openScreen(screen, focus) { S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
 
 function onEdit(e) {
   const el = e.target;
@@ -533,6 +814,7 @@ function onEdit(e) {
   if (k === "days") f.c.days = Number(v);
   if (f.c.type === "brief") {
     if (k === "title" || k === "summary") f.c.draft.shared[k] = v;
+    if (k === "rulesText") { f.c.rulesText = v; if (f.c.rulesOk) f.c.rulesOk = false; }
     if (k === "about") setAbout(f.c.draft.shared, el.dataset.key, String(v).trim());
     if (k === "limit") {
       const n = Number(v);
@@ -562,8 +844,9 @@ function onEdit(e) {
   }
   if (e.type === "change") {
     saveSession(f.s);
-    // A ticked box keeps focus, and a repaint never rewrites a focused field: let go of it so the card updates.
-    if (k === "autonomy" || f.c.type === "offer") { if (el.type === "checkbox") el.blur(); paintContent(true); }
+    // A ticked box or a picked option changes what the card shows: let go of it and repaint. A text field doesn't —
+    // its value is already on the card — and repainting as it loses focus would swallow the tap that moved focus.
+    if (k === "autonomy" || (f.c.type === "offer" && /checkbox|radio|select-one/.test(el.type))) { el.blur(); paintContent(true); }
   }
 }
 
@@ -581,6 +864,11 @@ async function onClick(e) {
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
+    if (a === "agent-card") return showAgentCard();
+    if (a === "eng-open") return showEngagement(el.dataset.id);
+    if (a === "eng-log") return showLog(el.dataset.id);
+    if (a === "agent-stream") return showLog(null);
+    if (a === "copy") { await navigator.clipboard.writeText(el.dataset.text ?? el.dataset.link ?? "").catch(() => {}); return toast("Copied."); }
     // The seller's quick moves on a request (their side of the conversation card).
     if (a === "seller-quote" || a === "seller-counter-send") {
       const price = a === "seller-quote" ? Number(el.dataset.price) : Number(document.querySelector(`[data-counter-price="${CSS.escape(el.dataset.id)}"]`)?.value);
@@ -595,10 +883,41 @@ async function onClick(e) {
       return refresh(openScreen);
     }
     if (a === "delegate") {
-      const limit = Number(document.querySelector(`[data-delegate-limit="${CSS.escape(el.dataset.id)}"]`)?.value);
-      if (!(limit > 0)) return toast("Name your limit — it's never shown to them.");
+      const said = String(document.querySelector(`[data-delegate-limit="${CSS.escape(el.dataset.id)}"]`)?.value ?? "").trim();
+      if (!said) return toast("Name your limit, or say your rules — it's never shown to them.");
+      // Rules in words: read by Gemini and shown back first; nothing applies until the owner confirms.
+      if (!/^\s*(?:₹|rs\.?)?\s*\d[\d,]*\s*$/i.test(said)) {
+        busy(el, true, "Reading");
+        try {
+          const eng = live.engagements.get(el.dataset.id), selling = eng && (eng.seller ?? "provider") === (eng.requester.uid === session.uid ? "requester" : "provider");
+          const r = await api("/api/rules/read", { text: said, side: selling ? "seller" : "buyer", engagementId: el.dataset.id });
+          pendingRules.set(el.dataset.id, { text: said, rules: r.rules });
+          const box = document.querySelector(`[data-rules-preview="${CSS.escape(el.dataset.id)}"]`);
+          if (box) box.innerHTML = `<div class="card slim">${rulesList(r.lines)}<div class="row"><button class="btn accent compact" data-act="rules-confirm" data-id="${esc(el.dataset.id)}">Confirm and hand over</button><span class="small faint">Nothing applies until you confirm.</span></div></div>`;
+        } catch (err) { toast(err.message); }
+        busy(el, false); return;
+      }
+      const limit = Number(said.replace(/[^\d]/g, ""));
       busy(el, true, "Handing over");
       try { const e = await api(`/api/engagements/${el.dataset.id}/delegate`, { limit, autonomy: el.dataset.autonomy || "close" }); live.engagements.set(e.id, e); toast(e.phase === "agreed" ? "Your agent agreed inside your limit — pay below." : "Your agent has it — it negotiates inside your limit and asks only if there's no deal there."); }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
+    if (a === "deal-msg" || a === "deal-note") {
+      const input = document.querySelector(`[data-deal-msg="${CSS.escape(el.dataset.id)}"]`);
+      const text = a === "deal-note" ? el.dataset.text : String(input?.value ?? "").trim();
+      if (!text) return;
+      busy(el, true, "Sending");
+      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text }); live.engagements.set(e.id, e); if (input) input.value = ""; }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
+    if (a === "rules-confirm") {
+      const p = pendingRules.get(el.dataset.id);
+      if (!p) return toast("Read your rules again first.");
+      busy(el, true, "Handing over");
+      try { const e = await api(`/api/engagements/${el.dataset.id}/rules`, p); live.engagements.set(e.id, e); pendingRules.delete(el.dataset.id);
+        toast(e.phase === "agreed" ? "Your agent agreed inside your rules — pay below." : "Your agent has it — it follows your rules and asks you only when it can't."); }
       catch (err) { toast(err.message); }
       return refresh(openScreen);
     }
@@ -629,8 +948,11 @@ async function onClick(e) {
     if (a.startsWith("join-")) {
       const id = el.dataset.id, body = { action: { "join-mark": "joined", "join-confirm": "confirm", "join-noshow": "no_show", "join-withdraw": "withdraw" }[a], ...(el.dataset.as ? { as: el.dataset.as } : {}) };
       if (a === "join-mark") body.date = el.parentElement?.querySelector("[data-join-date]")?.value || "";
-      if (a === "join-noshow") { const r = prompt("They didn't join — anything to add? (optional, they'll see it)"); if (r === null) return; body.reason = r; }
-      if (a === "join-withdraw") { const r = prompt("Withdraw — say why in a few words (they'll see it):"); if (!r?.trim()) return; body.reason = r; }
+      // Marking it for a demo person in this conversation says so at the top of the box.
+      const e = live.engagements.get(id), mine = e?.requester.uid === session.uid ? "requester" : "provider";
+      const as = el.dataset.as && e ? shortName(e[mine === "requester" ? "provider" : "requester"].name) : null;
+      if (a === "join-noshow") { const r = await ask({ title: "Mark that they didn't join?", detail: "They see this, with anything you add, and it's part of the deal record.", ok: "They didn't join", danger: true, as, input: { label: "Anything to add (optional)", placeholder: "e.g. Didn't turn up on the start date" } }); if (r === null) return; body.reason = r; }
+      if (a === "join-withdraw") { const r = await ask({ title: "Withdraw before joining?", detail: "They see your reason. This can't be undone.", ok: "Withdraw", danger: true, as, input: { label: "Why (they'll see it)", required: true, min: 3, placeholder: "e.g. I've accepted another offer" } }); if (r === null) return; body.reason = r; }
       busy(el, true);
       try { live.engagements.set(id, await api(`/api/engagements/${id}/joining`, body)); }
       catch (err) { toast(err.message); }
@@ -682,15 +1004,25 @@ async function onClick(e) {
       loadPolicy();
       return;
     }
+    // Buy again: the same item and quantity from the same seller, as a new order at today's price (stock checked again).
+    if (a === "buy-again") {
+      const e = live.engagements.get(el.dataset.id);
+      if (!e) return;
+      const sellerSide = e.seller ?? "provider", n = e.negotiation.deal?.items?.length ? e.negotiation.deal.items.reduce((t, l) => t + l.quantity, 0) : e.negotiation.deal?.terms?.quantity > 1 ? e.negotiation.deal.terms.quantity : 1;
+      busy(el, true, "Ordering");
+      try {
+        const x = await api(`/api/people/${encodeURIComponent(e[sellerSide].handle)}/order`, { offerFactId: e.offer.factId, quantity: n });
+        live.engagements.set(x.id, x); session.track("order_from_card", { kind: "again", instant: x.phase === "agreed" });
+        toast(x.phase === "agreed" ? "Ordered — it's agreed. Pay when you're ready." : "Ordered — waiting for them to confirm.");
+        openScreen("requests", x.id);
+      } catch (err) { toast(err.status === 404 ? "That isn't on offer any more." : err.message); busy(el, false); }
+      return;
+    }
     if (a === "eng-pickup") {
       busy(el, true);
-      const p = await api(`/api/engagements/${el.dataset.id}/pickup`).catch(err => { toast(`Couldn't open the pass: ${err.message}`); busy(el, false); return null; });
-      if (!p) return;
-      const link = `${location.origin}${p.path}`;
-      let qr = "";
-      try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1 }); } catch {}
-      const k = PASS[p.kind ?? "pickup"], paid = p.payment === "outside" ? `Paid outside the app (marked by the ${p.markedBy})` : "✓ Paid (test mode)";
-      document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="${esc(k.name)} QR">${qr}</div><b>${p.collectedAt ? `${k.done} · ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : `${paid} · not ${k.done.toLowerCase()} yet`}</b><a class="btn secondary" href="${esc(link)}">Open ${k.name.toLowerCase()}</a><span class="small faint">Show this to the seller — they scan it once. Keep the link private.</span></div>`;
+      try { await openPass((await api(`/api/engagements/${el.dataset.id}/pickup`)).path); }
+      catch (err) { toast(`Couldn't open the pass: ${err.message}`); }
+      finally { busy(el, false); }
       return;
     }
     if (a === "slots-load") {
@@ -712,7 +1044,8 @@ async function onClick(e) {
     }
     if (a === "eng-delivered" || a === "eng-received") {
       const ok = el.dataset.ok !== "0";
-      const note = a === "eng-received" && !ok ? (prompt("What went wrong? (optional)") ?? "") : "";
+      const note = a === "eng-received" && !ok ? await ask({ title: "Report a problem?", detail: "They see it, and it's part of the deal record.", ok: "Report problem", danger: true, input: { label: "What went wrong (optional)" } }) : "";
+      if (note === null) return;
       busy(el, true);
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
       live.engagements.set(e.id, e);
@@ -723,29 +1056,29 @@ async function onClick(e) {
     }
     if (a === "eng-receipt") {
       busy(el, true);
-      const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
       const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
+      busy(el, false);
       const when = t => new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-      const by = s => (r.confirmedBy[s] === "mandate" ? "their standing instruction" : "the owner");
-      box.innerHTML = `<div class="receipt">${receiptHTML(r, live.engagements.get(el.dataset.id))}
-        <span class="small muted">Agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
-        <a class="btn secondary compact" href="${esc(r.verifyPath)}" target="_blank" rel="noopener">Public verification & download</a><span class="small faint">Anyone with that link can view the receipt.</span>
-        <details class="more"><summary>How this is checked</summary>
-          <span class="small muted">When both sides confirmed, Collab hashed the terms, both parties and the time (SHA-256) and registered that hash. Verify recomputes it from the conversation: any change to price, terms or parties breaks the match. Confirmed by ${by("requester")} (requester) and ${by("provider")} (provider).</span>
+      const by = s => (r.confirmedBy[s] === "mandate" ? "a standing instruction" : "in person");
+      openPanel({ title: "Receipt", html: `<div class="receipt">${receiptHTML(r, live.engagements.get(el.dataset.id))}
+        <span class="small muted">Agreed ${when(r.at)} · ${r.matches ? "signed and unchanged" : "changed since"}</span>
+        <div class="row"><a class="btn secondary compact" href="${esc(r.verifyPath)}" target="_blank" rel="noopener">Verify ↗</a><span class="small faint">Anyone with the link can check it.</span></div>
+        <details class="more"><summary>How it's checked</summary>
+          <span class="small muted">Both confirmed (${by("requester")} / ${by("provider")}); Collab signed a fingerprint of the terms, people and time. Any change breaks it.</span>
           <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details>
         ${r.payment ? `<details class="more"><summary>Payment (AP2) · ${r.payment.status === "paid" ? "paid" : r.payment.status === "outside" ? "settled outside the app" : "waiting"}</summary>
           <dl class="kv small">
             <dt>Cart Mandate</dt><dd>${money(r.payment.cart.total.value, r.terms.unit)} · issued by @${esc(r.payment.cart.merchant.handle)}'s agent · ${r.payment.check?.cartOk ? tag("✓ signature valid, matches the deal", "fresh") : tag("doesn't match", "danger")}</dd>
             ${r.payment.mandate ? `<dt>Payment Mandate</dt><dd>signed by @${esc(r.payment.mandate.payer)}'s agent, for that cart · ${r.payment.check?.paymentOk ? tag("✓ signature valid", "fresh") : tag("doesn't match", "danger")}</dd>
-            <dt>Payment</dt><dd>${esc(r.payment.paymentId)} · test mode, no money moved</dd>` : ""}
+            <dt>Payment</dt><dd>${esc(r.payment.paymentId)}</dd>` : ""}
             ${r.payment.ap2 ? `<dt>AP2 v0.2 checkout</dt><dd>${esc(r.payment.ap2.checkout.id)} · authorised by @${esc(r.payment.ap2.checkout.merchant.handle)}'s agent (detached JWS) · ${r.payment.check?.ap2?.merchantOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
             <dt>AP2 mandates</dt><dd>Checkout + Payment Mandates (SD-JWT) by @${esc(r.payment.ap2.checkout.buyer.handle)}'s agent, bound to the checkout hash · ${r.payment.check?.ap2?.mandatesOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
-            <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay (TEST) · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "Test payment"} · no money moved</dd>` : ""}
+            <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "In the app"}</dd>` : ""}
           </dl>
-          <span class="small muted">AP2 (Agent Payments Protocol): the seller's agent signs a cart for exactly the agreed terms; the buyer's agent signs a payment against that cart only after the buyer taps Pay. The payment goes to the seller's agent over A2A.</span></details>` : ""}</div>`;
+          <span class="small muted">AP2: one agent signs the cart for the agreed terms; the other signs the payment only after Pay is tapped.</span></details>` : ""}</div>` });
       return;
     }
-    if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect, publicIntake })) return;
+    if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect, publicIntake, openPass })) return;
     const f = findCard(el);
     if (!f) return;
     await cardAction(a, el, f);
@@ -753,6 +1086,14 @@ async function onClick(e) {
 }
 
 async function cardAction(a, el, { s, m, c }) {
+  // The owner chose to have Gemini answer this one question from the notes shown (nothing else is sent).
+  if (a === "notes-cloud") {
+    busy(el, true, "Asking");
+    const r = await api("/api/think", { question: c.question, notes: c.notes.map(n => ({ text: n.text })), side: "self" });
+    c.answer = r.action === "answer" ? (r.text ?? r.answer) : "Your notes don't clearly answer that.";
+    await saveSession(s); paint();
+    return;
+  }
   const d = c.draft;
   if (a === "brief-strength") { const r = d.shared.requirements[Number(el.dataset.j)]; r.strength = r.strength === "required" ? "preferred" : "required"; const nf = d.need.filters.find(x => x.label === r.label); if (nf) nf.strength = r.strength; }
   if (a === "brief-drop") { const [r] = d.shared.requirements.splice(Number(el.dataset.j), 1); d.need.filters = d.need.filters.filter(x => x.label !== r.label); }
@@ -769,7 +1110,7 @@ async function cardAction(a, el, { s, m, c }) {
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
     (c.answered ??= []).push({ question: q.question, answer: opt });
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
-    if (r.draft) { const keep = d.mandate, about = d.shared.about; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; if (about?.length) c.draft.shared.about = about;
+    if (r.draft) { const keep = d.mandate, about = d.shared.about; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; if (about?.length) c.draft.shared.about = about; if (r.gate) c.gate = r.gate;
       // Every answer tapped here stays in what sellers see, even if the re-read leaves it out ("When: Tomorrow").
       const reqs = c.draft.shared.requirements;
       for (const x of c.answered) if (!reqs.some(rq => rq.value.toLowerCase().includes(x.answer.toLowerCase()))) {
@@ -778,9 +1119,63 @@ async function cardAction(a, el, { s, m, c }) {
       }
       c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit, item: itemOf(r.draft) }); }
   }
+  if (a === "brief-rules-read" || a === "offer-rules-read") {
+    const words = String(c.rulesText ?? "").trim();
+    if (words.length < 4) return toast("Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
+    busy(el, true, "Reading");
+    const o = a === "offer-rules-read" ? c.offer : null;
+    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message); return null; });
+    if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; }
+  }
+  if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; c.rulesText = ""; }
+  if (a === "brief-rules-ok") {
+    // The confirmed rules become the request's: the private limit, where the agent may close, how many, must-be-yes checks.
+    const r = c.rules.rules;
+    c.rulesOk = true;
+    if (r.limit) { d.mandate = { price: { opening: Math.round((r.closeAt ?? r.limit) * 0.9), limit: r.limit }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 }; d.need.maxPrice = r.limit; }
+    if (r.quantity) d.need.attributes = { ...(d.need.attributes ?? {}), quantity: String(r.quantity) };
+    for (const q of r.mustAsk) if (!d.shared.questions.includes(q)) d.shared.questions.push(q);
+    c.autonomy = r.autonomy; c.closeAt = r.closeAt ?? null;
+  }
+  if (a === "offer-rules-ok") {
+    const r = c.rules.rules;
+    c.rulesOk = true;
+    if (r.floor) c.floor = r.floor;
+    c.autonomy = r.autonomy;
+  }
+  if (a === "gate-override") c.gateOverride = true;
+  if (a === "matches-more") c.showAll = true;
+  if (a === "gate-answer") {
+    const j = Number(el.dataset.j), q = c.gate.missing[j], opt = q.options[Number(el.dataset.k)];
+    (c.gateAnswers ??= {})[j] = opt;
+    if (c.type === "brief") {
+      // Answered like Gemini's other questions: it joins the request, which is read (and judged) again.
+      busy(el, true, "Updating");
+      c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
+      (c.answered ??= []).push({ question: q.question, answer: opt });
+      const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category }).catch(() => null);
+      if (r?.draft) {
+        const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
+        const unchosen = new Set(q.options.filter(o => o !== opt).map(o => o.toLowerCase()));
+        c.draft.need.filters = (c.draft.need.filters ?? []).filter(f => !unchosen.has(String(f.value).toLowerCase()));
+        // The question is answered: it isn't asked again even if the model re-lists it.
+        c.gate = r.gate ? { ...r.gate, missing: r.gate.missing.filter(m => !(c.answered ?? []).some(x => x.question === m.question)) } : c.gate;
+        if (c.gate && !c.gate.missing.length) c.gate = { ...c.gate, ok: true };
+        c.gateAnswers = {};
+      }
+    } else {
+      // On an offering it's one more detail buyers see; answered, the gate opens.
+      const lbl = q.question.replace(/\?$/, "").split(/\s+/).slice(0, 4).join(" ");
+      if (!(c.missing ?? []).some(m => m.label === lbl)) (c.missing ??= []).push({ label: lbl, ask: q.question, options: q.options });
+      (c.missingAnswers ??= {})[lbl] = opt;
+      if (c.gate.missing.every((_, i) => c.gateAnswers[i])) c.gate = { ...c.gate, ok: true };
+    }
+  }
   if (a === "brief-send") {
+    if (c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Send as it is”.");
     busy(el, true, "Searching");
-    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 } : null });
+    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7,
+      ...(c.rulesOk ? { closeAt: c.closeAt ?? null, rulesText: c.rulesText } : {}) } : null });
     // Real matches first (only the best one pre-ticked); sellers that fit but cost more than the limit come last, unticked.
     Object.assign(c, { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] });
   }
@@ -795,19 +1190,24 @@ async function cardAction(a, el, { s, m, c }) {
   // One match, straight from its row: book at the listed price (the seller confirms, or their agent does at once if
   // they allow instant booking).
   if (a === "match-book") {
-    const p = c.found[Number(el.dataset.j)];
+    const j = Number(el.dataset.j), p = c.found[j];
+    if (c.booked?.[j]) return;
     busy(el, true, "Booking");
     try {
-      const e = await api(`/api/people/${encodeURIComponent(p.profile.handle)}/order`, { offerFactId: p.fact.id, quantity: 1 });
-      live.engagements.set(e.id, e); m.cards.push({ type: "engagement", id: e.id });
+      // Part of this request: the deal joins its goal (one goal, one timeline), and the row turns into "Booked".
+      const e = await api(`/api/people/${encodeURIComponent(p.profile.handle)}/order`, { offerFactId: p.fact.id, quantity: 1, briefId: c.briefId });
+      c.booked = { ...(c.booked ?? {}), [j]: e.id };
+      live.engagements.set(e.id, e); if (!m.cards.some(x => x.type === "engagement" && x.id === e.id)) m.cards.push({ type: "engagement", id: e.id });
       session.track("order_from_card", { kind: "match", instant: e.phase === "agreed" });
       await saveSession(s); paint();
     } catch (err) { toast(err.message); busy(el, false); }
     return;
   }
+  if (a === "match-booked") { const card = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); card?.scrollIntoView({ behavior: "smooth", block: "center" }); card?.classList.remove("flash"); void card?.offsetWidth; card?.classList.add("flash"); return; }
   if (a === "brief-engage" || a === "match-negotiate" || a === "match-addons") {
-    const picks = (a === "brief-engage" ? (c.picked ?? []) : [Number(el.dataset.j)]).map(j => c.found[j]).filter(Boolean);
-    if (!picks.length) return toast("Choose at least one person.");
+    // Someone already booked from this request isn't contacted again.
+    const picks = (a === "brief-engage" ? (c.picked ?? []) : [Number(el.dataset.j)]).filter(j => !c.booked?.[j]).map(j => c.found[j]).filter(Boolean);
+    if (!picks.length) return toast(Object.keys(c.booked ?? {}).length ? "You've booked them already — see the deal below." : "Choose at least one person.");
     busy(el, true, "Contacting");
     const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: picks.map(p => ({ factId: p.fact.id })) });
     c.step = "engaged"; c.engaged = es.map(x => x.id);
@@ -818,6 +1218,9 @@ async function cardAction(a, el, { s, m, c }) {
     if (a === "match-addons") for (const x of es) api(`/api/engagements/${x.id}/ask`, { text: "What add-ons or extras do you offer, and what does each cost?" }).then(e => { live.engagements.set(e.id, e); paint(); }).catch(() => {});
     return;
   }
+  if (a === "hours-preset") { const h = (c.hours ??= defaultHours(c.offer)); h.days = el.dataset.days.split(",").map(Number).sort((x, y) => x - y); h.from = el.dataset.from; h.to = el.dataset.to; }
+  if (a === "offer-price-pick") { c.basicPrice = el.dataset.val === "other" ? "" : el.dataset.val; c.priceOther = el.dataset.val === "other"; }
+  if (a === "offer-ask-other") { (c.missingOther ??= {})[el.dataset.key] = true; }
   if (a === "offer-ask-pick") {
     (c.missingAnswers ??= {})[el.dataset.key] = c.missingAnswers[el.dataset.key] === el.dataset.val ? "" : el.dataset.val;
     c.answeredMissing = (c.missing ?? []).every(x => (c.missingAnswers[x.label] ?? "").trim());
@@ -837,7 +1240,7 @@ async function cardAction(a, el, { s, m, c }) {
     const answered = (c.missing ?? []).filter(x => (c.missingAnswers?.[x.label] ?? "").trim());
     c.missing = [...answered, ...(d.missing ?? []).filter(x => !answered.some(y => y.label.toLowerCase() === x.label.toLowerCase()))].slice(0, 6);
     c.answeredMissing = c.missing.every(x => (c.missingAnswers?.[x.label] ?? "").trim());
-    Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, ownerPays: !!d.ownerPays, floor: d.floor ?? c.floor ?? null, basics: null });
+    Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, ownerPays: !!d.ownerPays, floor: d.floor ?? c.floor ?? null, basics: null, gate: d.gate ?? null });
     c.insights = await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []);
   }
   // A job post's requirements (from the JD), edited before publishing.
@@ -848,32 +1251,34 @@ async function cardAction(a, el, { s, m, c }) {
     if (!m) return toast("Write it as “Label: what's needed” — e.g. “Skills: React”.");
     (c.offer.requirements ??= []).push({ label: m[1].trim(), value: m[2].trim(), strength: "must" });
   }
-  if (a === "offer-suggest-terms") {
-    busy(el, true, "Suggesting");
-    const r = await api("/api/terms/suggest", { category: c.offer?.category ?? c.basics?.category ?? "", text: c.publicText ?? c.text, ownerPays: ownerPays(c) }).catch(err => { toast(err.message); return null; });
-    if (r?.terms.length) c.terms = r.terms;
-    else if (r) toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own.");
-    c.instant = !!el.closest(".card")?.querySelector("[data-instant-new]")?.checked;
+  if (a === "offer-suggest-terms") { const f = findCard(el); if (f) prefillTerms(f.s.id, f.m.id, Number(el.dataset.card), true); return; }
+  // A common term for this kind of offering, tapped in; "Add all" takes the rest.
+  if (a === "offer-term-add") {
+    const picks = el.dataset.j === "all" ? c.starters ?? [] : [c.starters?.[Number(el.dataset.j)]].filter(Boolean);
+    c.terms = [...(c.terms ?? []), ...picks.map(t => ({ ...t, sources: [] }))];
+    c.starters = (c.starters ?? []).filter(t => !picks.includes(t));
   }
   if (a === "offer-publish") {
+    if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
     busy(el, true, "Publishing");
     // The details buyers usually ask about, answered here, join the public text; the terms are saved as the seller's own.
-    const card = el.closest(".card");
-    const extra = [...card.querySelectorAll("[data-missing]")].filter(i => i.value.trim()).map(i => `${i.dataset.missing}: ${i.value.trim().replace(/[.]+$/, "")}.`)
-      .filter(x => !String(c.publicText ?? c.text).includes(x)).join(" ");
-    const terms = [...card.querySelectorAll("[data-term-text]")].map(i => ({ label: i.previousElementSibling?.value.trim() ?? "", text: i.value.trim() })).filter(t => t.label && t.text);
-    const instant = !!card.querySelector("[data-instant-new]")?.checked;
+    // All read from the card's state (what was typed is kept there), not from whichever improvement panel is open.
+    const base = String(c.publicText ?? c.text);
+    const extra = (c.missing ?? []).map(m => [m.label, String(c.missingAnswers?.[m.label] ?? "").trim()]).filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${v.replace(/[.]+$/, "")}.`).filter(x => !base.includes(x)).join(" ");
+    const terms = (c.terms ?? []).map(t => ({ label: String(t.label ?? "").trim(), text: String(t.text ?? "").trim() })).filter(t => t.label && t.text);
+    const instant = !!c.instant;
     if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
     // A note being made public is published in place (no private copy left behind).
-    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: limitPast(c), category: c.offer?.category ?? c.basics?.category ?? null });
+    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: limitPast(c), category: c.offer?.category ?? c.basics?.category ?? null, ...(c.photo ? { photoId: c.photo.id } : {}) });
     factsCache = null;
     if (fact.floorKeptPrivate) toast(`${ownerPays(c) ? "The most you'd pay" : "Your lowest price"} was left out of the public text — it stays private.`);
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
     // A job post: the requirements its applicants are screened against, as the employer left them.
     if (fact.offer && ownerPays(c) && c.offer?.requirements) await api(`/api/facts/${fact.id}/requirements`, { requirements: c.offer.requirements }).catch(err => toast(err.message));
     // How many they have: tracked from the start, so "is it in stock?" never needs them.
-    const stock = Number(card.querySelector('[data-edit="stock"]')?.value);
-    if (fact.offer && Number.isInteger(stock) && stock >= 0 && card.querySelector('[data-edit="stock"]')?.value !== "") await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
+    const stock = c.stock;
+    if (fact.offer && Number.isInteger(stock) && stock >= 0) await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
     // Weekly hours: bookable times two weeks ahead, in the seller's own time zone, refilled by the server.
     if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message));
     if (c.offer && c.floor) {
@@ -881,8 +1286,18 @@ async function cardAction(a, el, { s, m, c }) {
       const mandate = { price: { opening: listed, limit }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 });
     }
+    // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
+    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
     c.step = "published"; c.publicText = fact.text;
   }
+  // Accept every suggested answer still open (the owner's own answers stay).
+  if (a === "offer-use-suggested") {
+    c.missingAnswers = { ...(c.suggestedAnswers ?? {}), ...Object.fromEntries(Object.entries(c.missingAnswers ?? {}).filter(([, v]) => String(v).trim())) };
+    c.answeredMissing = (c.missing ?? []).every(m => String(c.missingAnswers[m.label] ?? "").trim());
+  }
+  // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
+  // Each improvement opens and closes on its own; several can be open at once.
+  if (a === "offer-improve") c.openParts = { ...(c.openParts ?? {}), [el.dataset.k]: !c.openParts?.[el.dataset.k] };
   // Making a note public goes through the offering card when it's something offered.
   if (a === "tier" && el.dataset.tier === "public" && c.fact && c.fact.tier !== "public") { busy(el, true, "Reading"); if (await publicIntake(c.fact.text, c.fact.id)) return; }
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
@@ -897,16 +1312,30 @@ function setAbout(shared, label, value) {
 }
 
 /**
+ * What others charge for this kind of thing near here, asked once per card as soon as the card asks for a price;
+ * the typical figure is filled in and low / typical / high become buttons. Nothing stops the seller typing their own.
+ */
+const hintsAsked = new WeakSet();
+function priceHintsFor(c, s) {
+  if (!c.basics || c.priceHints !== undefined || hintsAsked.has(c)) return;
+  hintsAsked.add(c); c.priceHints = null;
+  api("/api/offers/price-hints", { item: c.publicText ?? c.text, area: c.basicArea ?? c.basics.area ?? "", unit: c.basics.unit ?? undefined })
+    .then(h => { c.priceHints = h?.status === "evidence" ? h : { status: h?.status ?? "unavailable" }; if (c.priceHints.typical && !c.basicPrice) c.basicPrice = String(c.priceHints.typical); })
+    .catch(() => { c.priceHints = { status: "unavailable" }; })
+    .then(() => { saveSession(s); paintContent(true); });
+}
+
+/**
  * Something being made public — from chat or Context — is read by Gemini first. If it's something offered, it opens
  * as an offering card (price and where asked for if missing, buyers' usual questions with tap-to-answer options, a
  * written floor kept private) and publishes in place of the note. Anything else is published as it is (false).
  */
-async function publicIntake(text, noteId = null) {
+async function publicIntake(text, noteId = null, photo = null) {
   const d = await api("/api/offers/draft", { text, here: S.profile?.area, note: true }).catch(() => null);
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 List this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
   S.screen = "chat"; paint();
   return true;
@@ -918,7 +1347,7 @@ async function setTier(fact, tier, el) {
   busy(el, true);
   const saved = await api("/api/facts", { id: fact.id, tier, text: fact.text });
   factsCache = null;
-  if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Sharing to say who sees it.`, () => openScreen("sharing"));
+  if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Privacy to say who sees it.`, () => openScreen("sharing"));
 }
 
 async function inboxAction(a, el) {
@@ -926,6 +1355,7 @@ async function inboxAction(a, el) {
   const item = live.inbox.find(i => i.id === itemId);
   if (!item) return;
   const body = {};
+  if (a === "inbox-quick") body.text = el.dataset.text;
   if (a === "inbox-answer") { body.text = document.querySelector(`[data-reply="${CSS.escape(itemId)}"]`)?.value.trim(); if (!body.text) return toast("Write an answer, or choose “I'd rather not say”."); }
   if (a === "inbox-share") body.text = drafts.get(itemId)?.text;
   if (a === "inbox-approve") body.share = true;
@@ -938,9 +1368,11 @@ async function inboxAction(a, el) {
     body.letter = { role: f("role"), start: f("start"), validUntil: f("validUntil"), mode: f("mode"), probation: f("probation"), notice: f("notice"), note: f("note"), ...(f("salary") ? { salary: Number(f("salary")) } : {}) };
     if (!body.letter.start || !body.letter.validUntil) return toast("Pick a start date and the last day the offer is open.");
   }
-  if (a === "inbox-letter-withdraw") { if (!confirm("Don't make an offer? Their agent is told politely, and the application ends.")) return; body.decline = true; }
-  if (a === "inbox-offer-accept") { if (!confirm("Accept this offer? It's sealed into your signed deal record.")) return; body.confirm = true; }
-  if (a === "inbox-offer-decline") { const why = prompt("Decline the offer? You can say why (optional)."); if (why === null) return; body.decline = true; body.text = why; }
+  // A decision made for a demo person (their phone is simulated) says whose it is.
+  const as = item.owner !== session.uid ? shortName(live.engagements.get(item.engagementId)?.[item.side]?.name ?? "") || null : null;
+  if (a === "inbox-letter-withdraw") { if ((await ask({ title: "Don't make an offer?", detail: "Their agent is told politely, and the application ends.", ok: "Don't make an offer", cancel: "Keep it open", danger: true, as })) === null) return; body.decline = true; }
+  if (a === "inbox-offer-accept") { if ((await ask({ title: "Accept this offer?", detail: "It's sealed into the signed deal record. Joining comes next.", ok: "Accept offer", as })) === null) return; body.confirm = true; }
+  if (a === "inbox-offer-decline") { const why = await ask({ title: "Decline this offer?", detail: "The conversation ends politely.", ok: "Decline offer", danger: true, as, input: { label: "Why (optional — they'll see it)", placeholder: "e.g. I've accepted another offer" } }); if (why === null) return; body.decline = true; body.text = why; }
   if (a === "inbox-offer-changes") {
     body.changes = document.querySelector(`[data-changes="${CSS.escape(itemId)}"]`)?.value.trim() ?? "";
     if (body.changes.length < 3) return toast("Say what you'd like changed.");
@@ -1042,6 +1474,10 @@ timing("app");
   else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
   else if (qp.get("alerts")) openScreen("requests");
   else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
+  if (qp.get("calendar")) {
+    toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
+    history.replaceState(null, "", location.pathname);
+  }
 }
 
 } catch (err) {

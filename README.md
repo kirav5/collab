@@ -64,6 +64,28 @@ Signatures are issued by Collab's server on behalf of its agents (not by the peo
 Collab recorded. A pickup pass is a bearer link: it stops a second collection, not a copied pass being shown first —
 the seller sees the buyer's name.
 
+## Trust and fraud prevention
+
+- **One-time pass**: a pickup or booking pass is redeemed once, atomically; a second scan is refused and shows when it
+  was collected. Only the seller's own account can redeem it.
+- **Receipts that refuse edits**: signed with Ed25519; change any field and the check fails. On the receipt page,
+  "Try changing the price" shows it.
+- **Model Armor** screens every message from other agents for prompt injection before any model reads it.
+- **No overselling**: per-buyer limits and atomic stock holds; two buyers racing for the last unit can't both win.
+- **Seller record**: the public card counts sales, handovers and problems from signed receipts (no buyers or prices).
+- **App Check** on every write; writes from a browser it can't verify are rate-limited.
+- **Demo payments** are tagged as such on the pass and next to Pay. No money moves.
+
+## For shops and shoppers
+
+Menu: **Activity · My card · About me · Privacy · Settings** — the same words for anyone, whether they run a shop, teach, or sell one phone. Each match has one main button (Book within your limit,
+else Negotiate). **Buy again** repeats a paid deal in one tap; Deals filters by To do · Sold · Bought · Done. Speak
+instead of typing (Indian English or Hindi). Sellers list from a **photo** (Gemini reads the item; the seller sets
+the price), publish first and improve the listing after, see stock on the card and get a **low-stock alert**. A
+booking pass can **change time** or **cancel**, freeing the slot. **Shop insights** (seller only) show missed demand, what
+buyers ask most, prices agreed, buyer groups and what's often bought together — other people's data only as counts.
+Every journey and its status: [docs/SCENARIOS-RETAIL.md](docs/SCENARIOS-RETAIL.md).
+
 ## Google Cloud
 
 | | Used for |

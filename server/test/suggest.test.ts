@@ -149,4 +149,9 @@ test("terms suggested from the web keep their sources, and go through the same c
   assert.equal(r.grounded, true);
   assert.deepEqual(r.terms.map(t => t.label), ["Warranty", "Returns"]);
   assert.ok(r.terms.every(t => t.sources.length === 1));
+  // The common terms for this kind of offering come beside them, to tap in — minus any label already suggested.
+  assert.ok(r.starters.length >= 2 && !r.starters.some(t => ["warranty", "returns"].includes(t.label.toLowerCase())));
+  const none = await suggestTerms(null, "lessons", "Guitar lessons on weekends");
+  assert.deepEqual(none.terms, [], "without the model, nothing is presented as suggested by it");
+  assert.ok(none.starters.some(t => t.label === "Cancellation"), "but the seller still has common terms to start from");
 });

@@ -9,12 +9,16 @@ export type { ShopAction };
 export interface ShopItem {
   factId: string; title: string; name: string; details: string; category: string;
   price: number | null; currency: string; unit: string | null;
+  /** The seller's photo of it, if they listed it from one. */
+  photo?: string;
   /** buy: pick how many; book: pick a time (or request one); visit: ask to see it first; ask: no price yet. */
   action: ShopAction;
   stock: { state: "in" | "low" | "out" | "unknown"; available: number | null } | null;
   /** The most anyone can order in one go (what's in stock, or 99 when stock isn't tracked). */
   maxQuantity: number;
   slots: { id: string; start: number; end: number }[] | null;
+  /** The seller's rule on how many one buyer may have (null: no rule). */
+  perBuyer: number | null;
   /** The seller's own stated terms, and whether an order at the listed price is confirmed at once. */
   policies: { label: string; text: string }[]; instant: boolean;
   /** The owner pays rather than being paid (an employer's job post). */
@@ -45,8 +49,9 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
       // One-off things (a used cycle, a booking, a flat) come one at a time.
       const oneOff = /\b(used|second[- ]hand|pre-?owned|refurbished)\b/i.test(`${o.title} ${Object.values(o.attributes ?? {}).join(" ")} ${f.text}`.replace(/new or used/gi, ""));
       if (action === "book" || action === "visit" || (oneOff && !stock)) max = 1;
-      return { factId: f.id, title: o.title, name: itemName(o.title), details: clip(o.details || f.text, 160), category: o.category,
-        price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, slots,
+      if (o.maxPerBuyer) max = Math.min(max, o.maxPerBuyer);
+      return { factId: f.id, title: o.title, name: itemName(o.title), details: clip(o.details || f.text, 160), category: o.category, ...(o.photo ? { photo: o.photo } : {}),
+        price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, perBuyer: o.maxPerBuyer ?? null, slots,
         timezone: r?.type === "slots" ? r.timezone : null, policies: o.policies ?? [], instant: !!o.instant && price != null && !o.ownerPays, ownerPays: !!o.ownerPays, questions: forOffer(f, (r?.type ?? null) as Tracked) };
     });
 }

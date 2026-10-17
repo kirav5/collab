@@ -116,7 +116,7 @@ export async function save(db: Docs, e: Engagement) {
   if (e.phase === "agreed" && !e.payment && !e.noPayment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
     const cart = cartFor(e, signer, now());
-    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; if (e.reservation?.state !== "unavailable") say(e, agentOf(sellerOf(e)), `Ready to pay: ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })} (test payment — no money moves).`, "rules"); }
+    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; if (e.reservation?.state !== "unavailable") say(e, agentOf(sellerOf(e)), `Ready to pay: ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })}.`, "rules"); }
   }
   await db.set(ENGAGEMENTS, e.id, e);
 }
@@ -174,8 +174,20 @@ export function unitMandate(e: Engagement, s: Side, m: Mandate): Mandate {
   return { ...m, price: { opening: Math.round(m.price.opening / n), limit: Math.round(m.price.limit / n) } };
 }
 
+/** The unit price of a proposal (its lines' average when it has uneven ones). */
+const unitPriceOf = (p: Proposal) => (p.items?.length ? p.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) / p.items.reduce((t, l) => t + l.quantity, 0) : p.price);
+/** May this side's agent agree to the deal on its own? Only with "close", inside the limit, and — when the owner set
+ *  one — at or above their close-at price (seller) or at or below it (buyer). */
+function mayClose(l: DelegatedLimit | null, e: Engagement, s: Side, deal: Proposal | null): boolean {
+  if (!l || !deal || l.autonomy !== "close" || !acceptable(deal, ctx(e, s, l.mandate))) return false;
+  if (l.closeAt == null) return true;
+  const u = unitPriceOf(deal);
+  return s === sellerOf(e) ? u >= l.closeAt - 0.5 : u <= l.closeAt + 0.5;
+}
+
 /** An offer for more units than the seller has in tracked, confirmed stock — refused before anyone is asked. */
-export class ShortStock extends Error { available: number; constructor(available: number, message: string) { super(message); this.available = available; } }
+/** Fewer than asked can be had: out of stock, or (`byRule`) the seller's own per-buyer limit — which isn't missed demand. */
+export class ShortStock extends Error { available: number; byRule: boolean; constructor(available: number, message: string, byRule = false) { super(message); this.available = available; this.byRule = byRule; } }
 export async function inStock(db: Docs, e: Engagement): Promise<number | null> {
   if (!e.offer.factId) return null;
   const r = await resourceFor(db, e.offer.factId);
@@ -214,9 +226,15 @@ async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" 
     id, owner: uidOf(e, s)!, engagementId: e.id, side: s, status: "open", title: e.title, createdAt: t } satisfies InboxItem);
   // A move the device makes on its own needs no one's attention; everything else notifies the owner.
   if (!(item.kind === "move" && !item.question)) {
-    const what = item.kind === "confirm" ? "Confirm the deal" : item.kind === "offer_letter" ? "Send the offer letter" : item.kind === "offer" ? "An offer letter to decide on"
-      : item.kind === "move" ? "No deal inside your limit yet" : item.kind === "approve" ? "Check an answer before it's shared" : "A question only you can answer";
-    void pushTo(uidOf(e, s)!, `Your agent needs you · ${e.title}`, what, `/?engagement=${e.id}`);
+    // Who and what, never the raw request text (it can carry a price): "Confirm your deal" · "Study table with Priya".
+    const them = e[other(s)].name, thing = (e.offer.title || e.title).split(" · ")[0].slice(0, 60);
+    const [title, body] = item.kind === "confirm" ? ["Confirm your deal", `${thing} with ${them}`]
+      : item.kind === "offer_letter" ? ["Send the offer letter", `${thing} for ${them}`]
+      : item.kind === "offer" ? ["An offer letter to decide on", `${thing} from ${them}`]
+      : item.kind === "move" ? ["No deal within your limit yet", `${thing} with ${them} — your call`]
+      : item.kind === "approve" ? ["Check an answer before it's shared", `${them} asked about ${thing}`]
+      : [`${them} asked a question`, `About ${thing}. Tap to reply.`];
+    void pushTo(uidOf(e, s)!, title, body, `/?engagement=${e.id}`);
   }
   e.waiting[s] = { kind: item.kind, inbox: [...(e.waiting[s]?.inbox ?? []), id], text: item.question ?? (item.kind === "move" ? "A negotiating move with your private limit"
     : item.kind === "offer_letter" ? "Send the offer letter" : item.kind === "offer" ? "Decide on the offer letter" : "Confirm the deal") };
@@ -258,7 +276,7 @@ export async function reserveFor(db: Docs, e: Engagement) {
   } catch (err) {
     if (!(err instanceof CapacityError)) throw err;
     e.reservation = { resourceId: r.id, holdId: null, qty, state: "unavailable", expiresAt: null, reason: err.message };
-    say(e, "system", `${err.message} The deal can't be paid until the seller restocks; nothing was charged.`);
+    say(e, "system", `${err.message} The deal can't be paid until they restock; nothing was charged.`);
   }
 }
 
@@ -549,8 +567,9 @@ export async function providerTurn(db: Docs, model: Model | null, e: Engagement,
   const out: Turn = { kind: "collab.turn/v1", from: "provider", engagementId: e.id };
   applyTheirs(e, "provider", t);
   if (["agreed", "declined", "closed"].includes(e.phase)) return out;
-  // Requirement gathering, once: what the provider needs to know that the brief doesn't say.
-  if (!e.gathered && e.offer.factId) {
+  // Requirement gathering, once: what the provider needs to know that the brief doesn't say. Not for a buyer who came
+  // straight to the listing (card, QR, link): the listing says what it is, and logistics are settled after the deal.
+  if (!e.gathered && e.offer.factId && !e.briefId?.startsWith("direct-")) {
     e.gathered = true;
     const fact = (await db.get(FACTS, e.offer.factId)) as Fact | null;
     // The usual questions for this direction: an employer screening a candidate, not a candidate's own questions.
@@ -622,11 +641,12 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
       // A "close" mandate is the owner's confirmation given in advance, while the deal is inside its limit.
       const l = await limitFor(db, e, s);
       const deal = e.negotiation.deal;
-      const overBudget = l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate)) ? await budgetCheck(db, e, s) : null;
+      const close = mayClose(l, e, s, deal);
+      const overBudget = close ? await budgetCheck(db, e, s) : null;
       const fewer = s !== sellerOf(e) && e.wanted && unitsOf(e) < e.wanted;
       if (overBudget) { say(e, "system", `${overBudget} The standing mandate can't confirm it — the owner decides.`); if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" }); }
-      else if (fewer && l?.autonomy === "close") { say(e, "system", `This is for ${unitsOf(e)} of the ${e.wanted} asked for — the owner decides.`); if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" }); }
-      else if (l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate))) {
+      else if (fewer && close) { say(e, "system", `This is for ${unitsOf(e)} of the ${e.wanted} asked for — the owner decides.`); if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" }); }
+      else if (close) {
         e.negotiation.confirmed[s] = true;
         (e.negotiation.confirmedBy ??= {})[s] = "mandate";
         out.confirm = true;
@@ -866,8 +886,15 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   // A count said now becomes the conversation's; otherwise the offer is for as many as were already asked for.
   if (count != null && count >= 1) e.quantity = count;
   const units = unitsOf(e);
-  // More than the seller has can't be sold: refused before anyone is asked, with what's there.
+  // A seller's "most per buyer" rule, like stock: more than that is refused before anyone is asked — saying whichever
+  // of the two actually binds, so the offer suggested instead can go through.
+  const cap = e.offer.factId ? ((await db.get(FACTS, e.offer.factId)) as Fact | null)?.offer?.maxPerBuyer : undefined;
   const free = await inStock(db, e);
+  if (cap && units > cap && (free === null || cap <= free)) {
+    const mine = s === sellerOf(e);
+    throw new ShortStock(cap, mine ? `Your rule is at most ${cap} per person.` : `${e[sellerOf(e)].name} offers at most ${cap} per person — offer for ${cap} instead?`, true);
+  }
+  // More than the seller has can't be sold: refused before anyone is asked, with what's there.
   if (free !== null && free < units) {
     const mine = s === sellerOf(e);
     throw new ShortStock(free, free === 0 ? (mine ? "You're out of stock — restock before offering." : "They're out of stock right now.")
@@ -954,7 +981,7 @@ export async function takeOffer(db: Docs, e: Engagement, s: Side, text: string):
   const o = other(s);
   if (e.phase === "deal" && !e.negotiation.confirmed[o]) {
     const l = await limitFor(db, e, o);
-    if (l?.autonomy === "close" && e.negotiation.deal && acceptable(e.negotiation.deal, ctx(e, o, l.mandate))) {
+    if (mayClose(l, e, o, e.negotiation.deal)) {
       e.negotiation.confirmed[o] = true; (e.negotiation.confirmedBy ??= {})[o] = "mandate";
       say(e, agentOf(o), `Confirmed on ${shortName(e[o].name)}'s behalf.`, "rules"); settle(e);
     } else if (hasOwner(e, o) && !e.waiting[o]?.inbox.length) await ask(db, e, o, { kind: "confirm" });
@@ -978,7 +1005,7 @@ export async function respondToOffer(db: Docs, model: Model | null, e: Engagemen
     if (acceptable(deal, c)) {
       agreed = true;
       const fewer = s !== sellerOf(e) && e.wanted && unitsOf(e) < e.wanted;
-      if (l.autonomy === "close" && !fewer && !hireDeal(e) && !(await budgetCheck(db, e, s))) {
+      if (mayClose(l, e, s, deal) && !fewer && !hireDeal(e) && !(await budgetCheck(db, e, s))) {
         await doneConfirms(db, e, s);
         e.negotiation.confirmed[s] = true;
         (e.negotiation.confirmedBy ??= {})[s] = "mandate";
@@ -1001,8 +1028,9 @@ export async function respondToOffer(db: Docs, model: Model | null, e: Engagemen
     if (!out.proposal) break;
     // The counter is the offer on the table now. It's this side's confirmation only if its owner lets it close deals.
     e.negotiation.deal = out.proposal; e.negotiation.dealBy = s; e.phase = "deal"; e.negotiation.chatOffer = true;
-    const closes = l.autonomy === "close" && !hireDeal(e);
-    e.negotiation.confirmed = { requester: s === "requester" && closes, provider: s === "provider" && closes };
+    // A hire is never closed by a standing mandate: the offer letter is the people's.
+    const own = mayClose(l, e, s, out.proposal) && !hireDeal(e);
+    e.negotiation.confirmed = { requester: s === "requester" && own, provider: s === "provider" && own };
     if (e.negotiation.confirmed[s]) (e.negotiation.confirmedBy ??= {})[s] = "mandate";
     const o = other(s);
     if (await limitFor(db, e, o)) continue; // their agent answers the counter

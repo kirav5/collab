@@ -58,16 +58,25 @@ test("random conversations: agents handle the routine, people are asked only whe
     assert.ok(f.offer, `run ${run}: the listing is read`);
     const stock = R() < 0.6 ? int(0, 30) : null;
     if (stock !== null) await as(seller, "/api/resources", { factId: f.id, type: "quantity", onHand: stock });
-    const sAuto: Autonomy = pick(["none", "negotiate", "close"]);
+    let sAuto: Autonomy = pick(["none", "negotiate", "close"]);
     let floor = Math.round(price * (0.75 + R() * 0.2));
     if (sAuto !== "none") await as(seller, `/api/facts/${f.id}/limit`, { mandate: { price: { opening: price, limit: floor } }, autonomy: sAuto, days: 7 });
+    // Some sellers say their rules in words: a floor, a close-at price, sometimes a most-per-buyer.
+    let closeAt: number | null = null, cap: number | null = null;
+    if (sAuto !== "none" && R() < 0.4) {
+      closeAt = Math.round(floor + (price - floor) * R()); cap = R() < 0.5 ? int(3, 20) : null;
+      const words = `Don't go below ₹${floor} each${cap ? `, max ${cap} per buyer` : ""}, and close deals yourself above ₹${closeAt}`;
+      const read = await as(seller, "/api/rules/read", { text: words, side: "seller", factId: f.id });
+      await as(seller, `/api/facts/${f.id}/rules`, { text: words, rules: read.rules });
+      sAuto = "close";
+    }
     const instant = R() < 0.25;
     if (instant) await as(seller, `/api/facts/${f.id}/policies`, { policies: [], instant: true });
     const path = pick([...PATHS]);
     // (Answering a question with an amount says no count: that path is for one.)
     const want = R() < 0.6 && path !== "answer-amount" ? int(2, 40) : 1;
     let bAuto: Autonomy = "none", bLimit = Math.round(price * (0.8 + R() * 0.3));
-    const label = `run ${run} ${path} (stock ${stock ?? "untracked"}, want ${want}, seller ${sAuto}${instant ? "+instant" : ""} floor ${floor} of ${price})`;
+    const label = `run ${run} ${path} (stock ${stock ?? "untracked"}, want ${want}, seller ${sAuto}${instant ? "+instant" : ""} floor ${floor} of ${price}${closeAt != null ? ` close-at ${closeAt}` : ""}${cap ? ` cap ${cap}` : ""})`;
     const free = () => stock; // nothing else touches this listing's stock
     let e: any = null, refused = false;
 
@@ -104,8 +113,8 @@ test("random conversations: agents handle the routine, people are asked only whe
       // Refused only when more were asked for than the seller has.
       if (err.status === 409 && err.data?.code === "CAPACITY_UNAVAILABLE") {
         refused = true;
-        if (!(stock !== null && want > stock) && !(stock === 0)) problems.push(`${label}: refused for stock though ${stock} ≥ ${want}`);
-        assert.equal(err.data.available, stock ?? undefined, `${label}: says what's there`);
+        if (!(stock !== null && want > stock) && !(stock === 0) && !(cap && want > cap)) problems.push(`${label}: refused for stock though ${stock} ≥ ${want}`);
+        assert.equal(err.data.available, cap && want > cap && (stock === null || cap <= stock) ? cap : stock ?? undefined, `${label}: says what's there`);
       } else throw new Error(`${label}: ${err.message}`);
     }
     if (refused || !e) { outcomes.refused = (outcomes.refused ?? 0) + 1; continue; }
@@ -125,7 +134,8 @@ test("random conversations: agents handle the routine, people are asked only whe
         const inside = p ? (side === "seller" ? p.price >= floor - 0.5 : p.price <= lim + 0.5) : null;
         const mineSide = side === "seller" ? "provider" : "requester";
         let reason: string | null = null;
-        if (i.kind === "confirm" && auto === "close" && inside && !(side === "buyer" && e.wanted && units < e.wanted)) reason = "confirm asked though the agent may close inside the limit";
+        const pastCloseAt = side === "seller" ? closeAt == null || (p && p.price >= closeAt - 0.5) : true;
+        if (i.kind === "confirm" && auto === "close" && inside && pastCloseAt && !(side === "buyer" && e.wanted && units < e.wanted)) reason = "confirm asked though the agent may close inside the limit";
         else if (i.kind === "confirm" && auto !== "none" && inside === false) reason = "yes/no asked about a price outside the delegated limit (the agent should counter)";
         else if (i.kind === "confirm" && e.negotiation.dealBy === mineSide && !e.negotiation.confirmed[mineSide === "provider" ? "requester" : "provider"] && e.negotiation.chatOffer) reason = "asked to confirm their own offer before the other side answered";
         else if (i.kind === "move" && !i.question && auto !== "none") reason = "asked for a limit already delegated";
@@ -174,6 +184,8 @@ test("random conversations: agents handle the routine, people are asked only whe
       const expected = e.wanted ? e.quantity : want;
       if (n !== expected) problems.push(`${label}: agreed for ${n}, the buyer wanted ${expected}`);
       if (free() !== null && n > free()!) problems.push(`${label}: agreed for ${n} with ${free()} in stock`);
+      if (cap && n > cap) problems.push(`${label}: agreed for ${n}, more than ${cap} per buyer`);
+      if (closeAt != null && e.negotiation.confirmedBy?.provider === "mandate" && d.price < closeAt - 0.5) problems.push(`${label}: the agent agreed at ₹${d.price}, under the seller's close-at ₹${closeAt}`);
       if (e.payment?.cart?.total?.value !== total) problems.push(`${label}: cart ${e.payment?.cart?.total?.value} for a deal of ${total}`);
       if (stock !== null && e.reservation?.qty !== n) problems.push(`${label}: ${e.reservation?.qty} reserved for a deal of ${n}`);
       if (e.reservation?.state === "unavailable" && e.events.some((x: any) => x.text.startsWith("Ready to pay"))) problems.push(`${label}: "Ready to pay" though the units aren't there`);

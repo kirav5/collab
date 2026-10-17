@@ -31,7 +31,7 @@ export function preload() {
 export function openGooglePay(amount, label, currency = "INR") {
   if (!client || gpay.available !== true) return Promise.reject(new Error(gpay.available === false ? "Google Pay isn't available in this browser — use Pay instead." : "Google Pay is still loading — tap again in a moment."));
   return client.loadPaymentData({ apiVersion: 2, apiVersionMinor: 0, allowedPaymentMethods: [CARD],
-    merchantInfo: { merchantName: "Collab (test)" },
+    merchantInfo: { merchantName: "Collab" },
     transactionInfo: { totalPriceStatus: "FINAL", totalPriceLabel: label.slice(0, 40), totalPrice: amount.toFixed(2), currencyCode: currency, countryCode: currency === "USD" ? "US" : "IN" } })
     .then(d => { const m = d.paymentMethodData; return { token: m.tokenizationData.token, network: m.info?.cardNetwork, description: m.description }; })
     .catch(e => { if (e?.statusCode === "CANCELED") return null; throw new Error(e?.statusMessage || "Google Pay didn't complete."); });
@@ -45,7 +45,7 @@ export async function payWithGoogle(amount, label, currency = "INR") {
   if (!(await preload())) throw new Error("Google Pay isn't available in this browser.");
   try {
     const d = await client.loadPaymentData({ apiVersion: 2, apiVersionMinor: 0, allowedPaymentMethods: [CARD],
-      merchantInfo: { merchantName: "Collab (test)" },
+      merchantInfo: { merchantName: "Collab" },
       transactionInfo: { totalPriceStatus: "FINAL", totalPriceLabel: label.slice(0, 40), totalPrice: amount.toFixed(2), currencyCode: currency, countryCode: currency === "USD" ? "US" : "IN" } });
     const m = d.paymentMethodData;
     return { token: m.tokenizationData.token, network: m.info?.cardNetwork, description: m.description };

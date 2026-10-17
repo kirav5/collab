@@ -23,6 +23,21 @@ export function toast(text, onClick) {
   setTimeout(() => el.remove(), 5000);
 }
 
+/**
+ * An avatar made from the name: a hue and two shapes picked by a hash of the handle, so the same person always
+ * gets the same one and no two neighbours look alike — no photos needed (a photo, when there is one, replaces it).
+ */
+export function avatarHTML(name, handle = "", size = 30, photo = null) {
+  if (photo) return `<img class="avatar" src="${esc(photo)}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px;object-fit:cover">`;
+  const key = String(handle || name || "?");
+  let h = 2166136261; for (const ch of key) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const hue = h % 360, shape = (h >>> 8) % 4, rot = (h >>> 12) % 360, initial = String(name || "?").trim().slice(0, 1).toUpperCase();
+  const shapes = [`<circle cx="22" cy="10" r="9" />`, `<rect x="12" y="2" width="16" height="16" rx="3" transform="rotate(${rot % 45} 20 10)" />`, `<polygon points="20,1 29,18 11,18" />`, `<path d="M4 14 Q16 -4 28 14 T28 14" />`];
+  return `<svg class="avatar" viewBox="0 0 30 30" width="${size}" height="${size}" style="width:${size}px;height:${size}px" aria-hidden="true">
+    <rect width="30" height="30" rx="6" fill="hsl(${hue} 55% 88%)"/><g fill="hsl(${(hue + 40) % 360} 60% 62%)" opacity=".9">${shapes[shape]}</g>
+    <text x="15" y="21" text-anchor="middle" font-size="14" font-weight="700" font-family="-apple-system,Inter,sans-serif" fill="hsl(${hue} 50% 22%)">${esc(initial)}</text></svg>`;
+}
+
 export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)}</span>`;
 export const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 
@@ -53,4 +68,36 @@ export function shortName(name = "") {
   const business = words.length >= 3 || /\b(store|stores|shop|mart|traders?|enterprises?|academy|studio|services?|centre|center|kitchen|cafe|café|bakery|clinic|salon|agency|rentals?|motors|pvt|ltd|llp|co\.?|tiffins?|foods?|tech|technologies|labs?|solutions|systems|software|digital|media|consulting|infotech)\b/i.test(trimmed);
   if (business) return trimmed;
   return /^(mr|mrs|ms|miss|dr|prof|shri|smt|sri)\.?$/i.test(words[0]) && words[1] ? `${words[0]} ${words[1]}` : words[0];
+}
+
+/**
+ * The app's own confirmation: a question, an optional reason (or a word to type), Confirm / Cancel — drawn in the page,
+ * so no browser can block or restyle it. `as`: the demo person this decision is made for, shown at the top. Resolves to
+ * what was typed ("" when there's no field) on Confirm, or null on Cancel, Escape or a tap outside.
+ */
+export function ask({ title, detail = "", ok = "Confirm", cancel = "Cancel", danger = false, as = null, input = null } = {}) {
+  return new Promise(resolve => {
+    const d = document.createElement("dialog");
+    d.className = "ask";
+    d.setAttribute("aria-label", title);
+    d.innerHTML = `<form class="ask-body">
+      ${as ? `<span class="ask-as">Deciding as ${esc(as)} · demo</span>` : ""}
+      <p class="ask-title">${esc(title)}</p>
+      ${detail ? `<p class="ask-detail">${esc(detail)}</p>` : ""}
+      ${input ? `<label class="ask-field"><span class="label">${esc(input.label ?? (input.required ? "Required" : "Optional"))}</span><input class="field" name="text" maxlength="${input.max ?? 300}" placeholder="${esc(input.placeholder ?? "")}" autocomplete="off"></label>` : ""}
+      <div class="ask-actions"><button type="button" class="btn quiet compact" data-ask="cancel">${esc(cancel)}</button><button type="submit" class="btn ${danger ? "danger" : "accent"} compact" data-ask="ok">${esc(ok)}</button></div>
+    </form>`;
+    const field = d.querySelector("input"), go = d.querySelector('[data-ask="ok"]');
+    const valid = () => !input || ((!input.required || field.value.trim().length >= (input.min ?? 1)) && (!input.match || field.value.trim() === input.match));
+    if (input) { const sync = () => { go.disabled = !valid(); }; field.addEventListener("input", sync); sync(); }
+    let done = false;
+    const finish = v => { if (done) return; done = true; d.close(); d.remove(); resolve(v); };
+    d.querySelector('[data-ask="cancel"]').addEventListener("click", () => finish(null));
+    d.addEventListener("cancel", ev => { ev.preventDefault(); finish(null); }); // Escape
+    d.addEventListener("click", ev => { if (ev.target === d) finish(null); }); // a tap outside the box
+    d.querySelector("form").addEventListener("submit", ev => { ev.preventDefault(); if (valid()) finish(field ? field.value.trim() : ""); });
+    document.body.append(d);
+    d.showModal();
+    (field ?? go).focus();
+  });
 }

@@ -4,6 +4,7 @@
 //   • inventory-webhook (inventory.write): a shop's POS posts stock changes, signed with a per-grant key (HMAC of the
 //     body). Each event id is applied once; an event older than the last one applied can't roll stock back.
 //   • ical (availability.read): a provider's calendar feed; its busy times block overlapping slots.
+//   • google-calendar (availability.read): the same, read with the owner's Google sign-in (core/gcal.ts).
 // An outage (no events, a feed that can't be read) is never filled in: the data goes stale and holds report
 // AVAILABILITY_UNKNOWN until the system reports again or the owner recounts.
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -15,8 +16,10 @@ import { safeWebhook } from "../a2a/agents.ts";
 export const GRANTS = "connector_grants", CONNECTOR_EVENTS = "connector_events";
 
 export const ADAPTERS = {
-  "inventory-webhook": { scopes: ["inventory.write"], resource: "quantity" as const, title: "Point-of-sale stock updates (signed webhook)" },
-  "ical": { scopes: ["availability.read"], resource: "slots" as const, title: "Calendar busy times (iCal feed)" },
+  "inventory-webhook": { scopes: ["inventory.write"], resource: "quantity" as const, title: "Your billing app" },
+  "ical": { scopes: ["availability.read"], resource: "slots" as const, title: "Your calendar" },
+  // Linked through Google's own sign-in (core/gcal.ts), never through this generic create.
+  "google-calendar": { scopes: ["availability.read"], resource: "slots" as const, title: "Your Google Calendar" },
 };
 export type AdapterId = keyof typeof ADAPTERS;
 
@@ -38,8 +41,8 @@ export const signBody = (key: string, body: string) => `sha256=${createHmac("sha
 const usable = (g: ConnectorGrant | null, now: number) => !!g && g.status !== "revoked" && (!g.expiresAt || g.expiresAt > now);
 
 export async function createGrant(db: Docs, owner: string, provider: string, resourceId: string, url: string | null, now: number, days = 365): Promise<ConnectorGrant> {
-  const a = ADAPTERS[provider as AdapterId];
-  if (!a) throw new ConnectorError(400, "UNSUPPORTED_CAPABILITY", `Unknown connector. Supported: ${Object.keys(ADAPTERS).join(", ")}.`);
+  const a = provider === "google-calendar" ? null : ADAPTERS[provider as AdapterId];
+  if (!a) throw new ConnectorError(400, "UNSUPPORTED_CAPABILITY", `Unknown connector. Supported: inventory-webhook, ical (Google Calendar is linked from About me).`);
   const r = (await db.get(RESOURCES, resourceId)) as Resource | null;
   if (!r || r.owner !== owner) throw new ConnectorError(404, "NOT_FOUND", "No such resource.");
   if (r.type !== a.resource) throw new ConnectorError(400, "INVALID_INPUT", `This connector feeds ${a.resource === "quantity" ? "stock" : "time slots"}.`);
@@ -81,7 +84,8 @@ export async function ingestInventory(db: Docs, secret: string, grantId: string,
     if (r.source === "connector" && observedAt < r.observedAt) { ignored = true; return null; }
     const onHand = ev.type === "stock.set" ? Number(ev.onHand) : r.onHand + Number(ev.delta);
     if (!Number.isInteger(onHand) || onHand < 0) { ignored = true; return null; }
-    return { ...r, onHand, source: "connector", observedAt: Math.min(observedAt, now), revision: r.revision + 1, updatedAt: now };
+    // A restock from the shop's own system re-arms the low-stock alert, as a count set here does.
+    return { ...r, onHand, source: "connector", observedAt: Math.min(observedAt, now), revision: r.revision + 1, updatedAt: now, ...(onHand > r.onHand ? { lowAlerted: false } : {}) };
   });
   await db.merge(GRANTS, g.id, { lastEventAt: now, ...(g.status === "degraded" ? { status: "active", lastError: null } : {}) });
   return { applied: !ignored, duplicate: false, ...(ignored ? { reason: "older than the current count, or invalid" } : {}) };

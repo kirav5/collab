@@ -23,6 +23,8 @@ export interface Offer {
   attributes: Record<string, string>;
   /** Questions the seller wants answered by interested buyers. */
   askBuyer: string[];
+  /** The seller's photo of it (served from /public/photos/<id>). */
+  photo?: string;
   minBudget?: number | null;
   publishedAt: number;
   expiresAt: number;
@@ -35,6 +37,8 @@ export interface Offer {
   requirements?: Requirement[];
   /** The seller lets an order at the listed price be confirmed by their always-on agent at once (instant booking). */
   instant?: boolean;
+  /** The most one buyer may have (a seller's rule; buyers see it). */
+  maxPerBuyer?: number;
   /** The owner pays rather than being paid (an employer's job post). Absent: the owner is paid. */
   ownerPays?: boolean;
   /** Ready-made questions a buyer can tap, written by Gemini for this listing when it was published. */

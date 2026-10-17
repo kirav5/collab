@@ -36,12 +36,12 @@ export function pickupDetails(e: Engagement) {
   const roles = rolesFor(e.offer.category);
   return { id: e.id, item: e.offer.title, quantity, amount, buyer: e[buyerOf(e)].name, sellerHandle: e[sellerOf(e)].handle, payee: roles.payee, payer: roles.payer,
     paidAt: e.payment.paidAt ?? null, kind: passKind(e), slot: e.reservation?.slot?.start ?? null,
-    payment: status === "paid" ? "in_app_test" : "outside", markedBy, mode: "test" };
+    payment: status === "paid" ? "in_app_test" : "outside", markedBy, mode: "test", cancelled: e.fulfilment?.state === "cancelled" };
 }
 /** A separate transaction document cannot be reset by an older engagement save or simultaneous scan. */
 export async function collect(db: Docs, e: Engagement, uid: string, now: number) {
-  pickupDetails(e);
-  if (e[sellerOf(e)].uid !== uid) throw new Error("Only the seller can mark collected.");
+  if (pickupDetails(e).cancelled) throw new Error("This booking was cancelled.");
+  if (e[sellerOf(e)].uid !== uid) throw new Error("Only the person handing it over can mark it collected.");
   const result = await db.update(PICKUPS, e.id, current => current ? null : { id: e.id, collectedAt: now, collectedBy: uid });
   return { ...(result ?? await db.get(PICKUPS, e.id)), alreadyCollected: !result };
 }

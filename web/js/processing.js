@@ -7,6 +7,16 @@
 // → "here" · "remote" · "cloud" · "limitation" (nothing allowed can answer: the owner is told, nothing is sent)
 export const MODES = ["device-only", "my-devices", "cloud", "cloud-only"];
 
+/** Where questions about the owner's private notes are read, for each choice (requests are always read by Gemini). */
+export const notesReadBy = mode => ({ "device-only": "Gemma, this device only", "my-devices": "Gemma on your devices", cloud: "Gemma on your devices, else Gemini", "cloud-only": "Gemini (cloud)" })[normalizeMode(mode)] ?? "Gemma on your devices";
+
+/** Stored where · processed where · shared with whom — the three promises, kept apart and true to the setting. */
+export const privacyFacts = mode => [
+  ["Stored", "In your account on Collab's server"],
+  ["Read by", `Notes: ${notesReadBy(mode)} · Requests: Gemini`],
+  ["Shared", "Only what's Public, or Protected for people your rules name. Never Private notes or your limits."],
+];
+
 /** Saved choices from before Gemma ("device-first" let the cloud answer) become "my-devices": Gemma only. */
 export const normalizeMode = m => (MODES.includes(m) ? m : "my-devices");
 

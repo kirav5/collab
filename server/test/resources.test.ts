@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { memoryDocs } from "../src/docs.ts";
-import { CapacityError, RESOURCES, availabilityText, available, commit, createResource, hold, release, setStock } from "../src/core/resources.ts";
+import { CapacityError, RESOURCES, availabilityText, available, commit, createResource, hold, lowStock, release, setStock } from "../src/core/resources.ts";
 
 const T = 1_800_000_000;
 
@@ -55,7 +55,7 @@ test("a manual count goes stale: availability becomes unknown, not a number, unt
   assert.equal((await hold(db, r.id, { holder: "a", ttlSec: 900 }, later)).qty, 1);
   await assert.rejects(setStock(db, r.id, "intruder", 99, later), /No such resource/);
   await assert.rejects(setStock(db, r.id, "shop", -1, later), /zero or more/);
-  assert.equal(availabilityText(null, T), "Availability isn't tracked — the seller will confirm.");
+  assert.equal(availabilityText(null, T), "Availability isn't tracked — they'll confirm.");
 });
 
 test("asked about free times, the agent names the next ones, not a count", async () => {
@@ -106,4 +106,19 @@ test("weekly hours: the seller states them once; bookable times are made two wee
   assert.ok(!r3.slots.some(s => s.id !== held.slotId && s.end < later - 86_400), "free times long past are dropped");
   assert.ok(!needsTopUp(r3, later));
   assert.match(availabilityText(r3, later), /^Open Sat, 09:00–12:00\. Next free: /);
+});
+
+test("a seller hears once when a sale leaves stock low, and again only after they restock", async () => {
+  const db = memoryDocs(), t = 1_800_000_000;
+  const r = await createResource(db, "shop", { factId: "f1", type: "quantity", title: "Brass lamp · ₹450", onHand: 6 }, t);
+  const sell = async (qty: number) => { const h = await hold(db, r.id, { holder: "b", qty, ttlSec: 600 }, t); await commit(db, r.id, h.id, t); };
+  await sell(2);
+  assert.equal(await lowStock(db, r.id, 3, t), null, "4 left: not low");
+  await sell(2);
+  assert.deepEqual(await lowStock(db, r.id, 3, t), { left: 2, title: "Brass lamp · ₹450", owner: "shop", factId: "f1" });
+  await sell(1);
+  assert.equal(await lowStock(db, r.id, 3, t), null, "told once per dip");
+  await setStock(db, r.id, "shop", 10, t);
+  await sell(8);
+  assert.equal((await lowStock(db, r.id, 3, t))?.left, 2, "after a restock, told again");
 });

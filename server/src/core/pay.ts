@@ -71,7 +71,7 @@ export function cartFor(e: Engagement, sign: (uid: string, hash: string) => stri
 export function pay(e: Engagement, side: Side, sign: (uid: string, hash: string) => string, now: number): PaymentMandate {
   const p = e.payment;
   if (!p || (p.status !== "awaiting" && p.status !== "paying")) throw new Error("Nothing to pay.");
-  if (side !== buyerOf(e)) throw new Error("Only the buyer pays.");
+  if (side !== buyerOf(e)) throw new Error("Only the person getting it pays.");
   if (p.cart.expiresAt < now) throw new Error("This cart has expired — agree the deal again.");
   if (digest(stripCart(p.cart)) !== p.cart.hash) throw new Error("The cart doesn't match what the seller's agent signed.");
   const buyer = party(e, side);

@@ -144,7 +144,9 @@ export interface QA {
   required?: boolean;
 }
 
-export interface Event { at: number; who: "requester_agent" | "provider_agent" | "requester" | "provider" | "system"; text: string; by?: "gemini" | "rules" | "owner" | "device" }
+export interface Event { at: number; who: "requester_agent" | "provider_agent" | "requester" | "provider" | "system"; text: string; by?: "gemini" | "rules" | "owner" | "device";
+  /** A message between the two people themselves (after the deal is agreed), not a turn for the agents. */
+  chat?: boolean }
 
 export interface Engagement {
   id: string;
@@ -210,8 +212,12 @@ export interface Engagement {
   /** How many units the buyer wants in this conversation (said on the card, in the request or in chat); every offer in
    *  it is for this many unless one says otherwise. Absent: one. */
   quantity?: number;
+  /** Short optional notes the buyer might send once it's agreed ("I'll collect Saturday morning"), by Gemini. */
+  noteIdeas?: string[];
   /** What the buyer asked for when the seller has fewer in stock (then `quantity` is what's there). */
   wanted?: number;
+  /** What capped it: the stock, or the seller's own per-buyer rule (which isn't missed demand). */
+  wantedLimit?: "stock" | "rule";
   reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable" | "choose_slot";
     expiresAt: number | null; reason?: string; slotId?: string | null; slot?: { start: number; end: number } | null };
   /** The requester's goal this conversation is a task of (see core/goals.ts). */
@@ -261,6 +267,11 @@ export interface DelegatedLimit {
   /** "negotiate" (default): agent moves inside the limit, owner confirms. "close": the delegation is the confirmation.
       "ask": stored only so the owner's devices share it — every move still waits on the owner. */
   autonomy?: "negotiate" | "close" | "ask";
+  /** With "close": the agent agrees on its own only at or above this unit price (seller) or at or below it (buyer);
+   *  between the limit and here the owner gives the final yes. Absent: anywhere inside the limit. */
+  closeAt?: number | null;
+  /** The owner's own words these rules were read from (shown back to them; never to the other side). */
+  rulesText?: string;
   expires?: number | null;
   createdAt?: number;
 }

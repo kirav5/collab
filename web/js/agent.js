@@ -45,15 +45,21 @@ export function setProcessingMode(mode) {
 async function cacheNotes(facts) { try { await local.put("facts", { id: "notes", items: facts.filter(f => f.tier === "private").map(f => ({ id: f.id, text: f.text, tier: f.tier, createdAt: f.createdAt })), at: Date.now() }); } catch {} }
 /** Keeps the device's copy of the private notes current (called while online). */
 export async function refreshNotesCache() { const f = await cached("/api/facts").catch(() => null); if (f) await cacheNotes(f); }
-async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
+/** The private notes kept on this device (empty when there are none or storage is blocked). */
+export async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
+
+/** When no allowed model can answer: the matching notes themselves — found on this device by plain search, nothing
+ *  sent — with Gemma or (if the owner allows the cloud) one Gemini answer as an option, never a precondition. */
+const foundNotes = (question, notes, offline = false) => ({ text: notes.length ? "Here's what your notes say." : "Nothing in your notes matches that.",
+  cards: notes.length ? [{ type: "sources", found: true, question, notes: notes.map(n => ({ text: n.text, tier: n.tier })), cloudOk: !offline && engine.mode !== "device-only" }] : [] });
 
 /** No network: questions about the owner's own notes are answered by Gemma on this device; anything else waits. */
 async function offlineAnswer(text) {
   if (engine.mode === "cloud-only") return { text: "You're offline, and your notes are set to be answered in the cloud. Choose My devices in Settings › AI engine to have Gemma answer them offline.", cards: [] };
-  if (!engine.here) return { text: limitation(engine.mode, { canRunHere: engine.canRun, offline: true }), cards: [] };
   const notes = relevant(await cachedNotes(), text);
+  if (!engine.here) return foundNotes(text, notes, true);
   const a = notes.length ? await think(text, notes, "self", true) : null;
-  if (a?.limitation) return { text: a.limitation, cards: [] };
+  if (a?.limitation) return foundNotes(text, notes, true);
   if (!a) return { text: notes.length ? "Offline — your saved notes don't clearly answer that." : "Offline — nothing in the notes saved on this device matches that.", cards: [] };
   return { text: a.text, engine: a.engine, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: a.on, engine: a.engine }] };
 }
@@ -112,8 +118,10 @@ export async function chat(text, recent, area, open = null) {
   catch (e) { if (e instanceof TypeError) return offlineAnswer(text); throw e; }
   switch (route.intent) {
     case "remember": {
+      if (session.incognito) return { text: "“Don't keep history” is on, so I didn't save that. Turn it off in Settings to keep notes.", cards: [] };
       const fact = await saveNote(api, { text, tier: "private" });
       if (fact.queued) return { text: "Saved on this device — the connection dropped; it syncs to your account when you're back online.", cards: [] };
+      await cacheNotes([...(await cachedNotes()), fact]); // at once on this device too, so the next matches can use it
       return { text: "Saved to your context — only your agent can use it; it's never shared.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {
@@ -121,19 +129,22 @@ export async function chat(text, recent, area, open = null) {
       if (facts.length) cacheNotes(facts);
       const notes = relevant(facts, text);
       const a = notes.length ? await think(text, notes) : null;
-      if (a?.limitation) return { text: a.limitation, cards: [] };
+      if (a?.limitation) return foundNotes(text, notes);
       if (!a) return { text: notes.length ? "Your notes don't clearly answer that." : "I don't have anything about that in your context yet.", cards: [] };
       return { text: a.text, engine: a.engine, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: a.on, engine: a.engine }] };
     }
     case "request": {
       session.track("request_drafted");
-      const d = await api("/api/briefs/draft", { text, here: area });
-      if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
+      let d = await api("/api/briefs/draft", { text, here: area });
+      // No place in this line: what was said just before ("I'm going to Delhi…") usually has it.
+      if (!d.draft && recent.length) d = await api("/api/briefs/draft", { text: `${recent.slice(-2).join(". ")}. ${text}`, here: area }).catch(() => d);
+      if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [], askArea: /area/i.test(d.problem ?? "") ? text : null };
       // A profile shared on an earlier request starts filled in (the owner can change any of it before sending).
       if (d.draft.profile) d.draft.shared.about = d.draft.profile.filter(q => q.answer).map(q => ({ label: q.label, value: q.answer }));
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
-      return { text: d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send." : "Here's what your agent will ask for. Adjust it, then send.",
-        cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
+      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before others' agents can act on this — tap what fits, or send it as it is."
+          : d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send." : "Here's what your agent will ask for. Adjust it, then send.",
+        cards: [{ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" }] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
     case "refine": {
@@ -176,10 +187,25 @@ export function autonomyOf(c) {
 
 export async function offerReply(text, d, extra = {}) {
   const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []) : [];
-  const said = d.offer ? "Here's how your offering will look in the directory. Every detail you answer below is a question your agent handles without you."
-    : d.basics ? (L => `That reads as ${d.basics.label.toLowerCase()}. Add your ${L.price} and where, and I'll make it a listing ${L.responders}' agents can find — the questions below are what ${L.responders} usually ask.`)(listingRoles({ category: d.basics.category, ownerPays: d.ownerPays }))
-    : "I'll keep this as a public note others' agents can find.";
-  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, insights, step: "review", ...extra }] };
+  const said = d.offer ? "Here's your listing. Answer what you can — your agent handles those questions for you."
+    : d.basics ? (L => `Looks like ${d.basics.label.toLowerCase()}. Add your ${L.price} and area to list it — the questions below are what ${L.responders} usually ask.`)(listingRoles({ category: d.basics.category, ownerPays: d.ownerPays }))
+    : "This will be a public note others' agents can find.";
+  // A count stated in the words ("4 available") starts the stock, so it doesn't have to be typed again.
+  const stated = Number(d.offer?.attributes?.quantity);
+  // Common questions the listing already answers start answered: a question whose name matches one of the listing's own
+  // details (its attributes, or the condition Gemini read from the photo) takes that value; the owner can change it.
+  const norm = x => String(x ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const known = Object.entries(d.offer?.attributes ?? {}).map(([k, v]) => [norm(k.replace(/_/g, " ")), String(v)]);
+  if (extra.photo?.condition && extra.photo.condition !== "n/a") known.push(["condition", extra.photo.condition]);
+  const missingAnswers = {};
+  for (const m of d.missing ?? []) {
+    // Same name, or the same last word, which names the thing ("Item condition" ↔ "condition"; "item" ↔ no).
+    const last = x => x.split(" ").at(-1), l = norm(m.label), hit = known.find(([k]) => k && (l === k || last(l) === last(k)));
+    if (hit) missingAnswers[m.label] = m.options?.find(o => norm(o) === norm(hit[1])) ?? hit[1];
+  }
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review",
+    ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}),
+    ...(Object.keys(missingAnswers).length ? { missingAnswers, answeredMissing: (d.missing ?? []).every(m => missingAnswers[m.label]) } : {}), ...extra }] };
 }
 
 // MARK: - What only this device can do
