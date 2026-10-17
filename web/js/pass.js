@@ -10,7 +10,7 @@ export const passKind = d => KINDS[d.kind] ?? KINDS.pickup;
 
 /** The QR that opens this pass (an SVG), or "" offline. */
 export async function passQR(link) {
-  try { return await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { return ""; }
+  try { return await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { return ""; }
 }
 
 /**

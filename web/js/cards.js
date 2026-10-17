@@ -204,10 +204,14 @@ function matchesCard(c, at) {
         ${f.over ? `<span class="small" style="color:var(--stale)">Above your budget — ticking it lets your agent try to bring the price down.</span>` : ""}
         <span class="small faint">${[f.distanceKm ? `${f.distanceKm} km` : null, ...f.met.slice(0, 2).map(x => `✓ ${x}`), f.unknown.length ? `${f.unknown.length} to ask` : null].filter(Boolean).map(esc).join(" · ")}</span>
         ${f.profile.stats?.deals ? `<span class="small faint">Track record: ${f.profile.stats.deals} deal${f.profile.stats.deals === 1 ? "" : "s"} · ${f.profile.stats.kept} completed as agreed${f.profile.stats.fellThrough ? ` · ${f.profile.stats.fellThrough} fell through` : ""}</span>` : `<span class="small faint">New on Collab — no deals yet</span>`}
-        <span class="row match-actions">${c.booked?.[j] ? `<button class="btn secondary compact" data-act="match-booked" data-id="${esc(c.booked[j])}" ${at}>✓ Booked — see the deal</button>` : `
-          ${f.fact.offer?.price?.amount != null && !f.over && (c.draft.mandate?.price?.limit == null || f.fact.offer.price.amount <= c.draft.mandate.price.limit) ? `<button class="btn accent compact" data-act="match-book" data-j="${j}" ${at}>${f.fact.offer.instant ? "Book now" : "Book"} at ${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</button>` : ""}
-          <button class="btn secondary compact" data-act="match-negotiate" data-j="${j}" ${at}>Negotiate</button>
-          <button class="btn quiet compact" data-act="match-addons" data-j="${j}" ${at}>Ask about add-ons</button>`}
+        <span class="row match-actions">${c.booked?.[j] ? `<button class="btn secondary compact" data-act="match-booked" data-id="${esc(c.booked[j])}" ${at}>✓ Booked — see the deal</button>` : (() => {
+          // One clear next step per seller: book at their price when it's within your limit, else let agents bargain.
+          const bookable = f.fact.offer?.price?.amount != null && !f.over && (c.draft.mandate?.price?.limit == null || f.fact.offer.price.amount <= c.draft.mandate.price.limit);
+          const book = `<button class="btn ${bookable ? "accent" : "quiet"} compact" data-act="match-book" data-j="${j}" ${at}>${f.fact.offer?.instant ? "Book now" : "Book"} at ${money(f.fact.offer?.price?.amount, f.fact.offer?.price?.period)}</button>`;
+          const negotiate = `<button class="btn ${bookable ? "quiet" : "accent"} compact" data-act="match-negotiate" data-j="${j}" ${at}>Negotiate</button>`;
+          const addons = `<button class="btn quiet compact" data-act="match-addons" data-j="${j}" ${at}>Ask about add-ons</button>`;
+          return `${bookable ? book : negotiate}<details class="more match-more"><summary>More</summary><span class="row">${bookable ? negotiate : ""}${addons}</span></details>`;
+        })()}
         </span></span>
     </label>`)).join("")}
     ${found.length > 3 && !c.showAll ? `<button class="btn quiet compact" data-act="matches-more" ${at}>More found · ${found.length - 3}</button><span class="small faint">Your agent recommends the three above.</span>` : ""}
@@ -243,7 +247,7 @@ function hoursPick(c, at) {
     ${c.hoursOn ? `<div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip ${h.days.includes(d) ? "on" : ""}"><input type="checkbox" data-edit="hours-day" data-day="${d}" ${at} ${h.days.includes(d) ? "checked" : ""} style="display:none">${DAY[d]}</label>`).join("")}</div>
       <div class="row small"><input class="field compact" type="time" data-edit="hours-from" ${at} value="${esc(h.from)}" style="max-width:120px" aria-label="Opens"><span>to</span><input class="field compact" type="time" data-edit="hours-to" ${at} value="${esc(h.to)}" style="max-width:120px" aria-label="Closes">
         <input class="field compact" type="number" min="10" max="480" step="5" data-edit="hours-minutes" ${at} value="${h.minutes}" style="max-width:80px" aria-label="Minutes per booking"><span>minutes each</span></div>
-      <span class="small ${hoursOk(h) ? "faint" : ""}" ${hoursOk(h) ? "" : 'style="color:var(--danger)"'}>${hoursOk(h) ? `${esc(hoursText(h))}. Free times are made two weeks ahead and refill as days pass; booked times hold. Change them anytime in Context.` : "Pick at least one day, and leave room for one booking between opening and closing."}</span>` : ""}
+      <span class="small ${hoursOk(h) ? "faint" : ""}" ${hoursOk(h) ? "" : 'style="color:var(--danger)"'}>${hoursOk(h) ? `${esc(hoursText(h))}. Free times are made two weeks ahead and refill as days pass; booked times hold. Change them anytime in About me.` : "Pick at least one day, and leave room for one booking between opening and closing."}</span>` : ""}
   </div>`;
 }
 
@@ -425,6 +429,9 @@ export function priceItem(e) {
 }
 
 /** "₹800 for 2 (₹400 each)" for a deal on several; the price and its unit for one. */
+/** How many units the agreed deal is for (line items summed, else the agreed quantity). */
+const unitsOf = e => { const d = e.negotiation?.deal; return d?.items?.length ? d.items.reduce((n, l) => n + l.quantity, 0) : d?.terms?.quantity > 1 ? d.terms.quantity : 1; };
+
 export function dealAmount(e) {
   const d = e.negotiation.deal, n = d?.terms?.quantity > 1 ? d.terms.quantity : 1;
   if (!d) return "";
@@ -640,6 +647,7 @@ function dealBlock(e, mine) {
     ${fulfil}
     ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
     ${dealTalk(e, mine, buyer, them, id)}
+    ${mine === buyer && e.offer?.factId && (p?.status === "paid" || p?.status === "outside") ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ Buy again</button><span class="small faint">Same item${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
   </div>`;
 }

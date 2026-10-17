@@ -117,6 +117,8 @@ textarea.field { resize: vertical; min-height: 64px; }
 .composer .bar { display: flex; gap: 10px; align-items: center; padding: 6px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; }
 .composer .bar:focus-within { border-color: var(--text3); }
 .composer input { flex: 1; border: 0; outline: none; background: transparent; padding: 6px; min-width: 0; }
+.mic { width: 34px; height: 34px; border-radius: 4px; border: 1px solid var(--hairline); background: transparent; color: var(--text2); display: inline-grid; place-items: center; cursor: pointer; flex: none; }
+.mic.on { color: var(--on-accent, #fff); background: var(--hot); border-color: var(--hot); animation: flash 1.2s ease-out infinite; }
 .send { width: 34px; height: 34px; border-radius: 4px; border: 0; background: var(--accent); color: var(--on-accent, #fff); font-weight: 700; cursor: pointer; }
 .send:disabled { opacity: .35; }
 .thinking { display: flex; align-items: center; gap: 8px; }
@@ -284,9 +286,6 @@ details.more[open] { display: grid; gap: 10px; }
 /* Animations: something new rises in, something changed flashes once, a screen opens in a short stagger. */
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes flash { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--wait) 65%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
-@keyframes glitch { 0% { clip-path: inset(0 0 62% 0); transform: translateX(-3px); text-shadow: 3px 0 var(--hot), -3px 0 var(--talk); }
-  12% { clip-path: inset(38% 0 18% 0); transform: translateX(3px); } 24% { clip-path: inset(0); transform: none; }
-  36% { text-shadow: -2px 0 var(--hot), 2px 0 var(--talk); } 100% { clip-path: inset(0); transform: none; } }
 @keyframes sweep { from { background-position: -200% 0; } to { background-position: 200% 0; } }
 .enter { animation: rise .3s cubic-bezier(.2,.8,.2,1) both; }
 .flash { animation: flash .9s ease-out 1; }
@@ -345,3 +344,7 @@ details.more.deal-row[open] > .card { margin: 0 8px; }
 .deal-amt { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
 .deals-sum { gap: 6px; }
 .grow { flex: 1; min-width: 0; }
+.match-actions { align-items: center; }
+details.more.match-more { display: inline-block; }
+details.more.match-more > summary { padding: 6px 4px; }
+details.more.match-more[open] { display: inline-grid; }
