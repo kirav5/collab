@@ -400,7 +400,9 @@ async function prefillAnswers(sid, mid, i) {
   const r = await api("/api/offers/answers", { text: f.c.publicText ?? f.c.text, questions: f.c.missing.map(m => ({ label: m.label, ask: m.ask, options: m.options ?? [] })) }).catch(() => null);
   const now_ = cardAt(sid, mid, i);
   if (!now_ || !r?.answers) return;
-  now_.c.suggestedAnswers = r.answers;
+  // "answer\u0000guess" marks a guess (the words said nothing); otherwise the words implied it.
+  now_.c.suggestedAnswers = Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, String(v).split("\u0000")[0]]));
+  now_.c.guessedAnswers = Object.fromEntries(Object.entries(r.answers).filter(([, v]) => String(v).includes("\u0000")).map(([k]) => [k, true]));
   await saveSession(now_.s); paintContent(true);
 }
 
