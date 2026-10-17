@@ -66,6 +66,24 @@ function answer(req: CompleteRequest): object {
       : /visit/.test(how) ? [{ label: "Available?", text: `Is ${item} still available?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Visit", text: "When can I come to see it?" }]
       : [{ label: "In stock?", text: `Do you have ${item} in stock?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Collect", text: "Can I order now and collect today?" }] };
   }
+  if (ins.startsWith("Shape a community post")) {
+    const m = quoted(p, "Post");
+    const trip = /\b(cab|ride|drive|driving|auto|carpool|commute)\b/i.test(m), group = /\b(pool|bulk|together|team|need \d+ (?:more )?people)\b/i.test(m);
+    const event = /\b(class|session|meetup|party|workshop|match)\b/i.test(m);
+    const kind = trip ? "trip" : group ? "group" : event ? "event" : /\b(need|looking|anyone|borrow|want)\b/i.test(m) ? "ask" : "offer";
+    const from = AREAS.find(a => new RegExp(`from ${a}`, "i").test(m)) ?? null, to = AREAS.find(a => new RegExp(`to ${a}`, "i").test(m)) ?? null;
+    const at = AREAS.find(a => new RegExp(`\\b(?:at|in) ${a}`, "i").test(m)) ?? null;
+    const now = p.match(/Now: (\d{4}-\d{2}-\d{2})/)?.[1] ?? "2026-01-01", hour = m.match(/\b(\d{1,2})\s*(am|pm)\b/i);
+    const day = new Date(`${now}T00:00:00Z`); if (/tomorrow/i.test(m)) day.setUTCDate(day.getUTCDate() + 1);
+    const when = hour ? `${day.toISOString().slice(0, 10)}T${String((+hour[1] % 12) + (/pm/i.test(hour[2]) ? 12 : 0)).padStart(2, "0")}:00` : null;
+    const spots = Number(m.match(/(\d+)\s*(?:seats?|people|spots)/i)?.[1] ?? NaN);
+    return { kind, title: m.split(/[.,?!]/)[0].slice(0, 60), from: trip ? from : null, to: trip ? to : null, place: trip ? null : at, when, spots: Number.isFinite(spots) ? spots : null };
+  }
+  if (ins.startsWith("Judge whether a marketplace post")) {
+    const m = quoted(p, "Post"), words = m.split(/\s+/).filter(Boolean).length;
+    const broad = words < 6 && /\b(stuff|things|something|anything|help|people)\b/i.test(m);
+    return { clarity: words < 4 ? 25 : 85, broad, missing: [{ question: "What exactly is it?", options: ["A desk lamp", "A study table", "Something else"] }, { question: "Where should it be?", options: ["Indiranagar", "Koramangala", "Online"] }] };
+  }
   if (ins.startsWith("Suggest the terms a seller")) return { terms: [{ label: "Cancellation", text: "Free up to 2 hours before the booked time." }, { label: "Payment", text: "In the app, or in cash when you come in." }] };
   if (ins.startsWith("A person is listing something")) return { asks: [{ label: "Condition", question: "What condition is it in?", options: ["Like new", "Good", "Some wear"] },
     { label: "Price", question: "What's your best price?", options: ["Fixed", "Negotiable"] }, { label: "Included", question: "What comes with it?", options: ["Box and charger", "Just the item"] }] };

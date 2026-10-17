@@ -19,7 +19,7 @@ try {
   const amount = n => (cur === 'INR' ? '₹' + Math.round(n).toLocaleString('en-IN') : new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(n));
   const total = r.payment?.cart?.total?.value ?? t.price * qty;
   const sellerSide = r.payment?.seller ?? 'provider', buyerSide = sellerSide === 'provider' ? 'requester' : 'provider';
-  const paid = r.payment?.status === 'paid' ? 'Paid in the app (test mode — no money moved)' : r.payment?.status === 'outside' ? 'Paid outside the app (cash or UPI)' : 'Not paid yet';
+  const paid = r.payment?.status === 'paid' ? 'Paid in the app' : r.payment?.status === 'outside' ? 'Paid outside the app (cash or UPI)' : 'Not paid yet';
   const ok = v => (v === true ? 'valid' : v === null || v === undefined ? 'none' : 'invalid');
   document.querySelector('#details').innerHTML = `<dl class="kv">
       <dt>Buyer</dt><dd>${esc(r.parties[buyerSide].name)} <span class="faint">@${esc(r.parties[buyerSide].handle)}</span></dd>

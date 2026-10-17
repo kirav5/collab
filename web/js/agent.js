@@ -46,13 +46,18 @@ async function cacheNotes(facts) { try { await local.put("facts", { id: "notes",
 export async function refreshNotesCache() { const f = await cached("/api/facts").catch(() => null); if (f) await cacheNotes(f); }
 async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
 
+/** When no allowed model can answer: the matching notes themselves — found on this device by plain search, nothing
+ *  sent — with Gemma or (if the owner allows the cloud) one Gemini answer as an option, never a precondition. */
+const foundNotes = (question, notes, offline = false) => ({ text: notes.length ? "Here's what your notes say." : "Nothing in your notes matches that.",
+  cards: notes.length ? [{ type: "sources", found: true, question, notes: notes.map(n => ({ text: n.text, tier: n.tier })), cloudOk: !offline && engine.mode !== "device-only" }] : [] });
+
 /** No network: questions about the owner's own notes are answered by Gemma on this device; anything else waits. */
 async function offlineAnswer(text) {
   if (engine.mode === "cloud-only") return { text: "You're offline, and your notes are set to be answered in the cloud. Choose My devices in Settings › AI engine to have Gemma answer them offline.", cards: [] };
-  if (!engine.here) return { text: limitation(engine.mode, { canRunHere: engine.canRun, offline: true }), cards: [] };
   const notes = relevant(await cachedNotes(), text);
+  if (!engine.here) return foundNotes(text, notes, true);
   const a = notes.length ? await think(text, notes, "self", true) : null;
-  if (a?.limitation) return { text: a.limitation, cards: [] };
+  if (a?.limitation) return foundNotes(text, notes, true);
   if (!a) return { text: notes.length ? "Offline — your saved notes don't clearly answer that." : "Offline — nothing in the notes saved on this device matches that.", cards: [] };
   return { text: a.text, engine: a.engine, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: a.on, engine: a.engine }] };
 }
@@ -120,7 +125,7 @@ export async function chat(text, recent, area, open = null) {
       if (facts.length) cacheNotes(facts);
       const notes = relevant(facts, text);
       const a = notes.length ? await think(text, notes) : null;
-      if (a?.limitation) return { text: a.limitation, cards: [] };
+      if (a?.limitation) return foundNotes(text, notes);
       if (!a) return { text: notes.length ? "Your notes don't clearly answer that." : "I don't have anything about that in your context yet.", cards: [] };
       return { text: a.text, engine: a.engine, cards: [{ type: "sources", notes: notes.filter(n => a.evidence.some(e => norm(n.text).includes(norm(e)))).map(n => ({ text: n.text, tier: n.tier })), on: a.on, engine: a.engine }] };
     }
@@ -129,7 +134,8 @@ export async function chat(text, recent, area, open = null) {
       const d = await api("/api/briefs/draft", { text, here: area });
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
-      return { text: "Here's what your agent will ask for. Adjust it, then send.", cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
+      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before sellers' agents can act on this — tap what fits, or send it as it is." : "Here's what your agent will ask for. Adjust it, then send.",
+        cards: [{ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" }] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
     case "refine": {
@@ -172,10 +178,10 @@ export function autonomyOf(c) {
 
 export async function offerReply(text, d, extra = {}) {
   const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []) : [];
-  const said = d.offer ? "Here's how your offering will look in the directory. Every detail you answer below is a question your agent handles without you."
-    : d.basics ? `That reads as ${d.basics.label.toLowerCase()}. Add your price and where, and I'll make it a listing buyers' agents can find — the questions below are what buyers usually ask.`
-    : "I'll keep this as a public note others' agents can find.";
-  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, insights, step: "review", ...extra }] };
+  const said = d.offer ? "Here's your listing. Answer what you can — your agent handles those questions for you."
+    : d.basics ? `Looks like ${d.basics.label.toLowerCase()}. Add a price and area to list it.`
+    : "This will be a public note others' agents can find.";
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review", ...extra }] };
 }
 
 // MARK: - What only this device can do

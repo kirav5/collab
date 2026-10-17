@@ -188,7 +188,12 @@ test("random buyer–seller conversations keep every invariant after every step"
       if (res) actions.set(`${action}:${res.status}`, (actions.get(`${action}:${res.status}`) ?? 0) + 1);
       if (res) {
         assert.ok(res.status < 500, `${ctx}: server error ${res.status}`);
-        if ((ended || done) && ["buyerAsk", "shopPrice", "buyerPrice"].includes(action)) assert.equal(res.status, 400, `${ctx}: asking after the end is refused`);
+        if (ended && ["buyerAsk", "shopPrice", "buyerPrice"].includes(action)) assert.equal(res.status, 400, `${ctx}: asking after the end is refused`);
+        // Once agreed, the two people may message each other; a message never changes the agreed deal.
+        if (done && !ended && ["buyerAsk", "shopPrice", "buyerPrice"].includes(action) && res.ok) {
+          const after = await as(buyer, `/api/engagements/${e.id}`);
+          assert.equal(after.phase, "agreed", `${ctx}: still agreed`); assert.equal(after.events.at(-1).chat, true, `${ctx}: a message`);
+        }
         if (action === "pay" && phase !== "agreed") assert.ok([400, 409].includes(res.status), `${ctx}: no payment before a deal (${res.status})`);
       }
       e = await as(buyer, `/api/engagements/${e.id}`);
@@ -520,6 +525,123 @@ test("a seller's offering draft lists what buyers usually ask; terms are suggest
   assert.ok(!facts.some((f: any) => f.offer?.policies?.length), "suggestions aren't saved until the seller saves them");
 });
 
+test("rules in the seller's words: at most 10 per buyer, closes alone at ₹420+, asks between ₹400 and ₹419, counters below", async () => {
+  await as("ru-s", "/api/me", { handle: "ru-shop", name: "Rules Shop", areaName: "Indiranagar" });
+  await as("ru-b", "/api/me", { handle: "ru-buyer", name: "Rules Buyer", areaName: "Indiranagar" });
+  const f = await as("ru-s", "/api/facts", { tier: "public", text: "Brass desk lamps for sale in Indiranagar, ₹450 each" });
+  await as("ru-s", "/api/resources", { factId: f.id, type: "quantity", onHand: 100 });
+  const words = "Don't go below ₹400 a lamp, max 10 per buyer, pickups only on weekdays after 5 pm, and close deals yourself above ₹420";
+  const read = await as("ru-s", "/api/rules/read", { text: words, side: "seller", factId: f.id });
+  assert.ok(read.lines.some((l: any) => /Most per buyer: 10/.test(l.text)));
+  const saved = await as("ru-s", `/api/facts/${f.id}/rules`, { text: words, rules: read.rules });
+  assert.equal(saved.fact.offer.maxPerBuyer, 10); assert.ok(saved.fact.offer.policies.some((p: any) => p.label === "Pickup"));
+  const item = (await as("ru-b", "/api/people/ru-shop")).shop.find((i: any) => i.factId === f.id);
+  assert.equal(item.perBuyer, 10); assert.equal(item.maxQuantity, 10, "the card won't go past 10");
+  const many = await raw("ru-b", "/api/people/ru-shop/order", { offerFactId: f.id, quantity: 15, price: 425 });
+  assert.equal(many.status, 409); assert.equal((await many.json()).available, 10);
+  const inbox = async (uid: string, id: string) => ((await as(uid, "/api/inbox")) as any[]).filter(i => i.engagementId === id);
+  let e = await as("ru-b", "/api/people/ru-shop/order", { offerFactId: f.id, quantity: 10, price: 425 });
+  assert.equal(e.phase, "agreed", "₹425 is past ₹420: the agent agreed on its own"); assert.equal(e.payment.cart.total.value, 4250);
+  e = await as("ru-b", "/api/people/ru-shop/order", { offerFactId: f.id, quantity: 10, price: 410 });
+  assert.equal(e.phase, "deal"); assert.deepEqual((await inbox("ru-s", e.id)).map(i => i.kind), ["confirm"], "between ₹400 and ₹419: the seller gives the final yes");
+  e = await as("ru-b", "/api/people/ru-shop/order", { offerFactId: f.id, quantity: 4, price: 350 });
+  assert.equal(e.negotiation.dealBy, "provider", "below ₹400: the agent counters");
+  assert.ok(e.negotiation.deal.price >= 400 && e.negotiation.deal.terms.quantity === 4);
+  assert.deepEqual((await inbox("ru-s", e.id)).map(i => i.kind), [], "and the seller isn't asked");
+  // The buyer hands the counter over in words: a limit, and a must-be-yes question their agent asks the seller.
+  const bw = "Up to ₹430 a lamp, only if I can pick it up this weekend";
+  const br = await as("ru-b", "/api/rules/read", { text: bw, side: "buyer", engagementId: e.id });
+  assert.equal(br.rules.limit, 430); assert.deepEqual(br.rules.mustAsk, ["Can I pick it up this weekend?"]);
+  e = await as("ru-b", `/api/engagements/${e.id}/rules`, { text: bw, rules: br.rules });
+  assert.ok(e.qa.some((q: any) => q.question === "Can I pick it up this weekend?" && q.required), "a must-be-yes check");
+  assert.ok(e.events.some((x: any) => x.who === "requester_agent"), "the buyer's agent took over");
+  assert.ok(!(await inbox("ru-b", e.id)).some(i => i.kind === "move" && i.counter), "no counter waiting on the buyer");
+});
+
+test("once agreed, the two people can message each other before paying — messages, not offers; optional notes are suggested", async () => {
+  await as("ch-s", "/api/me", { handle: "chat-shop", name: "Chat Shop", areaName: "Indiranagar" });
+  await as("ch-b", "/api/me", { handle: "chat-buyer", name: "Chat Buyer", areaName: "Indiranagar" });
+  const f = await as("ch-s", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Indiranagar, ₹450 each" });
+  let e = await as("ch-b", "/api/people/chat-shop/order", { offerFactId: f.id, quantity: 2 });
+  assert.deepEqual(e.qa, [], "an order isn't a question for the seller");
+  await as("ch-s", `/api/inbox/${((await as("ch-s", "/api/inbox")) as any[]).find(i => i.engagementId === e.id && i.kind === "confirm").id}`, { confirm: true });
+  e = await as("ch-b", `/api/engagements/${e.id}/ask`, { text: "Can I collect after 6 pm? I'll pay at pickup." });
+  assert.equal(e.phase, "agreed"); assert.equal(e.events.at(-1).chat, true);
+  e = await as("ch-s", `/api/engagements/${e.id}/ask`, { text: "Sure, 6 to 8 pm works. I'll take ₹400." });
+  assert.equal(e.negotiation.deal.price, 450, "a price in a message doesn't change the agreed deal");
+  assert.equal(e.payment.cart.total.value, 900);
+  const ideas = await as("ch-b", `/api/engagements/${e.id}/note-ideas`);
+  assert.ok(Array.isArray(ideas.notes));
+  assert.deepEqual((await as("ch-s", `/api/engagements/${e.id}/note-ideas`)).notes, [], "suggestions are for the buyer");
+});
+
+test("communities: any kind of post — a trip, a group, an event — shaped from plain words; members only; seats can't overfill", async () => {
+  await as("cm-a", "/api/me", { handle: "cm-asha", name: "Asha", areaName: "Indiranagar" });
+  await as("cm-b", "/api/me", { handle: "cm-bala", name: "Bala", areaName: "Koramangala" });
+  await as("cm-x", "/api/me", { handle: "cm-out", name: "Outsider", areaName: "Jayanagar" });
+  const c = await as("cm-a", "/api/communities", { name: "Embassy Tech Village", kind: "office", place: "Whitefield" });
+  assert.match(c.place.name, /White ?field/i); assert.equal(c.members, 1); assert.equal(c.createdBy, "you");
+  const list = await as("cm-b", "/api/communities");
+  assert.ok(list.nearby.some((x: any) => x.id === c.id), "found nearby to join");
+  assert.ok(!JSON.stringify(list).includes("cm-a"), "no account ids in the list");
+  assert.equal((await raw("cm-b", `/api/communities/${c.id}`)).status, 403, "not a member yet");
+  assert.equal((await raw("cm-b", `/api/communities/${c.id}/posts/draft`, { text: "Cab from Koramangala at 9am tomorrow" })).status, 403);
+  await as("cm-b", `/api/communities/${c.id}/join`, {});
+  await as("cm-b", "/api/facts", { tier: "public", text: "Home-made tiffin lunch box for sale in Koramangala, ₹120 each" });
+  await as("cm-b", "/api/facts", { tier: "public", text: "Part-time assignment help job in Koramangala, ₹500 each" });
+
+  // A trip: read from the words, checked, then posted with one edit (1 seat, not 2).
+  const words = "Anyone want to share a cab from Koramangala to Whitefield at 9am tomorrow? 2 seats";
+  const d = await as("cm-b", `/api/communities/${c.id}/posts/draft`, { text: words });
+  assert.equal(d.kind, "trip"); assert.match(d.from.name, /Koramangala/); assert.match(d.to.name, /White ?field/i);
+  assert.equal(d.spots, 2); assert.ok(d.at > Date.now() / 1000, "a time from 'tomorrow 9am'");
+  assert.equal((await raw("cm-b", `/api/communities/${c.id}/posts`, { text: words, kind: "trip", title: d.title, from: "Atlantis", at: d.at, spots: 1 })).status, 400, "an area we don't know");
+  const trip = await as("cm-b", `/api/communities/${c.id}/posts`, { text: words, kind: "trip", title: d.title, from: d.from.name, at: d.at, spots: 1 });
+  assert.equal(trip.spots, 1); assert.match(trip.to.name, /White ?field/i, "to the community's place by default");
+  // A group and an event straight from the words; the shape decides how each card is shown.
+  const group = await as("cm-b", `/api/communities/${c.id}/posts`, { text: "Bulk order of basmati rice, need 5 people to pool" });
+  assert.equal(group.kind, "group"); assert.equal(group.spots, 5);
+  assert.equal((await raw("cm-b", `/api/communities/${c.id}/posts`, { text: "Splitting a plan", kind: "group", title: "Plan", spots: 1 })).status, 400, "a group of one can't be joined");
+  const event = await as("cm-a", `/api/communities/${c.id}/posts`, { text: "Terrace yoga class in Whitefield at 7am tomorrow, all welcome" });
+  assert.equal(event.kind, "event"); assert.ok(event.at); assert.match(event.place.name, /White ?field/i); assert.equal(event.spots, null, "no number stated, no limit");
+  assert.equal((await raw("cm-a", `/api/communities/${c.id}/posts`, { text: "Selling my old desk, call 98450 12345" })).status, 400, "no phone numbers — people reach you through your agent");
+
+  const feed = await as("cm-a", `/api/communities/${c.id}`);
+  assert.equal(feed.community.members, 2);
+  assert.deepEqual(feed.posts.map((x: any) => x.kind).slice(0, 1), ["trip"], "trips first");
+  assert.equal(feed.posts.length, 3);
+  assert.ok(feed.posts.every((x: any) => x.owner === undefined && x.joined === undefined), "no internal ids");
+  assert.ok(typeof feed.posts[0].km === "number", "how far its start is from you");
+  assert.ok(feed.offers.length + feed.gigs.length >= 1);
+
+  // "I'm in": seats can't overfill; the poster sees who's in; outsiders can't join.
+  assert.equal((await raw("cm-b", `/api/posts/${trip.id}/join`, {})).status, 409, "not your own post");
+  const joined = await as("cm-a", `/api/posts/${trip.id}/join`, {});
+  assert.equal(joined.count, 1); assert.equal(joined.youJoined, true); assert.equal(joined.people, undefined, "only the poster sees who's in");
+  assert.equal(joined.notified, undefined); assert.equal(joined.joined, undefined, "no account ids");
+  assert.equal((await raw("cm-x", `/api/posts/${trip.id}/join`, {})).status, 403, "outsiders can't join");
+  await as("cm-x", `/api/communities/${c.id}/join`, {});
+  assert.equal((await raw("cm-x", `/api/posts/${trip.id}/join`, {})).status, 409, "no seats left");
+  const mine = (await as("cm-b", `/api/communities/${c.id}`)).posts.find((x: any) => x.id === trip.id);
+  assert.deepEqual(mine.people.map((x: any) => x.handle), ["cm-asha"]);
+  await as("cm-a", `/api/posts/${trip.id}/join`, { leave: true });
+  assert.equal((await as("cm-x", `/api/posts/${trip.id}/join`, {})).count, 1, "a seat freed up");
+
+  assert.equal((await raw("cm-a", `/api/posts/${trip.id}/close`, {})).status, 404, "only the poster closes it");
+  await as("cm-b", `/api/posts/${trip.id}/close`, {});
+  assert.equal((await as("cm-a", `/api/communities/${c.id}`)).posts.length, 2);
+});
+
+test("the gate: a vague request or offering comes back with what's missing; a clear one goes straight through", async () => {
+  await as("gt", "/api/me", { handle: "gate-user", name: "Gate User", areaName: "Indiranagar" });
+  const vague = await as("gt", "/api/briefs/draft", { text: "need stuff" });
+  assert.equal(vague.gate.ok, false); assert.ok(vague.gate.missing.length >= 1 && vague.gate.missing.every((m: any) => m.options.length >= 2));
+  const clear = await as("gt", "/api/briefs/draft", { text: "Need 2 brass desk lamps in Indiranagar this week, warm light" });
+  assert.equal(clear.gate.ok, true);
+  const offer = await as("gt", "/api/offers/draft", { text: "Brass desk lamps for sale in Indiranagar, warm LED, ₹450 each" });
+  assert.equal(offer.gate.ok, true);
+});
+
 test("a seller's record grows from signed receipts: public, verifiable, on their card and agent card — no buyers, no prices", async () => {
   await as("tr-s", "/api/me", { handle: "tr-shop", name: "Record Shop", areaName: "Indiranagar" });
   await as("tr-b", "/api/me", { handle: "tr-buyer", name: "Record Buyer", areaName: "Indiranagar" });
@@ -543,4 +665,25 @@ test("a seller's record grows from signed receipts: public, verifiable, on their
   assert.equal((await as("tr-b", "/api/people/tr-shop")).record.sales, 1, "on their card");
   const card = await (await fetch(`${B}/a2a/tr-shop/.well-known/agent-card.json`)).json();
   assert.match(card.description, /1 verified sale/, "and on their agent card");
+});
+
+test("booking a match from a request keeps one goal, and a second tap returns the same deal", async () => {
+  await as("og-s", "/api/me", { handle: "og-seller", name: "Barber Om", areaName: "Indiranagar" });
+  await as("og-b", "/api/me", { handle: "og-buyer", name: "Buyer Oz", areaName: "Indiranagar" });
+  const f = await as("og-s", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
+  const d = await as("og-b", "/api/briefs/draft", { text: "Need a steel water bottle in Indiranagar" });
+  const sent = await as("og-b", "/api/briefs", { need: d.draft.need, shared: d.draft.shared });
+  const before = (await as("og-b", "/api/goals")) as any[];
+  assert.equal(before.length, 1, "the request is one goal");
+  const e = await as("og-b", "/api/people/og-seller/order", { offerFactId: f.id, quantity: 1, briefId: sent.brief.id });
+  const again = await as("og-b", "/api/people/og-seller/order", { offerFactId: f.id, quantity: 1, briefId: sent.brief.id });
+  assert.equal(again.id, e.id, "a second tap is the same deal, not a second purchase");
+  const goals = (await as("og-b", "/api/goals")) as any[];
+  assert.equal(goals.length, 1, "still one goal");
+  assert.deepEqual(goals[0].tasks.map((t: any) => t.id), [e.id], "the booking is that goal's task");
+  // Someone else's request id doesn't attach their order to it.
+  await as("og-c", "/api/me", { handle: "og-other", name: "Other Oy", areaName: "Indiranagar" });
+  const theirs = await as("og-c", "/api/people/og-seller/order", { offerFactId: f.id, quantity: 1, briefId: sent.brief.id });
+  assert.notEqual(theirs.id, e.id);
+  assert.equal(((await as("og-b", "/api/goals")) as any[])[0].tasks.length, 1, "the buyer's goal is untouched");
 });

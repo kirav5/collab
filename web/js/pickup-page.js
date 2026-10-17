@@ -1,37 +1,31 @@
+// The page a pass's QR opens (scanned with any phone camera): the pass itself, and — for the seller, signed in — the
+// button to mark it done. Inside the app the same pass opens as a modal instead.
 import { api, signIn, session } from './api.js';
+import { passHTML } from './pass.js';
 const [id, code] = location.hash.slice(1).split('.');
-const status = document.querySelector('#status'), login = document.querySelector('#login'), collect = document.querySelector('#collect');
-let details;
-const note = document.querySelector('#note');
-const KINDS = { pickup: { name: 'Pickup pass', done: 'Collected', verb: 'handing over the item' },
-  booking: { name: 'Booking pass', done: 'Checked in', verb: 'starting' }, handover: { name: 'Handover pass', done: 'Handed over', verb: 'handing over' } };
+const box = document.querySelector('#pass'), status = document.querySelector('#status'), login = document.querySelector('#login');
+let details, seller = false;
+const MISSING = "This pass doesn't exist or its link is incomplete.";
 async function refresh() {
+  if (!id || !code) throw new Error(MISSING);
   const r = await fetch(`/public/pickup/${encodeURIComponent(id)}?code=${encodeURIComponent(code)}`, { cache: 'no-store' });
-  details = await r.json(); if (!r.ok) throw new Error(details.error);
-  const k = KINDS[details.kind] ?? KINDS.pickup;
-  document.title = `Collab ${k.name.toLowerCase()}`; document.querySelector('h1').textContent = k.name; collect.textContent = `Mark ${k.done.toLowerCase()}`;
-  const when = details.slot ? `\nTime: ${new Date(details.slot * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
-  const item = details.quantity > 1 ? `${details.quantity} × ${details.item.split(' · ')[0]}` : details.item;
-  document.querySelector('#details').textContent = `${item}\n${details.amount.currency ?? 'INR'} ${details.amount.value}${when}\nBuyer: ${details.buyer}\nSeller: @${details.sellerHandle}`;
-  const paid = details.payment === 'outside'
-    ? (details.markedBy === 'seller' ? 'Paid outside the app — the seller confirmed it' : 'Marked paid outside the app by the buyer — check you received the money')
-    : '✓ Paid (test mode)';
-  status.textContent = details.collectedAt ? `${k.done} at ${new Date(details.collectedAt * 1000).toLocaleString()}` : `${paid} · not ${k.done.toLowerCase()} yet`;
-  note.textContent = details.payment === 'outside' ? `The seller checks the buyer's name before ${k.verb}.` : `Test payment — no money moved. The seller checks the buyer's name before ${k.verb}.`;
-  if (details.collectedAt) { collect.hidden = true; login.hidden = true; }
+  const j = await r.json().catch(() => ({ error: 'pass not found' }));
+  if (!r.ok) throw new Error(j.error === 'pass not found' ? MISSING : j.error);
+  details = j;
+  box.innerHTML = passHTML(details, { seller });
 }
-async function sellerButtons() {
+async function sellerCheck() {
   const me = await api('/api/me').catch(() => null);
-  collect.hidden = !!details.collectedAt || me?.handle !== details.sellerHandle;
-  login.hidden = !!details.collectedAt || !collect.hidden || !session.google;
+  seller = !details.collectedAt && me?.handle === details.sellerHandle;
+  login.hidden = !!details.collectedAt || seller || !session.google;
+  box.innerHTML = passHTML(details, { seller });
 }
-login.onclick = async () => {
-  try { await session.google(); await sellerButtons(); } catch(e) { status.textContent = e.message; }
-};
-collect.onclick = async () => {
-  collect.disabled = true;
-  try { await api(`/api/pickup/${encodeURIComponent(id)}/collect`, { code }); await refresh(); }
-  catch(e) { await refresh().catch(() => {}); if (!details.collectedAt) status.textContent = e.message; }
-  finally { collect.disabled = false; }
-};
-try { await refresh(); await signIn(); await sellerButtons(); } catch(e) { status.textContent = e.message; }
+login.onclick = async () => { try { await session.google(); await sellerCheck(); } catch (e) { status.textContent = e.message; } };
+box.addEventListener('click', async ev => {
+  const b = ev.target.closest('[data-act="pass-collect"]'); if (!b) return;
+  b.disabled = true; status.textContent = '';
+  try { await api(`/api/pickup/${encodeURIComponent(id)}/collect`, { code }); }
+  catch (e) { status.textContent = e.message; }
+  await refresh().then(sellerCheck).catch(e => { status.textContent ||= e.message; b.disabled = false; });
+});
+try { await refresh(); await signIn(); await sellerCheck(); } catch (e) { if (!box.querySelector('.pass')) box.replaceChildren(); status.textContent = e.message; }

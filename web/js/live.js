@@ -14,7 +14,8 @@ const emit = () => { for (const fn of live.listeners) fn(); };
 function notify(title, body, open) {
   toast(`${title} — ${body}`, open);
   try {
-    if (document.hidden && "Notification" in window && Notification.permission === "granted") new Notification(title, { body, tag: title + body });
+    // With push on, the server's notification already arrives — no second one from the page.
+    if (document.hidden && !session.pushOn && "Notification" in window && Notification.permission === "granted") new Notification(title, { body, tag: title + body });
   } catch { /* not available */ }
 }
 
@@ -27,7 +28,7 @@ function setEngagements(list, openChat, quiet = false) {
     live.engagements.set(e.id, e);
     if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify("New request", `${e.requester.name}'s agent: ${e.title}`, () => openChat("requests", e.id));
     if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("requests", e.id));
-    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", `${e.title} (test mode)`, () => openChat("requests", e.id));
+    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", e.title, () => openChat("requests", e.id));
     seen.engagements.add(e.id);
   }
   if (!quiet) emit();
@@ -89,3 +90,5 @@ export function start(openChat) {
 }
 
 export const needsYou = () => [...live.inbox.filter(i => i.kind !== "move" || i.question), ...live.alerts];
+/** How many things wait on you, counted the same everywhere: conversations with a decision for you, plus new matches. */
+export const needsYouCount = () => new Set(live.inbox.filter(i => i.kind !== "move" || i.question).map(i => i.engagementId)).size + live.alerts.length;

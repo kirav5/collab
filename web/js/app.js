@@ -9,10 +9,12 @@ import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
-import { live, needsYou, onChange, refresh, start } from "./live.js";
-import { PASS, dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, storeCard } from "./cards.js";
+import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
+import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
+import { passHTML, passKind, passQR } from "./pass.js";
 import { screens } from "./screens.js";
+import { notesReadBy, privacyFacts } from "./processing.js";
 import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -125,6 +127,14 @@ async function boot() {
     const sheet = openGooglePay(Number(el.dataset.amount), el.dataset.item ?? "Collab", el.dataset.currency ?? "INR");
     sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message));
   }, true);
+  // The menu (phones) closes on a tap anywhere outside it, and that tap does nothing else; Escape closes it too.
+  document.addEventListener("click", e => {
+    const app = $("#app");
+    if (!app?.classList.contains("nav-open") || e.target.closest?.(".sidebar, [data-act=\"nav\"]")) return;
+    e.stopPropagation(); e.preventDefault();
+    app.classList.remove("nav-open");
+  }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") $("#app")?.classList.remove("nav-open"); });
   document.addEventListener("click", onClick);
   document.addEventListener("change", onEdit);
   document.addEventListener("input", onEdit);
@@ -148,12 +158,12 @@ function paint() { paintSidebar(); paintTop(); paintContent(); }
 function paintSidebar() {
   const el = $("#sidebar");
   if (!el) return;
-  const n = needsYou().length;
+  const n = needsYouCount();
   const groups = groupSessions(S.sessions);
   const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
       title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here && engine.mode !== "cloud-only" ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
-      ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} request${n === 1 ? "" : "s"} need you »</button>` : ""}
+      ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
       ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
         ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}
@@ -163,7 +173,7 @@ function paintSidebar() {
         ${navRow("context", "▤", "Context", "")}
         ${navRow("people", "◎", "People", "")}
         ${navRow("sharing", "◈", "Sharing", "")}
-        ${navRow("requests", "⇄", "Requests", live.engagements.size ? String(live.engagements.size) : "")}
+        ${navRow("requests", "⇄", "Requests", n ? String(n) : "")}
         ${navRow("activity", "≡", "Activity", "")}
         ${navRow("settings", "⚙", "Settings", "")}
       </div>
@@ -189,11 +199,26 @@ function paintTop() {
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
-  $("#composer-note").innerHTML = label(engine.here && engine.mode !== "cloud-only" ? "Private notes are read by Gemma on this device" : engine.mode === "cloud" || engine.mode === "cloud-only" ? "Private notes are never shared · Gemini sees only what a request needs" : "Private notes are read only by Gemma on your devices · never shared");
+  $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
 }
 
 let painting = false, lastHTML = "";
 let again = null;
+/** Motion that means something: a new message or card rises in, one that changed (a counter, a payment) flashes once,
+ *  and a screen opens in a short stagger. Live refreshes never replay animations; Settings › Appearance turns it off. */
+const seenAnim = new Map();
+let lastScreen = null;
+function animate(root, opened) {
+  const on = document.documentElement.dataset.motion !== "off";
+  if (on && opened) { root.classList.remove("screen-enter"); void root.offsetWidth; root.classList.add("screen-enter"); }
+  for (const n of root.querySelectorAll("[data-anim]")) {
+    const k = n.dataset.anim, sig = n.dataset.animSig ?? "";
+    if (on && !opened && !seenAnim.has(k) && seenAnim.size) n.classList.add("enter");
+    else if (on && seenAnim.has(k) && seenAnim.get(k) !== sig) n.classList.add("flash");
+    seenAnim.set(k, sig);
+  }
+}
+
 async function paintContent(soft = false) {
   const el = $("#content");
   if (!el) return;
@@ -209,6 +234,7 @@ async function paintContent(soft = false) {
     if (soft && html === lastHTML) return;
     lastHTML = html;
     el.innerHTML = html;
+    animate(el, S.screen !== lastScreen); lastScreen = S.screen;
     if (S.screen === "chat" && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
@@ -238,22 +264,26 @@ async function chatHTML() {
 /** First visit: three lines on how it works, dismissed with one tap (kept on this device). */
 function howItWorks() {
   try { if (localStorage.getItem("collab.intro") === "done") return ""; } catch {}
-  return `<div class="card intro"><div class="row">${label("How Collab works", "sq accent")}<button class="linkish small faint end" data-act="intro-done">Got it</button></div>
-    <div class="steps-plain"><div><b>1</b><span>Tell your agent what you need — or scan a shop's QR.</span></div><div><b>2</b><span>It talks to the shop's agent for you: asks, answers, and bargains inside the limit you set.</span></div><div><b>3</b><span>You confirm, pay (test mode for now), and collect with a one-tap pass. Your private notes never leave your account.</span></div></div></div>`;
+  return `<div class="card intro"><div class="row">${label("How it works", "sq accent")}<button class="linkish small faint end" data-act="intro-done">Got it</button></div>
+    <div class="steps-plain"><div><b>1</b><span>Say what you need</span></div><div><b>2</b><span>Agents ask and bargain</span></div><div><b>3</b><span>You confirm, pay, collect</span></div></div></div>`;
 }
 
 function emptyChat() {
-  const tiles = [["Remember", "Remember that I teach guitar on weekends and I'm free after 6 pm", ""],
-    ["Find anything", "Need a 2BHK to rent in Indiranagar, budget 36,000 a month, I have a small dog", "peri"],
-    ["Offer something", "I teach tabla online and at home in Jayanagar, ₹700 an hour, lowest 600", ""],
-    ["Your context", "What did I note about guitar?", ""]];
-  return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It asks anyone's agent for anything — and your private context is never shared.</span></h1>
-    <div class="grid-tiles">${tiles.map(([l, p, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(p)}</p><span class="arrow">↗</span></button>`).join("")}</div>
-    <div class="card">${label("Who sees what", "sq")}
-      <dl class="kv"><dt>${tag("Only me", "peri")}</dt><dd>Private. Stored with your account, but no rule can name it and no one else's agent ever sees it.</dd>
-      <dt>${tag("Protected", "accent")}</dt><dd>Shared with the people your rules name, on the topics they name — answered by your always-on agent, or checked with you first.</dd>
-      <dt>${tag("Public", "fresh")}</dt><dd>Anyone's agent can find it and be told it. What you offer lives here.</dd></dl>
-      <p class="small muted">Requests go agent-to-agent over A2A. Your agent never reveals your limit, and anything it can't answer from what you shared comes to you.</p></div>`;
+  // Each tile: what it does, and the example it puts in the box (shown short).
+  const tiles = [["Find", "Need a 2BHK to rent in Indiranagar, budget 36,000 a month, I have a small dog", "2BHK in Indiranagar, pets ok", "peri"],
+    ["Sell", "I teach tabla online and at home in Jayanagar, ₹700 an hour, lowest 600", "Tabla lessons, ₹700/hr", ""],
+    ["Remember", "Remember that I teach guitar on weekends and I'm free after 6 pm", "Free after 6 pm on weekends", ""],
+    ["Ask your notes", "What did I note about guitar?", "What did I note about guitar?", ""]];
+  return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It deals with anyone's agent for you.</span></h1>
+    <div class="grid-tiles">${tiles.map(([l, p, short, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(short)}</p><span class="arrow">↗</span></button>`).join("")}</div>
+    ${privacyCard()}`;
+}
+
+/** Stored / read by / shared — three lines, with the levels one tap away. */
+function privacyCard() {
+  return `<div class="card slim privacy-facts"><dl class="kv">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <details class="more"><summary>Who sees what</summary><dl class="kv small"><dt>${tag("Private", "peri")}</dt><dd>Only your agent uses it.</dd>
+      <dt>${tag("Protected", "accent")}</dt><dd>People your rules name, on their topics.</dd><dt>${tag("Public", "fresh")}</dt><dd>Anyone's agent. What you offer.</dd></dl></details></div>`;
 }
 
 // MARK: - Direct chats (QR codes and links)
@@ -284,6 +314,47 @@ function refreshStoreCard(cur) {
     m.cards = m.cards.map(c => (c.type === "store" ? storeCardOf(p) : c));
     await saveSession(cur);
     if (S.current === cur.id) paintContent(true);
+  });
+}
+
+/** A pass (from its link: "/pickup.html#<id>.<code>") in a modal: the buyer sees the code to show, the seller marks it done. */
+async function openPass(path) {
+  const [pid, code] = new URL(path, location.origin).hash.slice(1).split(".");
+  const link = `${location.origin}/pickup.html#${pid}.${code}`, missing = "This pass doesn't exist or its link is incomplete.";
+  const load = async () => {
+    if (!pid || !code) throw new Error(missing);
+    const r = await fetch(`/public/pickup/${encodeURIComponent(pid)}?code=${encodeURIComponent(code)}`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({ error: "pass not found" }));
+    if (!r.ok) throw new Error(d.error === "pass not found" ? missing : d.error);
+    return d;
+  };
+  let d;
+  try { d = await load(); } catch (err) { return toast(err.message); }
+  // The seller by account, not handle (a handle can change after the deal); a pass scanned from someone else's deal
+  // falls back to the handle the server reports as the seller's current one.
+  const eng = live.engagements.get(pid);
+  const seller = eng ? eng[eng.seller ?? "provider"].uid === session.uid : d.sellerHandle === S.profile.handle;
+  const qr = seller ? "" : await passQR(link);
+  document.querySelector(".overlay")?.remove();
+  const o = document.createElement("div");
+  o.className = "overlay";
+  o.setAttribute("role", "dialog"); o.setAttribute("aria-modal", "true");
+  const draw = () => { o.innerHTML = `<div class="sheet">${passHTML(d, { qr, seller, link })}<button class="btn secondary" data-act="overlay-close">Close</button></div>`; };
+  draw();
+  document.body.append(o);
+  o.addEventListener("click", async e => {
+    if (e.target === o || e.target.closest('[data-act="overlay-close"]')) return o.remove();
+    const copy = e.target.closest('[data-act="pass-copy"]');
+    if (copy) { await navigator.clipboard.writeText(copy.dataset.link).catch(() => {}); return toast("Link copied — keep it private."); }
+    const b = e.target.closest('[data-act="pass-collect"]');
+    if (!b) return;
+    busy(b, true);
+    try { await api(`/api/pickup/${encodeURIComponent(pid)}/collect`, { code }); d = await load(); draw(); toast(`${passKind(d).done}. The buyer is asked to confirm.`); refresh(openScreen); }
+    catch (err) {
+      d = await load().catch(() => d); draw();
+      o.querySelector(".pass")?.insertAdjacentHTML("afterend", `<p class="small" role="alert" style="color:var(--danger);margin:0">${esc(err.message)}</p>`);
+      refresh(openScreen);
+    }
   });
 }
 
@@ -356,6 +427,9 @@ async function sendDirect(cur, text, offerFactId = null) {
   return { text: said, cards: [{ type: "engagement", id: e.id }] };
 }
 
+/** Rules read from words in a conversation, waiting for the owner's confirmation (by conversation). */
+const pendingRules = new Map();
+
 /** The AP2 payment step (after Google Pay's sheet, when used). One idempotency key per button: a retry can't pay twice. */
 async function payDeal(el, googlePay, a = "eng-pay") {
   busy(el, true, a === "eng-pay" ? "Paying" : "Saving");
@@ -364,7 +438,7 @@ async function payDeal(el, googlePay, a = "eng-pay") {
     const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);
     live.engagements.set(e.id, e);
     session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
-    toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""} — test mode, no money moved. Their agent has the payment.` : "Marked as paid outside the app.");
+    toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : "Marked as paid outside the app.");
   } catch (err) { toast(err.message); busy(el, false); }
   return refresh(openScreen);
 }
@@ -428,7 +502,7 @@ async function orderFromCard(a, el) {
     for (const m of cur.messages) m.cards = (m.cards ?? []).filter(c => !(c.type === "engagement" && c.id === e.id));
     cur.messages.push({ id: id(), role: "user", text: e.brief.summary, at: now() },
       { id: id(), role: "agent", text: e.phase === "agreed" ? `Done — ${e.provider.name}'s agent confirmed it. Pay below to get your pass.`
-        : `Sent to ${e.provider.name}'s agent — it answers within their limits (it may counter), or asks them. Nothing is final until both of you confirm.`, at: now(), cards: [{ type: "engagement", id: e.id }] });
+        : "Sent. Nothing is final until you both confirm.", at: now(), cards: [{ type: "engagement", id: e.id }] });
     await saveSession(cur);
     session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
     S.screen = "chat"; paint();
@@ -532,6 +606,7 @@ function onEdit(e) {
   if (k === "days") f.c.days = Number(v);
   if (f.c.type === "brief") {
     if (k === "title" || k === "summary") f.c.draft.shared[k] = v;
+    if (k === "rulesText") { f.c.rulesText = v; if (f.c.rulesOk) f.c.rulesOk = false; }
     if (k === "limit") {
       const n = Number(v);
       f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 } : null;
@@ -591,10 +666,41 @@ async function onClick(e) {
       return refresh(openScreen);
     }
     if (a === "delegate") {
-      const limit = Number(document.querySelector(`[data-delegate-limit="${CSS.escape(el.dataset.id)}"]`)?.value);
-      if (!(limit > 0)) return toast("Name your limit — it's never shown to them.");
+      const said = String(document.querySelector(`[data-delegate-limit="${CSS.escape(el.dataset.id)}"]`)?.value ?? "").trim();
+      if (!said) return toast("Name your limit, or say your rules — it's never shown to them.");
+      // Rules in words: read by Gemini and shown back first; nothing applies until the owner confirms.
+      if (!/^\s*(?:₹|rs\.?)?\s*\d[\d,]*\s*$/i.test(said)) {
+        busy(el, true, "Reading");
+        try {
+          const eng = live.engagements.get(el.dataset.id), selling = eng && (eng.seller ?? "provider") === (eng.requester.uid === session.uid ? "requester" : "provider");
+          const r = await api("/api/rules/read", { text: said, side: selling ? "seller" : "buyer", engagementId: el.dataset.id });
+          pendingRules.set(el.dataset.id, { text: said, rules: r.rules });
+          const box = document.querySelector(`[data-rules-preview="${CSS.escape(el.dataset.id)}"]`);
+          if (box) box.innerHTML = `<div class="card slim">${rulesList(r.lines)}<div class="row"><button class="btn accent compact" data-act="rules-confirm" data-id="${esc(el.dataset.id)}">Confirm and hand over</button><span class="small faint">Nothing applies until you confirm.</span></div></div>`;
+        } catch (err) { toast(err.message); }
+        busy(el, false); return;
+      }
+      const limit = Number(said.replace(/[^\d]/g, ""));
       busy(el, true, "Handing over");
       try { const e = await api(`/api/engagements/${el.dataset.id}/delegate`, { limit, autonomy: el.dataset.autonomy || "close" }); live.engagements.set(e.id, e); toast(e.phase === "agreed" ? "Your agent agreed inside your limit — pay below." : "Your agent has it — it negotiates inside your limit and asks only if there's no deal there."); }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
+    if (a === "deal-msg" || a === "deal-note") {
+      const input = document.querySelector(`[data-deal-msg="${CSS.escape(el.dataset.id)}"]`);
+      const text = a === "deal-note" ? el.dataset.text : String(input?.value ?? "").trim();
+      if (!text) return;
+      busy(el, true, "Sending");
+      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text }); live.engagements.set(e.id, e); if (input) input.value = ""; }
+      catch (err) { toast(err.message); }
+      return refresh(openScreen);
+    }
+    if (a === "rules-confirm") {
+      const p = pendingRules.get(el.dataset.id);
+      if (!p) return toast("Read your rules again first.");
+      busy(el, true, "Handing over");
+      try { const e = await api(`/api/engagements/${el.dataset.id}/rules`, p); live.engagements.set(e.id, e); pendingRules.delete(el.dataset.id);
+        toast(e.phase === "agreed" ? "Your agent agreed inside your rules — pay below." : "Your agent has it — it follows your rules and asks you only when it can't."); }
       catch (err) { toast(err.message); }
       return refresh(openScreen);
     }
@@ -659,13 +765,9 @@ async function onClick(e) {
     }
     if (a === "eng-pickup") {
       busy(el, true);
-      const p = await api(`/api/engagements/${el.dataset.id}/pickup`).catch(err => { toast(`Couldn't open the pass: ${err.message}`); busy(el, false); return null; });
-      if (!p) return;
-      const link = `${location.origin}${p.path}`;
-      let qr = "";
-      try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1 }); } catch {}
-      const k = PASS[p.kind ?? "pickup"], paid = p.payment === "outside" ? `Paid outside the app (marked by the ${p.markedBy})` : "✓ Paid (test mode)";
-      document.querySelector(`[data-pickup="${CSS.escape(el.dataset.id)}"]`).innerHTML = `<div class="card"><div class="qr" aria-label="${esc(k.name)} QR">${qr}</div><b>${p.collectedAt ? `${k.done} · ${esc(new Date(p.collectedAt * 1000).toLocaleString())}` : `${paid} · not ${k.done.toLowerCase()} yet`}</b><a class="btn secondary" href="${esc(link)}">Open ${k.name.toLowerCase()}</a><span class="small faint">Show this to the seller — they scan it once. Keep the link private.</span></div>`;
+      try { await openPass((await api(`/api/engagements/${el.dataset.id}/pickup`)).path); }
+      catch (err) { toast(`Couldn't open the pass: ${err.message}`); }
+      finally { busy(el, false); }
       return;
     }
     if (a === "slots-load") {
@@ -711,15 +813,15 @@ async function onClick(e) {
           <dl class="kv small">
             <dt>Cart Mandate</dt><dd>${money(r.payment.cart.total.value, r.terms.unit)} · issued by @${esc(r.payment.cart.merchant.handle)}'s agent · ${r.payment.check?.cartOk ? tag("✓ signature valid, matches the deal", "fresh") : tag("doesn't match", "danger")}</dd>
             ${r.payment.mandate ? `<dt>Payment Mandate</dt><dd>signed by @${esc(r.payment.mandate.payer)}'s agent, for that cart · ${r.payment.check?.paymentOk ? tag("✓ signature valid", "fresh") : tag("doesn't match", "danger")}</dd>
-            <dt>Payment</dt><dd>${esc(r.payment.paymentId)} · test mode, no money moved</dd>` : ""}
+            <dt>Payment</dt><dd>${esc(r.payment.paymentId)}</dd>` : ""}
             ${r.payment.ap2 ? `<dt>AP2 v0.2 checkout</dt><dd>${esc(r.payment.ap2.checkout.id)} · authorised by @${esc(r.payment.ap2.checkout.merchant.handle)}'s agent (detached JWS) · ${r.payment.check?.ap2?.merchantOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
             <dt>AP2 mandates</dt><dd>Checkout + Payment Mandates (SD-JWT) by @${esc(r.payment.ap2.checkout.buyer.handle)}'s agent, bound to the checkout hash · ${r.payment.check?.ap2?.mandatesOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
-            <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay (TEST) · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "Test payment"} · no money moved</dd>` : ""}
+            <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "In the app"}</dd>` : ""}
           </dl>
           <span class="small muted">AP2 (Agent Payments Protocol): the seller's agent signs a cart for exactly the agreed terms; the buyer's agent signs a payment against that cart only after the buyer taps Pay. The payment goes to the seller's agent over A2A.</span></details>` : ""}</div>`;
       return;
     }
-    if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect, publicIntake })) return;
+    if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect, publicIntake, openPass })) return;
     const f = findCard(el);
     if (!f) return;
     await cardAction(a, el, f);
@@ -727,6 +829,14 @@ async function onClick(e) {
 }
 
 async function cardAction(a, el, { s, m, c }) {
+  // The owner chose to have Gemini answer this one question from the notes shown (nothing else is sent).
+  if (a === "notes-cloud") {
+    busy(el, true, "Asking");
+    const r = await api("/api/think", { question: c.question, notes: c.notes.map(n => ({ text: n.text })), side: "self" });
+    c.answer = r.action === "answer" ? (r.text ?? r.answer) : "Your notes don't clearly answer that.";
+    await saveSession(s); paint();
+    return;
+  }
   const d = c.draft;
   if (a === "brief-strength") { const r = d.shared.requirements[Number(el.dataset.j)]; r.strength = r.strength === "required" ? "preferred" : "required"; const nf = d.need.filters.find(x => x.label === r.label); if (nf) nf.strength = r.strength; }
   if (a === "brief-drop") { const [r] = d.shared.requirements.splice(Number(el.dataset.j), 1); d.need.filters = d.need.filters.filter(x => x.label !== r.label); }
@@ -738,7 +848,7 @@ async function cardAction(a, el, { s, m, c }) {
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
     (c.answered ??= []).push({ question: q.question, answer: opt });
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
-    if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
+    if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; if (r.gate) c.gate = r.gate;
       // Every answer tapped here stays in what sellers see, even if the re-read leaves it out ("When: Tomorrow").
       const reqs = c.draft.shared.requirements;
       for (const x of c.answered) if (!reqs.some(rq => rq.value.toLowerCase().includes(x.answer.toLowerCase()))) {
@@ -747,9 +857,55 @@ async function cardAction(a, el, { s, m, c }) {
       }
       c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit, item: itemOf(r.draft) }); }
   }
+  if (a === "brief-rules-read" || a === "offer-rules-read") {
+    const words = String(c.rulesText ?? "").trim();
+    if (words.length < 4) return toast("Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
+    busy(el, true, "Reading");
+    const o = a === "offer-rules-read" ? c.offer : null;
+    const r = await api("/api/rules/read", { text: words, side: o ? "seller" : "buyer", offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message); return null; });
+    if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; }
+  }
+  if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; c.rulesText = ""; }
+  if (a === "brief-rules-ok") {
+    // The confirmed rules become the request's: the private limit, where the agent may close, how many, must-be-yes checks.
+    const r = c.rules.rules;
+    c.rulesOk = true;
+    if (r.limit) { d.mandate = { price: { opening: Math.round((r.closeAt ?? r.limit) * 0.9), limit: r.limit }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 }; d.need.maxPrice = r.limit; }
+    if (r.quantity) d.need.attributes = { ...(d.need.attributes ?? {}), quantity: String(r.quantity) };
+    for (const q of r.mustAsk) if (!d.shared.questions.includes(q)) d.shared.questions.push(q);
+    c.autonomy = r.autonomy; c.closeAt = r.closeAt ?? null;
+  }
+  if (a === "offer-rules-ok") {
+    const r = c.rules.rules;
+    c.rulesOk = true;
+    if (r.floor) c.floor = r.floor;
+    c.autonomy = r.autonomy;
+  }
+  if (a === "gate-override") c.gateOverride = true;
+  if (a === "matches-more") c.showAll = true;
+  if (a === "gate-answer") {
+    const j = Number(el.dataset.j), q = c.gate.missing[j], opt = q.options[Number(el.dataset.k)];
+    (c.gateAnswers ??= {})[j] = opt;
+    if (c.type === "brief") {
+      // Answered like Gemini's other questions: it joins the request, which is read (and judged) again.
+      busy(el, true, "Updating");
+      c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
+      (c.answered ??= []).push({ question: q.question, answer: opt });
+      const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category }).catch(() => null);
+      if (r?.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; c.gate = r.gate ?? c.gate; c.gateAnswers = {}; }
+    } else {
+      // On an offering it's one more detail buyers see; answered, the gate opens.
+      const lbl = q.question.replace(/\?$/, "").split(/\s+/).slice(0, 4).join(" ");
+      if (!(c.missing ?? []).some(m => m.label === lbl)) (c.missing ??= []).push({ label: lbl, ask: q.question, options: q.options });
+      (c.missingAnswers ??= {})[lbl] = opt;
+      if (c.gate.missing.every((_, i) => c.gateAnswers[i])) c.gate = { ...c.gate, ok: true };
+    }
+  }
   if (a === "brief-send") {
+    if (c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Send as it is”.");
     busy(el, true, "Searching");
-    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 } : null });
+    const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7,
+      ...(c.rulesOk ? { closeAt: c.closeAt ?? null, rulesText: c.rulesText } : {}) } : null });
     // Real matches first (only the best one pre-ticked); sellers that fit but cost more than the limit come last, unticked.
     Object.assign(c, { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] });
   }
@@ -764,19 +920,24 @@ async function cardAction(a, el, { s, m, c }) {
   // One match, straight from its row: book at the listed price (the seller confirms, or their agent does at once if
   // they allow instant booking).
   if (a === "match-book") {
-    const p = c.found[Number(el.dataset.j)];
+    const j = Number(el.dataset.j), p = c.found[j];
+    if (c.booked?.[j]) return;
     busy(el, true, "Booking");
     try {
-      const e = await api(`/api/people/${encodeURIComponent(p.profile.handle)}/order`, { offerFactId: p.fact.id, quantity: 1 });
-      live.engagements.set(e.id, e); m.cards.push({ type: "engagement", id: e.id });
+      // Part of this request: the deal joins its goal (one goal, one timeline), and the row turns into "Booked".
+      const e = await api(`/api/people/${encodeURIComponent(p.profile.handle)}/order`, { offerFactId: p.fact.id, quantity: 1, briefId: c.briefId });
+      c.booked = { ...(c.booked ?? {}), [j]: e.id };
+      live.engagements.set(e.id, e); if (!m.cards.some(x => x.type === "engagement" && x.id === e.id)) m.cards.push({ type: "engagement", id: e.id });
       session.track("order_from_card", { kind: "match", instant: e.phase === "agreed" });
       await saveSession(s); paint();
     } catch (err) { toast(err.message); busy(el, false); }
     return;
   }
+  if (a === "match-booked") { const card = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); card?.scrollIntoView({ behavior: "smooth", block: "center" }); card?.classList.remove("flash"); void card?.offsetWidth; card?.classList.add("flash"); return; }
   if (a === "brief-engage" || a === "match-negotiate" || a === "match-addons") {
-    const picks = (a === "brief-engage" ? (c.picked ?? []) : [Number(el.dataset.j)]).map(j => c.found[j]).filter(Boolean);
-    if (!picks.length) return toast("Choose at least one person.");
+    // Someone already booked from this request isn't contacted again.
+    const picks = (a === "brief-engage" ? (c.picked ?? []) : [Number(el.dataset.j)]).filter(j => !c.booked?.[j]).map(j => c.found[j]).filter(Boolean);
+    if (!picks.length) return toast(Object.keys(c.booked ?? {}).length ? "You've booked them already — see the deal below." : "Choose at least one person.");
     busy(el, true, "Contacting");
     const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: picks.map(p => ({ factId: p.fact.id })) });
     c.step = "engaged"; c.engaged = es.map(x => x.id);
@@ -806,7 +967,7 @@ async function cardAction(a, el, { s, m, c }) {
     const answered = (c.missing ?? []).filter(x => (c.missingAnswers?.[x.label] ?? "").trim());
     c.missing = [...answered, ...(d.missing ?? []).filter(x => !answered.some(y => y.label.toLowerCase() === x.label.toLowerCase()))].slice(0, 6);
     c.answeredMissing = c.missing.every(x => (c.missingAnswers?.[x.label] ?? "").trim());
-    Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, floor: d.floor ?? c.floor ?? null, basics: null });
+    Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, floor: d.floor ?? c.floor ?? null, basics: null, gate: d.gate ?? null });
     c.insights = await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []);
   }
   if (a === "offer-suggest-terms") {
@@ -817,6 +978,7 @@ async function cardAction(a, el, { s, m, c }) {
     c.instant = !!el.closest(".card")?.querySelector("[data-instant-new]")?.checked;
   }
   if (a === "offer-publish") {
+    if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
     busy(el, true, "Publishing");
     // The details buyers usually ask about, answered here, join the public text; the terms are saved as the seller's own.
     const card = el.closest(".card");
@@ -839,6 +1001,8 @@ async function cardAction(a, el, { s, m, c }) {
       const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 });
     }
+    // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
+    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
     c.step = "published"; c.publicText = fact.text;
   }
   // Making a note public goes through the offering card when it's something offered.
@@ -878,6 +1042,7 @@ async function inboxAction(a, el) {
   const item = live.inbox.find(i => i.id === itemId);
   if (!item) return;
   const body = {};
+  if (a === "inbox-quick") body.text = el.dataset.text;
   if (a === "inbox-answer") { body.text = document.querySelector(`[data-reply="${CSS.escape(itemId)}"]`)?.value.trim(); if (!body.text) return toast("Write an answer, or choose “I'd rather not say”."); }
   if (a === "inbox-share") body.text = drafts.get(itemId)?.text;
   if (a === "inbox-approve") body.share = true;

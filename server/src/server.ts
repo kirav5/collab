@@ -14,7 +14,7 @@ import { decide } from "./ai/decide.ts";
 import { AnswerTask } from "./market/answer.ts";
 import { budgetBand } from "./market/match.ts";
 import { read } from "./market/read.ts";
-import { numbers } from "./market/text.ts";
+import { hasContact, numbers } from "./market/text.ts";
 import { domain as domainOf } from "./market/domains.ts";
 import { savedKey } from "./market/answer.ts";
 import { docId } from "./docs.ts";
@@ -33,7 +33,9 @@ import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { suggestTerms } from "./core/terms.ts";
-import { SellerAsksTask, buyerQuestions } from "./core/intake.ts";
+import { NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
+import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
+import { type AgentRules, type RulesContext, RulesTask, checkRules, readRules, rulesLines } from "./core/rules.ts";
 import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
@@ -51,7 +53,7 @@ import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
 import { offeredMoney, explicitOffer, offeredQuantity, amountIsTotal } from "./core/direct.ts";
 import { currencyOf, moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats, trackRecord } from "./core/deals.ts";
-import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
+import type { Brief, Contact, DelegatedLimit, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
@@ -59,6 +61,7 @@ import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a
 import { seedDemo } from "./demo.ts";
 import { log } from "./log.ts";
 import { initPush, pushTo, saveToken } from "./core/push.ts";
+import { clean as cleanText } from "./core/wall.ts";
 import { ALERTS, type Alert, WATCHES, type Watch, runDue, startWatch } from "./core/watch.ts";
 
 // Local development reads server/.env (GEMINI_API_KEY=…); Cloud Run sets its environment itself.
@@ -392,8 +395,11 @@ app.post("/api/people/:handle/ask", route(async req => {
   if (offered && f?.offer && !p.paused) {
     const count = offeredQuantity(t, f.offer.price.period ?? null), n = count ?? 1;
     const isTotal = amountIsTotal(t, f.offer.price.period ?? null, offered.amount, n, f.offer.price.amount ?? null);
-    // More than they have is refused before a conversation is opened.
+    // More than they have (or than one buyer may have) is refused before a conversation is opened.
     const r = await resourceFor(db, f.id), at = now();
+    const inHand = r?.type === "quantity" && certainty(r, at) === "confirmed" ? availableIn(r, at) : null;
+    if (f.offer.maxPerBuyer && n > f.offer.maxPerBuyer && (inHand === null || f.offer.maxPerBuyer <= inHand))
+      throw shortStock(`${p.name} sells at most ${f.offer.maxPerBuyer} per buyer — offer for ${f.offer.maxPerBuyer} instead?`, f.offer.maxPerBuyer, offered.amount, n, isTotal);
     if (r?.type === "quantity" && certainty(r, at) === "confirmed" && availableIn(r, at) < n)
       throw shortStock(availableIn(r, at) ? `Only ${availableIn(r, at)} in stock — they can't sell ${n}. Offer for ${availableIn(r, at)} instead?` : "They're out of stock right now.", availableIn(r, at), offered.amount, n, isTotal);
     const { e } = await directConversation(me_, p, f, t, "question");
@@ -407,17 +413,19 @@ app.post("/api/people/:handle/ask", route(async req => {
   return e;
 }));
 
-/** A conversation opened directly with one person's agent (QR, link or their card), with its own goal. */
-async function directConversation(me_: Profile, p: Profile, f: Fact | null, t: string, via: "question" | "order") {
-  const questions = (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
-  const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length ? questions : [t.slice(0, 160)] };
+/** A conversation opened directly with one person's agent (QR, link or their card): its own goal, or a task of the
+ *  request it came from (booking a match from a request's results keeps one goal). */
+async function directConversation(me_: Profile, p: Profile, f: Fact | null, t: string, via: "question" | "order", goalId: string | null = null) {
+  // An order from the card is an offer, not a question for the seller to answer.
+  const questions = via === "order" ? [] : (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
+  const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length || via === "order" ? questions : [t.slice(0, 160)] };
   const e = fresh({ briefId: null, brief, requester: { uid: me_.uid, handle: me_.handle, name: me_.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
     offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
   e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
   e.events.push({ at: now(), who: "system", text: via === "order" ? `You ordered from ${p.name}'s card.` : `You asked ${p.name}'s agent directly.` });
-  // A direct question is its own goal: information until a price is involved.
-  const goal = await createGoal(db, me_.uid, t, f?.offer ? "purchase" : "information", null, now());
-  e.goalId = goal.id; await linkTask(db, goal.id, me_.uid, e.id, now());
+  // A direct question is its own goal (information until a price is involved); from a request, it's that request's.
+  e.goalId = goalId ?? (await createGoal(db, me_.uid, t, f?.offer ? "purchase" : "information", null, now())).id;
+  await linkTask(db, e.goalId, me_.uid, e.id, now());
   event("agents_contacted", { category: e.offer.category ?? "none", via: via === "order" ? "card" : "qr" });
   return { e, brief };
 }
@@ -439,6 +447,9 @@ app.post("/api/people/:handle/order", route(async req => {
   const each = req.body?.price == null ? listed : Number(req.body.price);
   if (each == null || !Number.isFinite(each) || each <= 0 || each > 1e9) throw new HttpError(400, "Name a price.");
   const r = await resourceFor(db, f.id), t = now();
+  const inHand = r?.type === "quantity" && certainty(r, t) === "confirmed" ? availableIn(r, t) : null;
+  if (f.offer.maxPerBuyer && quantity > f.offer.maxPerBuyer && (inHand === null || f.offer.maxPerBuyer <= inHand))
+    throw new HttpError(409, `${p.name} sells at most ${f.offer.maxPerBuyer} per buyer.`, "CAPACITY_UNAVAILABLE", { available: f.offer.maxPerBuyer });
   if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity)
     throw new HttpError(409, availableIn(r, t) ? `Only ${availableIn(r, t)} left.` : "Out of stock right now.", "CAPACITY_UNAVAILABLE", { available: availableIn(r, t) });
   let slotLabel: string | null = null, slotId: string | null = null;
@@ -448,9 +459,19 @@ app.post("/api/people/:handle/order", route(async req => {
     if (!s || availableIn(r!, t, slotId) < 1) throw new HttpError(409, "That time was just taken — pick another.", "CAPACITY_UNAVAILABLE");
     slotLabel = new Date(s.start * 1000).toLocaleString("en-IN", { timeZone: r!.timezone, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
   }
+  // Booked from a request's matches: the deal joins that request's goal, and a second tap (or another device) on the
+  // same match gets the deal already started instead of a second purchase.
+  const brief = req.body?.briefId ? ((await db.get(BRIEFS, text(req.body.briefId, 60))) as Brief | null) : null;
+  const goalId = brief && brief.owner === req.uid ? brief.goalId ?? null : null;
+  if (goalId) {
+    const g = (await db.get(GOALS, goalId)) as Goal | null;
+    const started = g ? ((await Promise.all(g.taskIds.map(id => db.get(ENGAGEMENTS, id)))) as (Engagement | null)[])
+      .find(x => x && x.offer.factId === f.id && !["closed", "declined"].includes(x.phase)) : null;
+    if (started) return load(db, started.id);
+  }
   const item = storefront([f], r ? [r] : [], t)[0];
   const said = orderText(item, quantity, each, listed, slotLabel);
-  const { e } = await directConversation(me_, p, f, said, "order");
+  const { e } = await directConversation(me_, p, f, said, "order", goalId);
   e.preferredSlotId = slotId;
   try { await offerDeal(db, e, "requester", each, said, said, quantity, false); }
   catch (err) {
@@ -474,16 +495,95 @@ app.post("/api/people/:handle/order", route(async req => {
  * side's agent, until a deal inside both limits. `close`: it may also agree for them (the default when they name the
  * limit themselves); `negotiate`: they give the final yes. Never shown to the other side.
  */
-async function delegate(e: Engagement, uid: string, limit: number, autonomy: "close" | "negotiate") {
+async function delegate(e: Engagement, uid: string, limit: number, autonomy: "close" | "negotiate", extra: { closeAt?: number | null; rulesText?: string } = {}) {
   const side = e.requester.uid === uid ? "requester" : "provider", selling = (e.seller ?? "provider") === side;
   if (side === "provider" && !e.offer.factId) throw new HttpError(400, "Name a price in the chat instead.");
   const key = side === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
   const mine = side === "provider" ? e.negotiation.provider : e.negotiation.requester, last = mine.at(-1)?.price;
   const opening = selling ? Math.max(limit, e.offer.price ?? limit, last ?? 0) : Math.min(limit, last ?? Math.round(limit * 0.85));
-  await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening, limit }, terms: {}, maxRounds: 5 }, autonomy, expires: now() + 7 * 86_400, createdAt: now() });
+  await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening, limit }, terms: {}, maxRounds: 5 }, autonomy, expires: now() + 7 * 86_400, createdAt: now(),
+    ...(extra.closeAt != null ? { closeAt: extra.closeAt } : {}), ...(extra.rulesText ? { rulesText: extra.rulesText } : {}) });
   await doneConfirms(db, e, side); await saveEngagement(db, e);
   return respondToOffer(db, model, await load(db, e.id));
 }
+
+// MARK: - Rules in the owner's own words
+
+const rulesCtx = (side: "seller" | "buyer", o: { title: string; price: number | null; unit: string | null } | null): RulesContext =>
+  ({ side, item: o ? o.title.split(" · ")[0] : null, price: o?.price ?? null, unit: o?.unit ?? null });
+/** What the owner confirmed, re-checked against their own words (shape, grounding, consistency). */
+function confirmedRules(body: any, words: string, ctx: RulesContext): AgentRules {
+  const parsed = RulesTask.parse(body?.rules ?? {}, { text: words, ctx });
+  const r = parsed ? checkRules(parsed, words, ctx) : null;
+  if (!r) throw new HttpError(400, "There's nothing in that your agent can follow — say a price, a limit or a condition.");
+  return r;
+}
+/** A seller's rules for one offering: the private lowest price and where the agent may close (its limit), the most
+ *  per buyer and the terms (public, on the offering). Rules replace the earlier ones. */
+async function applySellerRules(f: Fact, uid: string, r: AgentRules, words: string) {
+  const o = f.offer!, key = `fact:${f.id}`, existing = (await db.get(LIMITS, key)) as DelegatedLimit | null;
+  const floor = r.floor ?? (existing && existing.owner === uid ? existing.mandate.price.limit : null);
+  if (floor != null) await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening: o.price.amount, limit: Math.min(floor, o.price.amount) }, terms: {}, maxRounds: 5 },
+    autonomy: r.autonomy, ...(r.closeAt != null ? { closeAt: r.closeAt } : {}), rulesText: words, expires: now() + 30 * 86_400, createdAt: existing?.createdAt ?? now() });
+  const { maxPerBuyer: _old, ...rest } = o;
+  const policies = [...(o.policies ?? []).filter(p => !r.terms.some(t => t.label.toLowerCase() === p.label.toLowerCase())), ...r.terms].slice(0, 8);
+  const offer = { ...rest, ...(r.maxPerBuyer ? { maxPerBuyer: r.maxPerBuyer } : {}), ...(policies.length ? { policies } : {}),
+    ...(floor != null && floor < o.price.amount ? { attributes: { ...o.attributes, negotiable: "yes" } } : {}) };
+  await db.set(FACTS, f.id, { ...f, offer, updatedAt: now() });
+  return { needsFloor: floor == null };
+}
+/** Read an instruction into rules, for the owner to see back and confirm. Nothing is saved here. */
+app.post("/api/rules/read", route(async req => {
+  await spend(req.uid, 2);
+  const words = text(req.body?.text, 600).trim();
+  if (words.length < 4) throw new HttpError(400, "Tell your agent a little more.");
+  const side = req.body?.side === "buyer" ? "buyer" : "seller";
+  let o: { title: string; price: number | null; unit: string | null; currency?: string } | null = null;
+  if (typeof req.body?.factId === "string") { const f = (await db.get(FACTS, text(req.body.factId, 60))) as Fact | null; if (f?.offer && f.owner === req.uid) o = { title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, currency: f.offer.price.currency }; }
+  else if (typeof req.body?.engagementId === "string") { const e = await participant(req.uid, text(req.body.engagementId, 40)); o = { title: e.offer.title, price: e.offer.price, unit: e.offer.unit, currency: e.offer.currency ?? undefined }; }
+  else if (req.body?.offer && typeof req.body.offer.title === "string") o = { title: text(req.body.offer.title, 160), price: num(req.body.offer.price, 0, 1e12), unit: typeof req.body.offer.unit === "string" ? text(req.body.offer.unit, 20) : null };
+  const { rules, byModel } = await readRules(model, words, rulesCtx(side, o));
+  return { rules, lines: rulesLines(rules, o?.currency ?? "INR", o?.unit ?? null), byModel };
+}));
+app.post("/api/facts/:id/rules", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || !f.offer) throw new HttpError(404, "Not one of your offerings.");
+  const words = text(req.body?.text, 600).trim();
+  const r = confirmedRules(req.body, words, rulesCtx("seller", { title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null }));
+  const { needsFloor } = await applySellerRules(f, req.uid, r, words);
+  return { fact: publicFact((await db.get(FACTS, f.id)) as Fact), lines: rulesLines(r, f.offer.price.currency, f.offer.price.period ?? null), needsFloor };
+}));
+/** Either side's rules inside a conversation: a buyer's limit, close-at, how many and must-be-yes checks; a seller's
+ *  rules for the offering it's about. Their agent takes it from there. */
+app.post("/api/engagements/:id/rules", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended.");
+  const side = e.requester.uid === req.uid ? "requester" : "provider", selling = (e.seller ?? "provider") === side;
+  const words = text(req.body?.text, 600).trim();
+  const r = confirmedRules(req.body, words, rulesCtx(selling ? "seller" : "buyer", { title: e.offer.title, price: e.offer.price, unit: e.offer.unit }));
+  if (selling) {
+    const f = e.offer.factId ? ((await db.get(FACTS, e.offer.factId)) as Fact | null) : null;
+    if (!f?.offer || f.owner !== req.uid) throw new HttpError(400, "Name a price in the chat instead.");
+    await applySellerRules(f, req.uid, r, words);
+    await doneConfirms(db, e, side); await saveEngagement(db, e);
+    await respondToOffer(db, model, await load(db, e.id));
+    return load(db, e.id);
+  }
+  // The buyer: how many (while nothing's agreed), and must-be-yes checks their agent asks the seller.
+  if (r.quantity && !e.negotiation.deal) e.quantity = r.quantity;
+  await saveEngagement(db, e);
+  // The agent negotiates first, in this request; the must-be-yes questions go to the seller's agent after, so its turn
+  // (which runs in the background) starts from the agent's latest move instead of overwriting it.
+  if (r.limit != null) await delegate(await load(db, e.id), req.uid, r.limit, r.autonomy, { closeAt: r.closeAt, rulesText: words });
+  const cur = await load(db, e.id);
+  const asks = r.mustAsk.filter(q => !cur.qa.some(x => x.question.toLowerCase() === q.toLowerCase()));
+  if (asks.length) {
+    for (const q of asks) cur.qa.push({ id: randomUUID().slice(0, 12), from: "requester", question: q, status: "open", required: true });
+    await saveEngagement(db, cur);
+    await sendTurn(cfg, cur.id, { kind: TURN, from: "requester", engagementId: cur.id, questions: cur.qa.filter(x => asks.includes(x.question)).map(x => ({ id: x.id, question: x.question })) });
+  }
+  return load(db, e.id);
+}));
 app.post("/api/engagements/:id/delegate", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended.");
@@ -493,11 +593,116 @@ app.post("/api/engagements/:id/delegate", route(async req => {
   return load(db, e.id);
 }));
 
+// MARK: - Communities: an office park, an apartment block, a campus — members' posts, offers and gigs in one feed.
+
+const asHttp = (e: unknown) => (e instanceof CommunityError ? new HttpError(e.status, e.message) : e);
+const GIGS = new Set(["jobs", "tasks"]);
+app.get("/api/communities", route(async req => { const p = await me(req.uid); return communitiesFor(db, req.uid, p.area ?? null); }));
+app.post("/api/communities", route(async req => {
+  const p = await me(req.uid);
+  await spend(req.uid, 2);
+  const where = text(req.body?.place, 80).trim(), place = where ? resolve(where, p.area ?? null) : p.area ?? null;
+  if (!place) throw new HttpError(400, "Pick an area we know — e.g. Whitefield or Koramangala.", "INVALID_INPUT", { suggestions: suggest(where, p.area ?? null, 5).map(x => x.name) });
+  try { return await createCommunity(db, req.uid, text(req.body?.name, 60), communityKind(req.body?.kind), place, now()); } catch (e) { throw asHttp(e); }
+}));
+app.post("/api/communities/:id/join", route(async req => {
+  await me(req.uid);
+  try { const c = await joinCommunity(db, String(req.params.id), req.uid, req.body?.leave !== true); return { id: c.id, members: c.members.length, joined: c.members.includes(req.uid) }; } catch (e) { throw asHttp(e); }
+}));
+/** The feed, for members: their posts (trips nearest you first), and what members already offer publicly — gigs apart. */
+app.get("/api/communities/:id", route(async req => {
+  const p = await me(req.uid);
+  let c; try { c = await communityMember(db, String(req.params.id), req.uid); } catch (e) { throw asHttp(e); }
+  const people = (await Promise.all(c.members.slice(0, 100).map(uid => db.get(PROFILES, uid)))).filter(Boolean) as Profile[];
+  const byUid = new Map(people.map(x => [x.uid, x]));
+  const facts = (await Promise.all(c.members.slice(0, 60).map(uid => db.find(FACTS, [["owner", "==", uid]], 40) as Promise<Fact[]>))).flat()
+    .filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
+  const item = (f: Fact) => ({ factId: f.id, title: f.offer!.title.split(" · ")[0], price: f.offer!.price.amount, unit: f.offer!.price.period ?? null, currency: f.offer!.price.currency,
+    category: f.offer!.category, area: f.offer!.place.name, mine: f.owner === req.uid, name: byUid.get(f.owner)?.name ?? "", handle: byUid.get(f.owner)?.handle ?? "" });
+  const posts = await postsIn(db, c, now(), { place: p.area ?? null, at: num(req.query.at, 0, 4e9) });
+  return { community: { id: c.id, name: c.name, kind: c.kind, place: c.place, members: c.members.length, createdBy: c.createdBy === req.uid ? "you" : null },
+    members: people.slice(0, 30).map(x => ({ name: x.name, handle: x.handle, you: x.uid === req.uid })),
+    posts: await Promise.all(posts.map(x => postView(x, req.uid, byUid))),
+    offers: facts.filter(f => !GIGS.has(f.offer!.category)).map(item), gigs: facts.filter(f => GIGS.has(f.offer!.category)).map(item) };
+}));
+/** A post as a member sees it: no internal ids; the poster also sees who's in, to coordinate. */
+async function postView(x: Post & { km?: number | null }, uid: string, known = new Map<string, Profile>()) {
+  const { owner, joined, notified: _n, ...rest } = x as typeof x & { notified?: string[] };
+  const mine = owner === uid;
+  const who = mine ? (await Promise.all(joined.map(async j => known.get(j) ?? (await db.get(PROFILES, j)) as Profile | null))).filter(Boolean).map(w => ({ name: w!.name, handle: w!.handle })) : undefined;
+  return { ...rest, km: x.km ?? null, mine, count: joined.length, youJoined: joined.includes(uid), people: who };
+}
+/** Whatever a member writes ("anyone driving to the office from HSR at 9 tomorrow? 2 seats") shaped into a post to check. */
+app.post("/api/communities/:id/posts/draft", route(async req => {
+  const p = await me(req.uid);
+  await spend(req.uid, 1);
+  let c; try { c = await communityMember(db, String(req.params.id), req.uid); } catch (e) { throw asHttp(e); }
+  const t = text(req.body?.text, 400).trim();
+  if (t.length < 4) throw new HttpError(400, "Say what you'd like to post — e.g. “Cab to the office from HSR at 9 tomorrow, 2 seats”.");
+  return draftPost(model, c, t, p.area ?? null, now());
+}));
+/** Post it — as checked in the draft (with any edits), or straight from the words when nothing else is given. */
+app.post("/api/communities/:id/posts", route(async req => {
+  const p = await me(req.uid);
+  await spend(req.uid, 2);
+  let c; try { c = await communityMember(db, String(req.params.id), req.uid); } catch (e) { throw asHttp(e); }
+  const t = text(req.body?.text, 400).trim();
+  if (t.length < 4) throw new HttpError(400, "Say what you'd like to post.");
+  const b = req.body ?? {}, given = POST_KINDS.includes(b.kind);
+  const d = given ? { kind: b.kind as Post["kind"], title: text(b.title, 80).trim() || t.slice(0, 60), at: num(b.at, 0, 4e9) ?? null, spots: b.spots == null || b.spots === "" ? null : Number(b.spots), from: null as Place | null, to: null as Place | null, place: null as Place | null }
+    : await draftPost(model, c, t, p.area ?? null, now());
+  const at = (k: string, near: Place | null) => { const n = text(b[k], 80).trim(); if (!n) return undefined; const r = resolve(n, near); if (!r) throw new HttpError(400, `“${n}” isn't an area we know.`, "INVALID_INPUT", { suggestions: suggest(n, near, 5).map(x => x.name) }); return r; };
+  const from = at("from", p.area ?? c.place) ?? (given ? (d.kind === "trip" ? p.area ?? null : null) : d.from), to = at("to", c.place) ?? (given ? (d.kind === "trip" ? c.place : null) : d.to), place = at("place", c.place) ?? (given ? null : d.place);
+  if (d.kind === "trip" && (!from || !to)) throw new HttpError(400, `Add ${!from ? "where you start" : "where you're going"}.`);
+  if (hasContact(`${d.title} ${t}`)) throw new HttpError(400, "Leave phone numbers and links out — people reach you through your agent.");
+  try { return await postView(await createPost(db, c, { uid: req.uid, name: p.name, handle: p.handle }, { kind: d.kind, title: d.title, text: t, at: d.at, from, to, place, spots: d.spots }, now()), req.uid); }
+  catch (e) { throw asHttp(e); }
+}));
+/** "I'm in" (or out). The poster hears who's in. */
+app.post("/api/posts/:id/join", route(async req => {
+  const p = await me(req.uid);
+  const on = req.body?.leave !== true;
+  const cur = (await db.get(POSTS, String(req.params.id))) as Post | null;
+  if (!cur) throw new HttpError(404, "No such post.");
+  try { await communityMember(db, cur.communityId, req.uid); } catch (e) { throw asHttp(e); }
+  if (on) await spend(req.uid, 1);
+  let r; try { r = await joinPost(db, cur.id, req.uid, on); } catch (e) { throw asHttp(e); }
+  const x = r.post;
+  if (r.fresh) void pushTo(x.owner, `${p.name} is in`, `${x.title}${x.spots ? ` · ${x.joined.length + (x.kind === "group" ? 1 : 0)} of ${x.spots}` : ""}`, `/?screen=communities&community=${x.communityId}`).catch(() => {});
+  return postView(x, req.uid);
+}));
+app.post("/api/posts/:id/close", route(async req => { try { await closePost(db, String(req.params.id), req.uid); return { ok: true }; } catch (e) { throw asHttp(e); } }));
+
+/** A few optional notes the buyer might send once it's agreed — written once by Gemini for this deal, then kept. */
+app.get("/api/engagements/:id/note-ideas", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (e.phase !== "agreed" || (e.seller ?? "provider") === (e.requester.uid === req.uid ? "requester" : "provider")) return { notes: [] };
+  if (e.noteIdeas) return { notes: e.noteIdeas };
+  const d = e.negotiation.deal!, n = d.terms?.quantity > 1 ? d.terms.quantity : 1;
+  const out = await decide(model, NoteIdeasTask, { item: e.offer.title.split(" · ")[0], terms: (e.offer.policies ?? []).map(p => `${p.label}: ${p.text}`),
+    deal: n > 1 ? `${n} units` : "one", kind: e.reservation?.slotId ? "booked time" : "pickup or handover" });
+  await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, noteIdeas: out.output } : null));
+  return { notes: out.output };
+}));
+
 // A follow-up in an open conversation, from either side: it goes over A2A like any turn, and the other agent answers
 // from what its owner shares or asks its owner (who gets a notification).
 app.post("/api/engagements/:id/ask", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended — start a new one.");
+  // Once it's agreed the two people can talk directly — before paying, at pickup, after. Messages, not offers: the
+  // agreed terms don't change here.
+  if (e.phase === "agreed") {
+    await spend(req.uid, 1);
+    const said = text(req.body?.text, 500).trim();
+    if (said.length < 1) throw new HttpError(400, "Write a message.");
+    const side = e.requester.uid === req.uid ? "requester" : "provider", them = side === "requester" ? e.provider : e.requester;
+    const names = await db.find(CONTACTS, [["owner", "==", req.uid]], 300).catch(() => []) as Contact[];
+    const clean_ = cleanText(said, names.filter(c => c.uid !== them.uid).map(c => ({ name: c.name, replacement: "a contact" })), [them.name]);
+    await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, events: [...cur.events, { at: now(), who: side, text: clean_, by: "owner", chat: true }], updatedAt: now() } : null));
+    if (them.uid) await pushTo(them.uid, `Message from ${e[side].name}`, clean_.slice(0, 120), `/?engagement=${e.id}`).catch(() => {});
+    return load(db, e.id);
+  }
+  if (["closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended — start a new one.");
   await spend(req.uid, 2);
   const q = text(req.body?.text, 300).trim();
   if (q.length < 2) throw new HttpError(400, "Ask something.");
@@ -617,7 +822,7 @@ app.post("/api/facts/:id/limit", route(async req => {
   } else await db.delete(LIMITS, `fact:${f.id}`);
   return { delegated: !!m };
 }));
-app.get("/api/limits", route(async req => (await db.find(LIMITS, [["owner", "==", req.uid]], 200)).map((l: any) => ({ key: l.key, mandate: l.mandate, limit: l.mandate.price.limit, autonomy: l.autonomy ?? "negotiate", expires: l.expires ?? null }))));
+app.get("/api/limits", route(async req => (await db.find(LIMITS, [["owner", "==", req.uid]], 200)).map((l: any) => ({ key: l.key, mandate: l.mandate, limit: l.mandate.price.limit, autonomy: l.autonomy ?? "negotiate", expires: l.expires ?? null, closeAt: l.closeAt ?? null, rulesText: l.rulesText ?? null }))));
 app.post("/api/topics", route(async req => {
   await spend(req.uid);
   const existing = [...new Set(((await db.find(FACTS, [["owner", "==", req.uid]], 300)) as Fact[]).flatMap(f => f.topics))];
@@ -686,7 +891,8 @@ app.post("/api/offers/draft", route(async req => {
     // An offering too vague to list (no price, or no place): the card asks for the basics, then reads it again. A
     // written floor is kept for the card, never in the text.
     const written = statedFloor(t);
-    return { offer: null, floor: written, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing: await asks({}),
+    const [missing, gate] = await Promise.all([asks({}), qualityOf(model, t, "sell", dom.label, [])]);
+    return { offer: null, floor: written, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, gate,
       basics: { category: dom.id, label: dom.label, unit: dom.priceUnit ?? null, area: here?.name ?? null } };
   }
   // The model reads a stated floor; a written one ("lowest 600", "won't go below 600") is caught either way, so the
@@ -696,7 +902,9 @@ app.post("/api/offers/draft", route(async req => {
   const floor = read_ ?? (written !== null && written < r.draft.offer.price.amount ? written : null);
   const publicText = floor ? withoutAmount(t, floor) : t;
   // What buyers of this kind usually ask that the offering doesn't say yet — the seller can answer now, publicly.
-  return { offer: { ...r.draft.offer, details: publicText }, floor, publicText, missing: await asks(r.draft.offer.attributes) };
+  const o = r.draft.offer;
+  const [missing, gate] = await Promise.all([asks(o.attributes), qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
+  return { offer: { ...o, details: publicText }, floor, publicText, missing, gate };
 }));
 
 // Terms a seller might state, suggested for their kind of offering — returned for them to edit; nothing is saved here.
@@ -729,7 +937,9 @@ app.post("/api/briefs/draft", route(async req => {
   const t = text(req.body?.text, 600).trim();
   if (t.length < 4) throw new HttpError(400, "Say a bit more.");
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
-  return draft(model, t, here, now(), hint);
+  // Read and judged at the same time: the gate says whether it's specific enough for sellers' agents to act on.
+  const [out, gate] = await Promise.all([draft(model, t, here, now(), hint), qualityOf(model, t, "buy", hint ?? "", [])]);
+  return { ...out, gate };
 }));
 /** The owner changes their open request ("try a wider area", "up to 600", "in Koramangala instead"): Gemini reads the
  *  change, code checks it, and the updated request comes back to be searched again. Says exactly what changed. */
@@ -766,7 +976,9 @@ app.post("/api/briefs", route(async req => {
   const del = req.body?.delegate;
   const m = mandateFrom(del?.mandate ?? del);
   if (m) { const days = num(del?.days, 1, 365);
-    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() }); }
+    const closeAt = num(del?.closeAt, 1, 1e12);
+    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now(),
+      ...(closeAt != null && closeAt <= m.price.limit ? { closeAt } : {}), ...(typeof del?.rulesText === "string" ? { rulesText: text(del.rulesText, 600) } : {}) }); }
   const found = await search(db, model, b, req.uid);
   event("request_sent", { category: b.shared.category || "none", found: found.found.length });
   return { brief: b, goal, ...found };
@@ -794,9 +1006,10 @@ app.post("/api/briefs/:id/engage", route(async req => {
     // can sell what they have — the buyer is told, and decides (their agent never closes a smaller deal for them).
     const want = wantedUnits(brief.need);
     if (want > 1) e.quantity = want;
-    const free = want > 1 && f.offer ? await inStock(db, e) : null;
-    if (free !== null && free < want) {
-      if (free > 0) { e.quantity = free; e.wanted = want; e.events.push({ at: now(), who: "system", text: `${p.name} has ${free} in stock — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
+    const cap = f.offer?.maxPerBuyer;
+    const free = want > 1 && f.offer ? Math.min(await inStock(db, e) ?? Infinity, cap ?? Infinity) : null;
+    if (free !== null && Number.isFinite(free) && free < want) {
+      if (free > 0) { e.quantity = free; e.wanted = want; e.events.push({ at: now(), who: "system", text: `${p.name} ${cap === free ? `sells at most ${free} per buyer` : `has ${free} in stock`} — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
       else e.events.push({ at: now(), who: "system", text: `${p.name} is out of stock right now — you can still ask when more come in.` });
     }
     if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
@@ -813,7 +1026,7 @@ app.post("/api/push/token", route(async req => { const t = text(req.body?.token,
 // A test notification to every device this person turned notifications on for.
 app.post("/api/push/test", route(async req => {
   await spend(req.uid, 1);
-  const r = await pushTo(req.uid, "Collab · test notification", "Notifications work on this device. You'll hear here when your agent needs you.", "/?screen=settings");
+  const r = await pushTo(req.uid, "Notifications are on", "You'll hear here when a decision is yours.", "/?screen=settings");
   if (!r.devices) throw new HttpError(400, "No device has notifications turned on for this account yet.");
   return r;
 }));
@@ -916,7 +1129,7 @@ app.get("/api/engagements/:id/pickup", route(async req => {
   try { details = pickupDetails(e); } catch (err) { throw new HttpError(400, (err as Error).message); }
   const check = checkPayment(e, verifySigned);
   if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
-  return { ...details, collectedAt: (await db.get(PICKUPS, e.id))?.collectedAt ?? null,
+  return { ...details, sellerHandle: await handleNow(e, details.sellerHandle), collectedAt: (await db.get(PICKUPS, e.id))?.collectedAt ?? null,
     path: `/pickup.html#${e.id}.${passCode(cfg.secret, e.id, "pickup")}` };
 }));
 app.get("/public/pickup/:id", route(async req => {
@@ -924,8 +1137,11 @@ app.get("/public/pickup/:id", route(async req => {
   if (!validCode(cfg.secret, id, "pickup", req.query.code)) throw new HttpError(404, "pass not found");
   const e = await load(db, id), check = checkPayment(e, verifySigned);
   if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
-  return { ...pickupDetails(e), collectedAt: (await db.get(PICKUPS, id))?.collectedAt ?? null };
+  const details = pickupDetails(e);
+  return { ...details, sellerHandle: await handleNow(e, details.sellerHandle), collectedAt: (await db.get(PICKUPS, id))?.collectedAt ?? null };
 }, false));
+/** The seller's handle as it is now: a handle can change after a deal (the signed receipt keeps the one agreed under). */
+async function handleNow(e: Engagement, fallback: string) { const uid = e[sellerOf(e)].uid; return (uid ? ((await db.get(PROFILES, uid)) as Profile | null)?.handle : null) ?? fallback; }
 app.post("/api/pickup/:id/collect", route(async req => {
   const id = String(req.params.id);
   if (!validCode(cfg.secret, id, "pickup", req.body?.code)) throw new HttpError(404, "pass not found");
@@ -937,7 +1153,7 @@ app.post("/api/pickup/:id/collect", route(async req => {
   await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass."); await clearStats(db, e);
   event("collected");
   const buyer = e[buyerOf(e)];
-  if (buyer.uid) void pushTo(buyer.uid, "Collected", e.offer.title, `/?engagement=${e.id}`);
+  if (buyer.uid) void pushTo(buyer.uid, `Collected: ${e.offer.title.split(" · ")[0]}`, "Got it as agreed? Tap to confirm.", `/?engagement=${e.id}`);
   return { collectedAt: result.collectedAt };
 }));
 /** Anyone signed in who has the engagement id can check a deal against its registered receipt (yes/no, nothing else). */
@@ -1008,7 +1224,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
     e.payment!.ap2 = await ap2Pay({ key: signing.privateKey, kid: signing.kid, base: cfg.publicUrl, now: now(), dealHash: e.payment!.cart.dealHash, idempotencyKey: key,
       currency: e.payment!.cart.total.currency, lines: linesOf(e), merchant: seller_, buyer: buyer_, checkoutId: `chk_${e.payment!.cart.id}`, instrument });
   } catch (err) { await release(); throw new HttpError(400, (err as Error).message); }
-  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} (test payment — no money moved).`, by: "owner" as const };
+  const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })}.`, by: "owner" as const };
   // Commit only while this tap still holds the claim.
   const committed = await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.payment?.status === "paying" && cur.payment.claim?.key === key
     ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, ...(e.reservation ? { reservation: e.reservation } : {}), events: [...cur.events, paidEvent], updatedAt: now() } : null));
@@ -1023,7 +1239,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
   event("paid", { currency: mandate.amount.currency, amount: mandate.amount.value, instrument: e.payment!.ap2?.instrument.type ?? "test" });
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
-  if (seller.uid) void pushTo(seller.uid, `Payment received · ${e.title}`, `${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })} (test mode)`, `/?engagement=${e.id}`);
+  if (seller.uid) void pushTo(seller.uid, "Payment received", `${e[buyerOfSide(e)].name} paid for ${e.offer.title.split(" · ")[0]}. Hand over with their pass.`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Deals agreed before AP2 carts existed get theirs when a participant opens them (saving issues it).
@@ -1127,7 +1343,7 @@ app.post("/api/engagements/:id/delivered", route(async req => {
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
   await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered."); await clearStats(db, e);
   const buyer = e[buyerOf(e)];
-  if (buyer.uid) void pushTo(buyer.uid, `Delivered · ${e.title}`, "Check it and tell your agent if it's right.", `/?engagement=${e.id}`);
+  if (buyer.uid) void pushTo(buyer.uid, `Handed over: ${e.offer.title.split(" · ")[0]}`, "Confirm it's as agreed, or report a problem.", `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 app.post("/api/engagements/:id/received", route(async req => {
@@ -1147,7 +1363,7 @@ app.post("/api/engagements/:id/received", route(async req => {
   if (ok) await closeInbox(db, e.id); // done: nothing more to ask either side
   await clearStats(db, e);
   const seller = e[sellerOf(e)];
-  if (seller.uid) void pushTo(seller.uid, ok ? `Accepted · ${e.title}` : `Problem reported · ${e.title}`, ok ? "The buyer confirmed it arrived as agreed." : "The buyer reported a problem.", `/?engagement=${e.id}`);
+  if (seller.uid) void pushTo(seller.uid, ok ? `Deal complete: ${e.offer.title.split(" · ")[0]}` : `Problem reported: ${e.offer.title.split(" · ")[0]}`, ok ? `${e[buyerOfSide(e)].name} confirmed it's as agreed.` : "The buyer reported a problem. Tap to reply.", `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Paid some other way (cash, UPI outside the app): either side can say so; it counts as the deal having gone ahead.
@@ -1371,7 +1587,8 @@ app.post("/cron/run", async (req, res, next) => {
     for (const g of open_) {
       if (g.recurrence && !g.recurrence.stopped && g.recurrence.nextAt <= now()) {
         const here = ((await db.get(PROFILES, g.owner)) as Profile | null)?.area ?? null;
-        if ((await runRecurrence(db, model, g, here, now(), (goal, text) => pushTo(goal.owner, `Time for: ${goal.outcome}`, text, "/?screen=requests").then(() => {}))).ran) rounds++;
+        // Only worth a notification when it found something.
+        if ((await runRecurrence(db, model, g, here, now(), (goal, text) => (/^No one fits/i.test(text) ? Promise.resolve() : pushTo(goal.owner, `New options: ${goal.outcome}`, text, "/?screen=requests").then(() => {})))).ran) rounds++;
       }
       if (g.allOrNothing && !g.compensation && (await compensate(db, g, now()))) compensated++;
     }
@@ -1385,7 +1602,7 @@ app.post("/cron/recover", async (req, res, next) => {
     const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
     if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
-    const decisions = await expireDecisions(db, now(), i => pushTo(i.owner, `Still waiting for you · ${i.title}`, i.question ?? "A decision is due.", `/?engagement=${i.engagementId}`).then(() => {}));
+    const decisions = await expireDecisions(db, now(), i => pushTo(i.owner, "Still waiting for you", i.question ?? "A decision is due — tap to decide.", `/?engagement=${i.engagementId}`).then(() => {}));
     if (recovered.found || decisions.lapsed || decisions.reminded) log.info("minute jobs", { recovered, decisions });
     res.json({ ...recovered, decisions });
   } catch (e) { next(e); }
@@ -1411,3 +1628,6 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 if (env.SEED_DEMO === "1") await seedDemo(db, model, now());
 const server = app.listen(port, () => log.info(`collab-market on :${port}`, { store: env.STORE === "memory" ? "memory" : "firestore", model: model?.status().model ?? null, backend: model?.status().backend ?? null, a2a: `${cfg.publicUrl}/a2a` }));
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => server.close(() => process.exit(0)));
+
+/** The buyer's side of a conversation (the requester unless the requester is the one selling). */
+function buyerOfSide(e: Engagement): "requester" | "provider" { return (e.seller ?? "provider") === "requester" ? "provider" : "requester"; }
