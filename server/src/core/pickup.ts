@@ -4,6 +4,7 @@ import type { Engagement } from "./model.ts";
 import { buyerOf, sellerOf } from "./pay.ts";
 import { kindOf } from "./suggest.ts";
 import { currencyOf } from "../market/types.ts";
+import { rolesFor } from "../market/roles.ts";
 
 export const PICKUPS = "pickups";
 export const passCode = (secret: string, id: string, purpose: "pickup" | "receipt") => createHmac("sha256", secret).update(`${purpose}:v1:${id}`).digest("base64url");
@@ -32,7 +33,8 @@ export function pickupDetails(e: Engagement) {
   const markedBy = status === "outside" ? (e.payment.by === sellerOf(e) ? "seller" : "buyer") : null;
   const d = e.negotiation.deal, q = d?.terms?.quantity ?? 1;
   const quantity = d?.items?.length ? d.items.reduce((n, l) => n + l.quantity, 0) : q > 1 ? q : 1;
-  return { id: e.id, item: e.offer.title, quantity, amount, buyer: e[buyerOf(e)].name, sellerHandle: e[sellerOf(e)].handle,
+  const roles = rolesFor(e.offer.category);
+  return { id: e.id, item: e.offer.title, quantity, amount, buyer: e[buyerOf(e)].name, sellerHandle: e[sellerOf(e)].handle, payee: roles.payee, payer: roles.payer,
     paidAt: e.payment.paidAt ?? null, kind: passKind(e), slot: e.reservation?.slot?.start ?? null,
     payment: status === "paid" ? "in_app_test" : "outside", markedBy, mode: "test" };
 }

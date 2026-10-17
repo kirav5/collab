@@ -17,6 +17,8 @@ export interface ShopItem {
   slots: { id: string; start: number; end: number }[] | null;
   /** The seller's own stated terms, and whether an order at the listed price is confirmed at once. */
   policies: { label: string; text: string }[]; instant: boolean;
+  /** The owner pays rather than being paid (an employer's job post). */
+  ownerPays: boolean;
   timezone: string | null;
   questions: Suggestion[];
 }
@@ -45,7 +47,7 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
       if (action === "book" || action === "visit" || (oneOff && !stock)) max = 1;
       return { factId: f.id, title: o.title, name: itemName(o.title), details: clip(o.details || f.text, 160), category: o.category,
         price, currency: o.price?.currency ?? "INR", unit: o.price?.period ?? null, action, stock, maxQuantity: max, slots,
-        timezone: r?.type === "slots" ? r.timezone : null, policies: o.policies ?? [], instant: !!o.instant && price != null, questions: forOffer(f, (r?.type ?? null) as Tracked) };
+        timezone: r?.type === "slots" ? r.timezone : null, policies: o.policies ?? [], instant: !!o.instant && price != null && !o.ownerPays, ownerPays: !!o.ownerPays, questions: forOffer(f, (r?.type ?? null) as Tracked) };
     });
 }
 

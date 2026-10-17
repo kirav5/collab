@@ -4,27 +4,34 @@
 import type { Model } from "../ai/gemini.ts";
 import { decide } from "../ai/decide.ts";
 import type { Docs } from "../docs.ts";
-import { budgetBand, budgetUpper } from "../market/match.ts";
+import { budgetBand, budgetLower, budgetUpper } from "../market/match.ts";
 import { read } from "../market/read.ts";
 import { type Mandate, type Need, type Place, newId } from "../market/types.ts";
 import type { Brief, SharedBrief } from "./model.ts";
-import { type Clarify, ClarifyTask, SharedBriefTask } from "./tasks.ts";
+import { rolesFor } from "../market/roles.ts";
+import { type Clarify, ClarifyTask, type ProfileQuestion, ProfileTask, SharedBriefTask } from "./tasks.ts";
 
 export const BRIEFS = "briefs";
 
-/** `clarify`: what Gemini suggests the owner adds before sending (tap-to-answer options). */
-export interface BriefDraft { need: Need; shared: SharedBrief; mandate: Mandate | null; clarify: Clarify[]; byModel: Record<string, boolean> }
+/** `clarify`: what Gemini suggests the owner adds before sending (tap-to-answer options). `profile`: for someone looking
+ *  for work, what they share about themselves (experience, skills…) — in place of `clarify`. */
+export interface BriefDraft { need: Need; shared: SharedBrief; mandate: Mandate | null; clarify: Clarify[]; profile?: ProfileQuestion[]; byModel: Record<string, boolean> }
 
 export async function draft(model: Model | null, text: string, here: Place | null, now: number, category?: string | null): Promise<{ draft: BriefDraft | null; problem?: string }> {
   const r = await read(text, "find", model, now, here, category, true);
   if (r.draft?.kind !== "need") return { draft: null, problem: r.problem ?? "Couldn't read that as a request." };
   const need = r.draft.need;
   const known = [`area: ${need.place.name}`, ...(need.mode ? [`how: ${need.mode}`] : []), ...need.filters.map(f => `${f.label}: ${f.value}`)];
-  const [s, c] = await Promise.all([
-    decide(model, SharedBriefTask, { text, category: need.category, limit: need.mandate?.price.limit ?? need.maxPrice ?? null }),
-    decide(model, ClarifyTask, { text, category: need.category, known }),
+  // Someone looking for work shares a short profile (what an employer screens for) instead of answering generic
+  // questions; the profile is theirs to fill, and never filters what they find.
+  const asks = need.requesterPaid ? rolesFor(need.category).profile : undefined;
+  const [s, c, pr] = await Promise.all([
+    decide(model, SharedBriefTask, { text, category: need.category, limit: need.mandate?.price.limit ?? need.maxPrice ?? need.minPrice ?? null }),
+    asks ? null : decide(model, ClarifyTask, { text, category: need.category, known }),
+    asks ? decide(model, ProfileTask, { text, category: need.category, asks }) : null,
   ]);
-  return { draft: { need, shared: share(need, s.output), mandate: need.mandate ?? null, clarify: c.output, byModel: { ...r.byModel, brief: s.byModel, clarify: c.byModel } } };
+  return { draft: { need, shared: share(need, s.output), mandate: need.mandate ?? null, clarify: c?.output ?? [], ...(pr ? { profile: pr.output } : {}),
+    byModel: { ...r.byModel, brief: s.byModel, ...(c ? { clarify: c.byModel } : {}), ...(pr ? { profile: pr.byModel } : {}) } } };
 }
 
 /** What crosses to providers: requirements without money or coordinates, and the budget as a band. */
@@ -43,6 +50,7 @@ export async function saveBrief(db: Docs, owner: string, need: Need, shared: Sha
   // The owner's own words can hold the exact budget ("…up to 36,000"): only the shared wording and the band are kept,
   // and filters keep no quoted evidence.
   const banded: Need = { ...need, text: `${shared.title}. ${shared.summary}`, mandate: null, maxPrice: budgetUpper(need),
+    ...(need.requesterPaid ? { minPrice: budgetLower(need) } : {}),
     filters: need.filters.filter(f => f.kind !== "price").map(f => ({ ...f, evidence: "" })) };
   const b: Brief = { id: newId(), owner, shared, need: banded, createdAt: now };
   await db.set(BRIEFS, b.id, b);

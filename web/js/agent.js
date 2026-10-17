@@ -12,6 +12,7 @@ import { live, onChange, poke } from "./live.js";
 import { MODEL, detectGemma, downloadGemma, gemma, generate } from "./gemma.js";
 import { askMyDevices, hosts, refreshServing, setAnswerer } from "./mydevices.js";
 import { saveNote } from "./outbox.js";
+import { limitPast, listingRoles } from "./roles.js";
 
 // The on-device engine's state, shown in Settings › AI engine. `here` = Gemma is downloaded on this device.
 // `mode` is where private-note questions may be answered (processing.js): "device-only", "my-devices" (default), "cloud".
@@ -128,8 +129,11 @@ export async function chat(text, recent, area, open = null) {
       session.track("request_drafted");
       const d = await api("/api/briefs/draft", { text, here: area });
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
+      // A profile shared on an earlier request starts filled in (the owner can change any of it before sending).
+      if (d.draft.profile) d.draft.shared.about = d.draft.profile.filter(q => q.answer).map(q => ({ label: q.label, value: q.answer }));
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
-      return { text: "Here's what your agent will ask for. Adjust it, then send.", cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
+      return { text: d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send." : "Here's what your agent will ask for. Adjust it, then send.",
+        cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
     case "refine": {
@@ -148,7 +152,7 @@ export async function chat(text, recent, area, open = null) {
       // A plain answer first; finding sellers is offered, never started on its own. The question and its answer are
       // kept as a Private chat memory (your agent can recall them; they're never shared).
       api("/api/facts", { tier: "private", source: "chat", text: `Asked: “${text.slice(0, 300)}” — answer: ${route.reply}` }).catch(() => {});
-      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: "Find sellers near me", text: route.find }] }] : [] };
+      return { text: route.reply, cards: route.find ? [{ type: "suggest", options: [{ label: "Find people near me", text: route.find }] }] : [] };
     }
     default:
       return { text: route.reply ?? "I can remember things for you, answer from your notes, find people for anything you need, or publish what you offer.", cards: [] };
@@ -166,16 +170,16 @@ export async function chat(text, recent, area, open = null) {
  */
 export function autonomyOf(c) {
   if (c.autonomy !== undefined && c.autonomy !== null) return c.autonomy;
-  const limited = c.type === "offer" ? c.offer && c.floor != null && c.floor < c.offer.price.amount : !!c.draft?.mandate;
+  const limited = c.type === "offer" ? limitPast(c) : !!c.draft?.mandate;
   return limited ? "negotiate" : "";
 }
 
 export async function offerReply(text, d, extra = {}) {
   const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []) : [];
   const said = d.offer ? "Here's how your offering will look in the directory. Every detail you answer below is a question your agent handles without you."
-    : d.basics ? `That reads as ${d.basics.label.toLowerCase()}. Add your price and where, and I'll make it a listing buyers' agents can find — the questions below are what buyers usually ask.`
+    : d.basics ? (L => `That reads as ${d.basics.label.toLowerCase()}. Add your ${L.price} and where, and I'll make it a listing ${L.responders}' agents can find — the questions below are what ${L.responders} usually ask.`)(listingRoles({ category: d.basics.category, ownerPays: d.ownerPays }))
     : "I'll keep this as a public note others' agents can find.";
-  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, insights, step: "review", ...extra }] };
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, insights, step: "review", ...extra }] };
 }
 
 // MARK: - What only this device can do

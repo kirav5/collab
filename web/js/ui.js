@@ -45,8 +45,12 @@ export function busy(btn, on, text = "…") {
  * How to call someone in a sentence: a person by their first name ("Riya"), a business by its whole name ("Steel
  * Bottle Store" — never "Steel").
  */
+/** A person by first name ("Dr. Mehta" keeps the title), a business in full — the server names owners the same way
+ *  in their agents' lines (server/src/market/roles.ts shortName). */
 export function shortName(name = "") {
-  const words = String(name).trim().split(/\s+/);
-  const business = words.length >= 3 || /\b(store|stores|shop|mart|traders?|enterprises?|academy|studio|services?|centre|center|kitchen|cafe|café|bakery|clinic|salon|agency|rentals?|motors|pvt|ltd|llp|co\.?|tiffins?|foods?)\b/i.test(name);
-  return business ? String(name).trim() : words[0] ?? "";
+  const trimmed = String(name ?? "").trim(), words = trimmed.split(/\s+/).filter(Boolean);
+  if (!words.length) return "";
+  const business = words.length >= 3 || /\b(store|stores|shop|mart|traders?|enterprises?|academy|studio|services?|centre|center|kitchen|cafe|café|bakery|clinic|salon|agency|rentals?|motors|pvt|ltd|llp|co\.?|tiffins?|foods?|tech|technologies|labs?|solutions|systems|software|digital|media|consulting|infotech)\b/i.test(trimmed);
+  if (business) return trimmed;
+  return /^(mr|mrs|ms|miss|dr|prof|shri|smt|sri)\.?$/i.test(words[0]) && words[1] ? `${words[0]} ${words[1]}` : words[0];
 }

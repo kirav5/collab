@@ -15,7 +15,8 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 
-const PORT = 9500 + Math.floor(Math.random() * 100);
+// Its own range: appcheck-modes picks from 9400–9799, scenarios 9000–9099, hiring 9300–9399, e2e 8800–8899.
+const PORT = 8600 + Math.floor(Math.random() * 100);
 const B = `http://localhost:${PORT}`;
 let server: ChildProcess;
 before(async () => {

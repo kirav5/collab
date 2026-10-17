@@ -12,12 +12,15 @@ async function refresh() {
   document.title = `Collab ${k.name.toLowerCase()}`; document.querySelector('h1').textContent = k.name; collect.textContent = `Mark ${k.done.toLowerCase()}`;
   const when = details.slot ? `\nTime: ${new Date(details.slot * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
   const item = details.quantity > 1 ? `${details.quantity} × ${details.item.split(' · ')[0]}` : details.item;
-  document.querySelector('#details').textContent = `${item}\n${details.amount.currency ?? 'INR'} ${details.amount.value}${when}\nBuyer: ${details.buyer}\nSeller: @${details.sellerHandle}`;
+  // Each side by its role in this deal (a buyer and a seller, a student and a teacher…).
+  const payer = details.payer ?? 'buyer', payee = details.payee ?? 'seller', cap = w => w[0].toUpperCase() + w.slice(1);
+  document.querySelector('#details').textContent = `${item}\n${details.amount.currency ?? 'INR'} ${details.amount.value}${when}\n${cap(payer)}: ${details.buyer}\n${cap(payee)}: @${details.sellerHandle}`;
+  login.textContent = `Sign in as the ${payee}`;
   const paid = details.payment === 'outside'
-    ? (details.markedBy === 'seller' ? 'Paid outside the app — the seller confirmed it' : 'Marked paid outside the app by the buyer — check you received the money')
+    ? (details.markedBy === 'seller' ? `Paid outside the app — the ${payee} confirmed it` : `Marked paid outside the app by the ${payer} — check you received the money`)
     : '✓ Paid (test mode)';
   status.textContent = details.collectedAt ? `${k.done} at ${new Date(details.collectedAt * 1000).toLocaleString()}` : `${paid} · not ${k.done.toLowerCase()} yet`;
-  note.textContent = details.payment === 'outside' ? `The seller checks the buyer's name before ${k.verb}.` : `Test payment — no money moved. The seller checks the buyer's name before ${k.verb}.`;
+  note.textContent = details.payment === 'outside' ? `The ${payee} checks the ${payer}'s name before ${k.verb}.` : `Test payment — no money moved. The ${payee} checks the ${payer}'s name before ${k.verb}.`;
   if (details.collectedAt) { collect.hidden = true; login.hidden = true; }
 }
 async function sellerButtons() {

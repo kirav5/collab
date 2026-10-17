@@ -5,10 +5,11 @@ import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
 import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
-import { defaultHours, engagementCard, hoursOk, hoursText } from "./cards.js";
+import { applicantsBoard, defaultHours, engagementCard, hoursOk, hoursText } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
 import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
+import { listingRoles, rolesOf } from "./roles.js";
 import { pendingWrites, saveNote } from "./outbox.js";
 
 /** One of a seller's terms, editable: its name and what it says, in their words. */
@@ -98,12 +99,12 @@ export const screens = {
       // suggestions for this listing on request. No headings or examples are put in front of them.
       const termsRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
-        const ps = f.offer.policies ?? [];
-        return `<details class="more"><summary>Your terms for buyers${ps.length ? ` · ${ps.length} set` : ""}${f.offer.instant ? " · instant booking on" : ""}</summary>
-          <p class="small muted">Shown on your card and sealed into each deal's receipt exactly as you write them. Collab never writes terms for you. Don't put a phone number or home address here unless you want every buyer to see it.</p>
+        const ps = f.offer.policies ?? [], L = listingRoles(f.offer);
+        return `<details class="more"><summary>Your terms for ${esc(L.responders)}${ps.length ? ` · ${ps.length} set` : ""}${f.offer.instant ? " · instant booking on" : ""}</summary>
+          <p class="small muted">Shown on your card and sealed into each deal's receipt exactly as you write them. Collab never writes terms for you. Don't put a phone number or home address here unless you want every one of your ${esc(L.responders)} to see it.</p>
           ${ps.map(p => termRow(f.id, p.label, p.text)).join("")}${termRow(f.id)}
-          <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
-          <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}">Suggest terms for this offering</button></div></details>`;
+          ${L.pays ? "" : `<label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>`}
+          <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}" data-owner-pays="${f.offer.ownerPays ? "1" : ""}">Suggest terms for this offering</button></div></details>`;
       };
       return frame("Context", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
@@ -140,7 +141,7 @@ export const screens = {
         // Suggestions fill empty fields (and add new headings); nothing is saved until the seller taps Save terms.
         busy(el, true, "Suggesting");
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
-        const r = await api("/api/terms/suggest", { category: el.dataset.category, text: f?.text ?? "" }).catch(err => { h.toast(err.message); return null; });
+        const r = await api("/api/terms/suggest", { category: el.dataset.category, text: f?.text ?? "", ownerPays: el.dataset.ownerPays === "1" }).catch(err => { h.toast(err.message); return null; });
         busy(el, false);
         if (!r) return true;
         if (!r.terms.length) { h.toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own."); return true; }
@@ -151,7 +152,7 @@ export const screens = {
           const same = rows().find(x => x.querySelector("[data-term-label]").value.trim().toLowerCase() === t.label.toLowerCase());
           if (same) { const input = same.querySelector("[data-term-text]"); if (!input.value.trim()) input.value = t.text; continue; }
           const blank = rows().find(x => !x.querySelector("[data-term-label]").value.trim() && !x.querySelector("[data-term-text]").value.trim());
-          (blank ?? rows().at(-1)).insertAdjacentHTML("beforebegin", termRow(id, t.label, t.text) + (t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""));
+          (blank ?? rows().at(-1)).insertAdjacentHTML("beforebegin", termRow(id, t.label, t.text) + (t.sources?.length ? `<span class="small faint">As ${esc(listingRoles(f?.offer).owner)}s state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""));
         }
         h.toast("Suggested — edit anything, then Save terms. Nothing is saved yet.");
         return true;
@@ -160,7 +161,7 @@ export const screens = {
         const id = el.dataset.id;
         const policies = [...document.querySelectorAll(`[data-term-row="${CSS.escape(id)}"]`)].map(r => ({ label: r.querySelector("[data-term-label]").value.trim(), text: r.querySelector("[data-term-text]").value.trim() })).filter(p => p.label && p.text);
         busy(el, true, "Saving");
-        try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast("Saved — buyers see these terms on your card and receipts."); }
+        try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast(`Saved — ${listingRoles((await allFacts()).find(x => x.id === id)?.offer).responders} see these terms on your card and receipts.`); }
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
@@ -342,6 +343,18 @@ export const screens = {
         for (const e of es) live.engagements.set(e.id, e);
         h.toast("Your agent is contacting them over A2A."); h.paint(); return true;
       }
+      // An employer's moves on an application (the agent never takes them on its own).
+      if (a === "app-shortlist" || a === "app-interview" || a === "app-reject") {
+        if (a === "app-reject" && !confirm(el.dataset.demo ? "Turn down your own application, as the demo employer? It ends with a polite note." : `Tell ${el.dataset.name} you won't take this forward? Their agent gets a polite note, and the application ends.`)) return true;
+        const note = a === "app-interview" ? (prompt("When or how? (optional — e.g. “a 30-minute video call”)") ?? "") : "";
+        busy(el, true);
+        try {
+          const e = await api(`/api/engagements/${encodeURIComponent(el.dataset.id)}/${{ "app-shortlist": "shortlist", "app-interview": "interview", "app-reject": "reject" }[a]}`, a === "app-interview" ? { note } : {});
+          live.engagements.set(e.id, e);
+          h.toast(a === "app-shortlist" ? (el.dataset.demo ? "Shortlisted — their agent opens the salary talk with yours." : "Shortlisted — your agent opens the salary talk.") : a === "app-interview" ? "Invitation sent — their agent asks them when they're free." : "Sent a polite note. The application has ended.");
+        } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
       if (a === "goal-cancel") {
         if (!confirm("Cancel this goal? Conversations without a deal end; agreed deals keep their obligations.")) return true;
         await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
@@ -353,7 +366,12 @@ export const screens = {
         const need = e => (live.inbox.some(i => i.engagementId === e.id) ? 1 : 0);
         return need(b) - need(a) || b.updatedAt - a.updatedAt;
       });
-      const incoming = list.filter(e => e.provider.uid === session.uid), outgoing = list.filter(e => e.provider.uid !== session.uid);
+      // An employer's job posts: each with its applicants, screened against the JD and ranked; their conversations live
+      // on the board, not again under "Asked you".
+      const jobs = (await allFacts()).filter(f => f.tier === "public" && f.offer?.ownerPays && rolesOf(f.offer.category).flow === "hire");
+      const boards = (await Promise.all(jobs.map(f => api(`/api/facts/${encodeURIComponent(f.id)}/applicants`).catch(() => null)))).filter(b => b?.job);
+      const onBoard = new Set(boards.flatMap(b => b.applicants.map(x => x.id)));
+      const incoming = list.filter(e => e.provider.uid === session.uid && !onBoard.has(e.id)), outgoing = list.filter(e => e.provider.uid !== session.uid);
       const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
       // Goals first: what you wanted, where it stands, and what happens next (each conversation is one of its tasks).
       const goals = await api("/api/goals").catch(() => []);
@@ -387,6 +405,7 @@ export const screens = {
         ${live.watches.length ? `${label(`Watching · ${live.watches.length}`, "sq")}${live.watches.map(w => `<div class="card slim"><div class="row"><span class="dot pulse" style="color:var(--fresh)"></span><b class="small">${esc(w.title)}</b>
           <button class="btn quiet compact end" data-act="watch-stop" data-id="${esc(w.id)}">Stop</button></div>
           <span class="small faint">Checks every ${w.every >= 60 ? `${w.every / 60} h` : `${w.every} min`} · ${w.runs ? `last ${when(w.lastRun)} · ` : ""}next ${when(w.nextRun)} · until ${new Date(w.expires * 1000).toLocaleDateString()}</span></div>`).join("")}` : ""}
+        ${boards.map(applicantsBoard).join("")}
         ${label(`Asked you · ${incoming.length}`, "sq")}${incoming.map(e => engagementCard(e, e.id)).join("") || `<p class="small muted">When someone's agent contacts yours, it shows up here — and notifies you when you're needed.</p>`}
         ${label(`You asked · ${outgoing.length}`, "sq")}${outgoing.map(e => engagementCard(e, e.id)).join("") || `<p class="small muted">Ask for something in chat: “Need a tabla teacher online”.</p>`}`);
     },

@@ -50,7 +50,7 @@ export async function byHandle(db: Docs, handle: string): Promise<Profile | null
 
 /** Saves a fact of any tier. Private facts are stored plain: no topics, no offer read, no embedding — the model
     never touches them, and the policy gate never returns them. */
-export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: Tier; topics?: string[]; negotiable?: boolean; source?: "chat" }): Promise<Fact> {
+export async function saveFact(db: Docs, model: Model | null, owner: Profile, input: { id?: string; text: string; tier: Tier; topics?: string[]; negotiable?: boolean; source?: "chat"; category?: string | null }): Promise<Fact> {
   const text = input.text.trim().slice(0, 1000);
   if (text.length < 3) throw new Problem("Say a bit more.");
   const prev = input.id ? ((await db.get(FACTS, input.id)) as Fact | null) : null;
@@ -75,7 +75,9 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
     offer = prev.offer; embedding = prev.embedding;
   } else if (input.tier === "public") {
     // An offering (a price and a place, or something done online) becomes a listing the matcher understands.
-    const r = await read(text, "sell", model, now(), owner.area);
+    // Read as the category the person saw on their listing card (it may be "anything else"), so publishing never turns
+    // a listing they were shown into a plain note nobody can find.
+    const r = await read(text, "sell", model, now(), owner.area, input.category ?? null, !!input.category);
     if (r.draft?.kind === "offer") offer = r.draft.offer;
     // The questions buyers can tap are written for this listing, alongside its embedding.
     const [v, questions] = await Promise.all([model?.embed?.([offer ? `${offer.title}. ${text}` : text], "document"), offer ? buyerQuestions(model, offer, text).catch(() => null) : null]);

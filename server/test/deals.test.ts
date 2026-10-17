@@ -131,7 +131,8 @@ test("a 'close' mandate confirms inside its limit and the deal is recorded once"
   assert.equal(out.confirm, true);
   assert.equal(e.negotiation.confirmed.provider, true);
   assert.equal(e.negotiation.confirmedBy?.provider, "mandate");
-  assert.ok(e.events.some(ev => ev.text.includes("standing mandate")));
+  assert.ok(e.events.some(ev => ev.text.includes("had agreed to deals like this in advance")), "the mandate's confirmation is recorded");
+  assert.ok(!e.events.some(ev => /\blimit\b/i.test(ev.text)), "events both sides see never say a limit exists");
   // The requester's owner confirms on their device: agreed, recorded once.
   await requesterTurn(db, model, e, out);
   await save(db, e);

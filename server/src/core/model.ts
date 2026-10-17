@@ -59,6 +59,49 @@ export interface Rule {
 export interface Contact { owner: string; uid: string; handle: string; name: string; addedAt: number }
 
 /** What a requester's agent tells providers: no exact budget, no coordinates, nothing private. */
+/**
+ * An offer letter. The employer issues it once the salary is agreed (start date and "valid until" are theirs to set);
+ * the candidate accepts, declines, or asks for changes once — never a standing mandate on either side. `hash` covers
+ * the letter's terms and `signature` is the employer agent's over it; an accepted letter is sealed into the deal record.
+ */
+export interface OfferLetter {
+  role: string; salary: number; unit: string | null; currency?: string;
+  /** "YYYY-MM-DD". */
+  start: string; validUntil: string;
+  mode: string; probation: string; notice: string; note?: string;
+  issuedAt: number; revision: number; hash: string; signature?: string;
+  status: "issued" | "accepted" | "declined" | "changes asked" | "withdrawn" | "lapsed";
+  /** What the candidate asked to change (they can ask once). */
+  changesAsked?: string;
+  decidedAt?: number;
+}
+
+/**
+ * Whether an accepted offer was taken up. The candidate marks that they joined (from the start date) and the employer
+ * confirms it, or the employer says they didn't; either side can withdraw before joining, with a reason. When the two
+ * say different things it stays "disputed" with both words on record — the app never decides who is right.
+ */
+export interface Joining {
+  state: "awaiting" | "joined" | "confirmed" | "no_show" | "withdrawn" | "disputed";
+  /** The start date from the accepted letter, "YYYY-MM-DD". */
+  start: string;
+  /** The day the candidate says (or the employer confirms) they started. */
+  joinedOn?: string;
+  markedAt?: number; confirmedAt?: number;
+  /** Who withdrew or said they didn't join, and their words. */
+  by?: Side; reason?: string;
+  at: number;
+}
+
+/** How an applicant measures up to a job post's requirements: each checked against what they shared, with the words
+ *  that show it. `basis`: what it was computed from (recomputed only when that changes). */
+export interface Screening {
+  at: number; basis: string; score: number; mustMet: number; mustTotal: number; summary: string; byModel: boolean;
+  /** Gemini's one line on the fit (checked: no invented numbers, nothing personal) — beside the count, never instead. */
+  note?: string;
+  checks: { label: string; value: string; strength: "must" | "nice"; verdict: "met" | "partial" | "unmet" | "unknown"; evidence: string | null; by: "rules" | "gemini" | "none" }[];
+}
+
 export interface SharedBrief {
   title: string;
   summary: string;
@@ -69,6 +112,9 @@ export interface SharedBrief {
   /** A rounded band ("up to ₹40,000/month"), never the exact limit. */
   budget: string | null;
   questions: string[];
+  /** What the requester shares about themselves (a candidate's profile: experience, skills, notice period…). Not a
+   *  requirement: never used to filter matches. Their agent answers from it. */
+  about?: { label: string; value: string }[];
 }
 
 export interface Brief {
@@ -93,6 +139,8 @@ export interface QA {
   status: "open" | "answered" | "pending" | "declined";
   /** The asker's judgement of the answer (requester's must-asks). */
   verdict?: "met" | "unmet" | "unclear";
+  /** Only the person answers (an interview's days and times): their agent never answers it from what's on file. */
+  personal?: true;
   required?: boolean;
 }
 
@@ -116,7 +164,7 @@ export interface Engagement {
     policies?: { label: string; text: string }[] } ;
   phase: "asking" | "negotiating" | "deal" | "agreed" | "declined" | "closed";
   /** What each side's owner is being asked (both can be waiting at once). */
-  waiting: Record<Side, { kind: "answer" | "move" | "confirm" | "approve"; inbox: string[]; text: string } | null>;
+  waiting: Record<Side, { kind: InboxItem["kind"]; inbox: string[]; text: string } | null>;
   qa: QA[];
   /** The provider asked its questions already (requirement gathering happens once). */
   gathered: boolean;
@@ -133,8 +181,18 @@ export interface Engagement {
   dealRecorded?: boolean;
   /** What each side later said became of the deal (a completed payment says "happened" for both). */
   outcome?: Partial<Record<Side, "happened" | "fell_through">>;
-  /** Which side sells. Listings: the provider. A deal offered in a direct chat: whoever said they'd sell. */
+  /** Which side sells (is paid). Listings: the provider, unless its owner pays (a job post). A deal offered in a direct
+   *  chat: whoever said they'd sell. */
   seller?: Side;
+  /** The money doesn't change hands in the app (a job's salary): no cart or pass; it closes on marked done, then confirmed. */
+  noPayment?: true;
+  /** An application to an employer's job post: where the employer has it, and its screening against the JD. Salary
+   *  talk waits until it's shortlisted. */
+  hiring?: { shortlisted?: number; interview?: number; rejected?: number; heldNoted?: boolean };
+  /** A hiring deal's offer letter: issued (signed) by the employer, decided by the candidate personally. */
+  offerLetter?: OfferLetter;
+  joining?: Joining;
+  screening?: Screening;
   /** What happened after the deal, separate from payment: handed over / delivered, then accepted or disputed by the
    *  buyer. Payment alone never marks a deal fulfilled. */
   fulfilment?: { state: "not_started" | "delivered" | "accepted" | "disputed" | "cancelled"; deliveredAt?: number; acceptedAt?: number; note?: string };
@@ -173,7 +231,7 @@ export interface InboxItem {
   owner: string;
   engagementId: string;
   side: Side;
-  kind: "answer" | "move" | "confirm" | "approve";
+  kind: "answer" | "move" | "confirm" | "approve" | "offer_letter" | "offer";
   /** answer/approve: the question; approve: the drafted answer and the fact it came from. */
   qaId?: string;
   question?: string;
@@ -187,6 +245,8 @@ export interface InboxItem {
   title: string;
   /** confirm: the exact proposal this approval is for — a changed deal makes it stale (VERSION_CONFLICT). */
   proposalId?: string;
+  /** offer_letter: what the letter starts with (the employer edits it); offer: the letter to decide on. */
+  letter?: Partial<OfferLetter>;
   /** When the decision is due, and what happens if nobody decides: the deal lapses, or the agent keeps waiting.
    *  Silence is never approval. */
   deadline?: number; onTimeout?: "lapse" | "wait";

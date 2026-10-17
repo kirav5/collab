@@ -9,6 +9,9 @@ export const isOnline = (p: Place) => p.name === "Online" && p.lat === 0 && p.lo
 
 export type ServiceMode = "online" | "in_person" | "either";
 
+/** One thing a job post asks of applicants ("Experience: 2+ years"), a must-have or a nice-to-have. */
+export interface Requirement { label: string; value: string; strength: "must" | "nice" }
+
 export interface Offer {
   id: string;
   category: string;
@@ -27,8 +30,13 @@ export interface Offer {
   /** The seller's own stated terms for this offering (cancellation, late arrival, returns, warranty, hygiene…), shown to
    *  customers and sealed into the deal record. Collab never writes terms for a seller. */
   policies?: { label: string; text: string }[];
+  /** A job post's requirements, read from the JD and edited by the employer: what each applicant is screened against.
+   *  Public, like the JD itself. */
+  requirements?: Requirement[];
   /** The seller lets an order at the listed price be confirmed by their always-on agent at once (instant booking). */
   instant?: boolean;
+  /** The owner pays rather than being paid (an employer's job post). Absent: the owner is paid. */
+  ownerPays?: boolean;
   /** Ready-made questions a buyer can tap, written by Gemini for this listing when it was published. */
   questions?: { label: string; text: string }[];
   /** The seller's Nostr key (hex), set on listings read from the index. */
@@ -69,6 +77,10 @@ export interface Need {
   mode?: ServiceMode | null;
   filters: DemandFilter[];
   mandate?: Mandate | null;
+  /** The requester is the one paid (someone looking for a job). Absent: the requester pays. */
+  requesterPaid?: boolean;
+  /** For a requester who is paid: the least they'd take (in a stored brief, only its band). `maxPrice` is then null. */
+  minPrice?: number | null;
 }
 
 /** `items`: several lines or quantities agreed together; then `price` is their total. Without it, `price` is per the
