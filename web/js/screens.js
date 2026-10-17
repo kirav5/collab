@@ -455,7 +455,7 @@ export const screens = {
       if (a === "remove-contact") { await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
       if (a === "view-person") {
         const p = await api(`/api/people/${el.dataset.handle}`);
-        document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals ? `<span class="small faint">${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<a class="small" href="${esc(p.agentCard)}" target="_blank" rel="noopener">A2A agent card ↗</a></div>`;
+        document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals ? `<span class="small faint">${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<div class="row"><button class="btn accent compact" data-act="cm-message" data-handle="${esc(el.dataset.handle)}">Open their shop</button><a class="small faint" href="${esc(p.agentCard)}" target="_blank" rel="noopener" title="The machine-readable card other agents read">agent card ↗</a></div></div>`;
         return true;
       }
     },
@@ -654,6 +654,12 @@ export const screens = {
         if (!confirm("Cancel this goal? Conversations without a deal end; agreed deals keep their obligations.")) return true;
         await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
       }
+      if (a === "deal-receipt") {
+        // The button sits in the row's summary, whose own toggle runs after this: open the row once that's done.
+        const row = el.closest("details");
+        setTimeout(() => { row.open = true; row.querySelector('[data-act="eng-receipt"]')?.click(); }, 0);
+        return true;
+      }
       if (a === "deals-filter") { S.dealsFilter = el.dataset.k; h.paint(); return true; }
       if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ behavior: "smooth", block: "center" }); c?.classList.remove("flash"); void c?.offsetWidth; c?.classList.add("flash"); return true; }
       if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
@@ -711,10 +717,11 @@ export const screens = {
         return Object.entries(m).filter(([, v]) => v).map(([c, v]) => money(v, null, c)).join(" + "); };
       const soldSum = paidBy(sold), boughtSum = paidBy(bought);
       // Find a deal fast: what still needs doing, what you sold, what you bought, what's finished.
-      const DEAL_FILTERS = [["all", "All"], ["todo", "To do"], ["sold", "Sold"], ["bought", "Bought"], ["done", "Done"]];
+      // Open: still to pay, hand over or confirm. Won: paid or handed over as agreed. Lost: cancelled or fell through.
+      const DEAL_FILTERS = [["open", "Open"], ["won", "Won"], ["lost", "Lost"], ["all", "All"]];
       const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
-      const dealIn = (e, k) => k === "all" || (k === "todo" ? !finishedDeal(e) : k === "done" ? finishedDeal(e) : k === "sold" ? sold.includes(e) : bought.includes(e));
-      const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "all";
+      const dealIn = (e, k) => k === "all" || (k === "open" ? !finishedDeal(e) : k === "lost" ? off(e) : finishedDeal(e) && !off(e));
+      const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "open";
       const STAGE = e => dealStage(e, me(e));
       const dealRow = e => {
         const side = me(e), them = side === "provider" ? e.requester : e.provider, mineSold = sellerOf(e) === side;
@@ -723,8 +730,15 @@ export const screens = {
         const [st, tone] = STAGE(e), at = new Date((e.agreedAt ?? e.updatedAt) * 1000).toLocaleDateString([], { day: "numeric", month: "short" });
         const line = `<span class="deal-line">${tag(mineSold ? "Sold" : "Bought", mineSold ? "fresh" : "peri")}<b class="grow">${esc((e.offer?.title ?? e.title).split(" · ")[0])}${n > 1 ? ` × ${n}` : ""}</b><span class="deal-amt">${money(total, null, e.offer.currency)}</span></span>
           <span class="deal-line small"><span class="faint">${mineSold ? "to" : "from"} ${esc(them.name)} · ${esc(at)}</span>${tag(st, tone)}</span>`;
+        const paid = ["paid", "outside"].includes(e.payment?.status);
         return shownAbove.has(e.id) ? `<button class="deal-row deal-jump" data-act="deal-jump" data-id="${esc(e.id)}" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}" title="Open this deal above">${line}</button>`
-          : `<details class="more deal-row" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}"><summary>${line}</summary>${engagementCard(e, e.id)}</details>`;
+          : `<details class="more deal-row" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}"><summary>${line}${paid ? `<button class="btn quiet compact" data-act="deal-receipt" data-id="${esc(e.id)}" title="The signed record of this deal">Receipt</button>` : ""}</summary>${engagementCard(e, e.id)}</details>`;
+      };
+      // Deals grouped by who they're with: one person's deals together, newest person first.
+      const byPerson = es => {
+        const groups = new Map();
+        for (const e of es) { const them = me(e) === "provider" ? e.requester : e.provider; (groups.get(them.uid ?? them.name) ?? groups.set(them.uid ?? them.name, { them, es: [] }).get(them.uid ?? them.name)).es.push(e); }
+        return [...groups.values()].map(g => `<div class="stack" style="gap:6px"><span class="small"><b>${esc(g.them.name)}</b>${g.them.handle ? ` <span class="faint">@${esc(g.them.handle)}</span>` : ""} <span class="faint">· ${g.es.length} deal${g.es.length === 1 ? "" : "s"}</span></span>${g.es.map(dealRow).join("")}</div>`).join("");
       };
       const t0 = new Date().setHours(0, 0, 0, 0) / 1000;
       const mine = e => (me(e) === "provider" ? "provider_agent" : "requester_agent");
@@ -757,7 +771,7 @@ export const screens = {
           <div class="card slim deals-sum"><div class="row" style="flex-wrap:wrap;gap:14px">${sold.length ? `<span><b>${sold.length}</b> sold${soldSum ? ` · ${soldSum} paid` : ""}</span>` : ""}${bought.length ? `<span><b>${bought.length}</b> bought${boughtSum ? ` · ${boughtSum} paid` : ""}</span>` : ""}<span><b>${deals.filter(e => e.fulfilment?.state === "accepted").length}</b> completed</span></div>
             ${sold.length ? `<div class="row small"><span class="muted">Your sales are on your public card as a verified record — buyers and prices stay private.</span><button class="btn quiet compact end" data-act="preview-card">See your card</button></div>` : ""}</div>
           <div class="row" style="gap:6px;flex-wrap:wrap">${DEAL_FILTERS.map(([k, t]) => { const n = deals.filter(e => dealIn(e, k)).length; return n || k === "all" ? `<button class="chip ${dealFilter === k ? "on" : ""}" data-act="deals-filter" data-k="${k}">${t} ${n}</button>` : ""; }).join("")}</div>
-          ${deals.filter(e => dealIn(e, dealFilter)).map(dealRow).join("") || `<p class="small muted">None here.</p>`}` : ""}
+          ${byPerson(deals.filter(e => dealIn(e, dealFilter))) || `<p class="small muted">None here.</p>`}` : ""}
         ${gone.length ? `<details class="more"><summary>Ended · ${gone.length}</summary>${gone.map(e => row(e).replace('class="more eng-row"', 'class="more eng-row ended"')).join("")}</details>` : ""}
         ${!list.length && !goals.length ? `<p class="small muted">Ask for something in chat — “Need a tabla teacher online” — or open someone's card. Your agents' work shows up here.</p>` : ""}`);
     },

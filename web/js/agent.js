@@ -133,8 +133,10 @@ export async function chat(text, recent, area, open = null) {
     }
     case "request": {
       session.track("request_drafted");
-      const d = await api("/api/briefs/draft", { text, here: area });
-      if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [] };
+      let d = await api("/api/briefs/draft", { text, here: area });
+      // No place in this line: what was said just before ("I'm going to Delhi…") usually has it.
+      if (!d.draft && recent.length) d = await api("/api/briefs/draft", { text: `${recent.slice(-2).join(". ")}. ${text}`, here: area }).catch(() => d);
+      if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [], askArea: /area/i.test(d.problem ?? "") ? text : null };
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
       return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before sellers' agents can act on this — tap what fits, or send it as it is." : "Here's what your agent will ask for. Adjust it, then send.",
         cards: [{ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" }] };

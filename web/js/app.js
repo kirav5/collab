@@ -117,7 +117,8 @@ async function boot() {
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
         <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><label class="mic" for="photo-in" title="Sell from a photo" aria-label="Sell something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
-        <div class="row" id="composer-note"></div></form></div></section></div>`;
+        <div class="row" id="composer-note"></div></form></div></section>
+      <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
   voiceInput();
   $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
@@ -196,9 +197,11 @@ function groupSessions(list) {
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
   const titles = { context: "About me", people: "My shop", sharing: "Privacy", requests: "Deals", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
-  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
+  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
-  $("#composer").hidden = S.screen !== "chat";
+  $("#panel-title").innerHTML = S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
+  $("#app").classList.toggle("split", S.screen !== "chat");
+  $("#panel").hidden = S.screen === "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
   $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
 }
@@ -225,23 +228,27 @@ function animate(root, opened) {
 }
 
 async function paintContent(soft = false) {
-  const el = $("#content");
+  const el = $("#content"), panel = $("#panel-body");
   if (!el) return;
   // One paint at a time; a paint asked for meanwhile runs right after (a hard one wins over a soft one).
   if (painting) { again = again === false ? false : soft; return; }
   // A live refresh never rewrites what the owner is typing, nor what's under a pressed pointer.
-  if (soft && el.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (soft && (el.contains(document.activeElement) || panel.contains(document.activeElement)) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   if (soft && pointerDown) { afterPointer = true; return; }
   painting = true;
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
-    const html = `<div class="inner">${S.screen === "chat" ? await chatHTML() : await screens[S.screen].html(S)}</div>`;
+    const chat = `<div class="inner">${await chatHTML()}</div>`, side = S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
+    const html = chat + "\u0000" + side;
     // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
     if (soft && html === lastHTML) return;
+    const chatChanged = chat !== lastHTML.split("\u0000")[0];
     lastHTML = html;
-    el.innerHTML = html;
-    animate(el, S.screen !== lastScreen); lastScreen = S.screen;
-    if (S.screen === "chat" && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    if (chatChanged || !soft) el.innerHTML = chat;
+    panel.innerHTML = side;
+    animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen); lastScreen = S.screen;
+    if (chatChanged && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    if (!soft && S.screen !== "chat") panel.scrollTop = 0;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
     painting = false;
@@ -630,6 +637,8 @@ async function send(text, offerFactId = null) {
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
   const user = { id: id(), role: "user", text, at: now() };
   const reply = { id: id(), role: "agent", text: "", at: now(), pending: "Thinking", cards: [] };
+  const phrases = ["Thinking", "Reading your context", "Working it out", "Nearly there"]; let ph = 0;
+  const ticker = setInterval(() => { const l = document.querySelector(".thinking .label"); if (l) l.textContent = phrases[++ph % phrases.length]; }, 1800);
   cur.messages.push(user, reply);
   await saveSession(cur);
   S.screen = "chat";
@@ -638,13 +647,19 @@ async function send(text, offerFactId = null) {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
     // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
     const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
+    // "Say the area you mean" was the last reply: a short answer ("delhi") completes that request.
+    const asked = !cur.to && S.pendingAsk && text.split(/\s+/).length <= 4 && !/\b(need|want|find|remember|sell|book)\b/i.test(text);
+    if (asked) { text = `${S.pendingAsk} in ${text}`; user.text = text; }
+    S.pendingAsk = null;
     const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open);
+    if (r.askArea) S.pendingAsk = r.askArea;
     Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
   } catch (e) {
     // A refusal (not enough in stock, over budget…) is said as it is; when there's an offer that fits, it's one tap away.
     Object.assign(reply, { pending: null, text: e.status && e.status < 500 ? e.message : `Something went wrong: ${e.message}`,
       ...(e.data?.suggest ? { cards: [{ type: "suggest", options: [{ label: e.data.suggest, text: e.data.suggest }], hint: "Sends it as your offer." }] } : {}) });
   }
+  clearInterval(ticker);
   await saveSession(cur);
   S.sending = false;
   paint();
@@ -978,7 +993,15 @@ async function cardAction(a, el, { s, m, c }) {
       c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
       (c.answered ??= []).push({ question: q.question, answer: opt });
       const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category }).catch(() => null);
-      if (r?.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; c.gate = r.gate ?? c.gate; c.gateAnswers = {}; }
+      if (r?.draft) {
+        const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
+        const unchosen = new Set(q.options.filter(o => o !== opt).map(o => o.toLowerCase()));
+        c.draft.need.filters = (c.draft.need.filters ?? []).filter(f => !unchosen.has(String(f.value).toLowerCase()));
+        // The question is answered: it isn't asked again even if the model re-lists it.
+        c.gate = r.gate ? { ...r.gate, missing: r.gate.missing.filter(m => !(c.answered ?? []).some(x => x.question === m.question)) } : c.gate;
+        if (c.gate && !c.gate.missing.length) c.gate = { ...c.gate, ok: true };
+        c.gateAnswers = {};
+      }
     } else {
       // On an offering it's one more detail buyers see; answered, the gate opens.
       const lbl = q.question.replace(/\?$/, "").split(/\s+/).slice(0, 4).join(" ");

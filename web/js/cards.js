@@ -133,9 +133,12 @@ export function rulesList(lines) {
 function gateBanner(c, at, kind) {
   const g = c.gate;
   if (!g || g.ok || c.gateOverride) return "";
+  // Answered questions aren't asked twice.
+  const open = g.missing.map((q, j) => [q, j]).filter(([q, j]) => !c.gateAnswers?.[j] && !(c.answered ?? []).some(x => x.question === q.question));
+  if (!open.length) return "";
   return `<div class="card peri slim">${label(g.broad ? "Too broad for other agents to narrow down" : "A little vague for other agents to act on", "peri")}
     <span class="small muted">Answer what fits and it goes out ready — or ${kind === "offer" ? "publish" : "send"} it as it is.</span>
-    ${g.missing.map((q, j) => `<div class="stack" style="gap:6px"><span class="small">${esc(q.question)}</span><div class="row">${q.options.map((o, k) => `<button class="chip ${c.gateAnswers?.[j] === o ? "on" : ""}" data-act="gate-answer" data-j="${j}" data-k="${k}" ${at}>${esc(o)}</button>`).join("")}</div></div>`).join("")}
+    ${open.map(([q, j]) => `<div class="stack" style="gap:6px"><span class="small">${esc(q.question)}</span><div class="row">${q.options.map((o, k) => `<button class="chip ${c.gateAnswers?.[j] === o ? "on" : ""}" data-act="gate-answer" data-j="${j}" data-k="${k}" ${at}>${esc(o)}</button>`).join("")}</div></div>`).join("")}
     <div class="row"><button class="btn quiet compact" data-act="gate-override" ${at}>${kind === "offer" ? "Publish" : "Send"} as it is</button></div></div>`;
 }
 
@@ -269,7 +272,7 @@ function hoursPick(c, at) {
 
 
 function offerCard(c, at) {
-  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Live. ${autonomyOf(c) === "close" ? `Your agent negotiates and agrees${c.floor ? ` down to ${money(c.floor)} (private)` : ""} for ${c.days ?? 7} days.` : autonomyOf(c) ? `Your agent negotiates${c.floor ? ` down to ${money(c.floor)} (private)` : ""}. You confirm each deal.` : "Your agent asks you before each move."}</p><div class="row"><button class="btn quiet compact" data-act="screen" data-screen="context">Stock, hours and rules · About me</button></div></div>`;
+  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Live. ${autonomyOf(c) === "close" ? `Your agent negotiates and agrees${c.floor ? ` down to ${money(c.floor)} (private)` : ""} for ${c.days ?? 7} days.` : autonomyOf(c) ? `Your agent negotiates${c.floor ? ` down to ${money(c.floor)} (private)` : ""}. You confirm each deal.` : "Your agent asks you before each move."}</p><div class="row"><button class="btn secondary compact" data-act="screen" data-screen="context" title="Stock, bookable hours, your terms and your agent's rules">Manage this listing</button></div></div>`;
   const o = c.offer;
   return `<div class="card" ${at}>
     <div class="row">${label(!o && c.basics ? `Offering · ${c.basics.label}` : c.photo ? "Offering · read from your photo by Gemini" : "Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
@@ -782,6 +785,6 @@ function inboxBlock(i) {
 export function messageHTML(m) {
   if (m.role === "user") return `<div class="msg-user" data-anim="m-${esc(m.id)}"><div class="bubble">${esc(m.text)}</div>${label(time(m.at))}</div>`;
   return `<div class="msg-agent" data-anim="m-${esc(m.id)}" data-anim-sig="${m.pending ? "p" : "d"}"><div class="row">${label("Collab", "sq ink")}${label("· " + (m.engine ?? "Gemini"))}${label("· " + time(m.at))}</div>
-    ${m.pending ? `<span class="thinking"><span class="spinner"></span>${label(m.pending)}</span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}
+    ${m.pending ? `<span class="thinking"><span class="spinner"></span><span class="label">${esc(m.pending)}</span></span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}
     ${(m.cards ?? []).map((c, i) => renderCard(c, m, i)).join("")}</div>`;
 }
