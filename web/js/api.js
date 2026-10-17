@@ -172,13 +172,22 @@ export async function signIn() {
  * A read shared by everything that asks for it within a few seconds (screens repaint on every live update, and several
  * parts of a screen want the same list). Any write clears it.
  */
-const reads = new Map();
+const reads = new Map(), kept = new Map();
+let onNewer = () => {};
+/** Called when a read shown from what was kept turns out to have changed (the app repaints). */
+export const onFreshRead = fn => { onNewer = fn; };
 export function cached(path, ttl = 10_000) {
   const hit = reads.get(path);
   if (hit && Date.now() - hit.at < ttl) return hit.p;
-  const p = api(path).catch(e => { reads.delete(path); throw e; });
+  const p = api(path).then(v => {
+    const before = kept.get(path); kept.set(path, v);
+    if (before !== undefined && JSON.stringify(before) !== JSON.stringify(v)) onNewer();
+    return v;
+  }).catch(e => { reads.delete(path); throw e; });
   reads.set(path, { at: Date.now(), p });
-  return p;
+  // Opened again: drawn at once from what was shown last, and repainted if the server's answer is different. After any
+  // write nothing is kept (what's shown is never older than the person's own change).
+  return kept.has(path) ? Promise.resolve(kept.get(path)) : p;
 }
 
 export async function api(path, body) {
@@ -198,7 +207,7 @@ export async function api(path, body) {
     return Promise.race([session.appCheck(limited, force), new Promise(r => setTimeout(() => r(null), 5000))]).catch(() => null);
   };
   // A write may change anything a cached read shows — except chat-history syncs and push registration, which don't.
-  if (body !== undefined && !/^\/api\/(chats|push\/token)(\/|$)/.test(path)) reads.clear();
+  if (body !== undefined && !/^\/api\/(chats|push\/token)(\/|$)/.test(path)) { reads.clear(); kept.clear(); }
   const send = async force => {
     const t = await tokenFor(force);
     return fetch(path, { method: body === undefined ? "GET" : "POST", headers: t ? { ...headers, "x-firebase-appcheck": t } : headers, body: body === undefined ? undefined : JSON.stringify(body) });

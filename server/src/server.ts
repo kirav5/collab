@@ -37,7 +37,8 @@ import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { suggestTerms } from "./core/terms.ts";
-import { AnswersTask, StartIdeasTask, NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
+import { distanceKm } from "./market/geo.ts";
+import { type Available, AnswersTask, StartIdeasTask, NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
 import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.ts";
 import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
@@ -399,8 +400,17 @@ app.get("/api/start", route(async req => {
   const offers = facts.filter(f => f.tier === "public" && f.offer).map(f => f.offer!.title.split(" · ")[0]).slice(0, 6);
   const asked = briefs.sort((a, b) => b.createdAt - a.createdAt).map(b => b.shared.title).filter((t, i, a) => a.indexOf(t) === i).slice(0, 6);
   const bought = es.filter(e => e.phase === "agreed" && e[e.seller ?? "provider"].uid !== req.uid).map(e => e.offer.title.split(" · ")[0]).slice(0, 6);
-  const d = await decide(model, StartIdeasTask, { area: p.area?.name ?? "", offers, asked, bought });
-  return { ideas: d.output, byModel: d.byModel };
+  // What others offer now, nearest first (online ones count anywhere), leaning to what this person asked for before.
+  const pub = ((await db.find(FACTS, [["tier", "==", "public"]], 300)) as Fact[]).filter(f => f.offer && f.owner !== req.uid && f.offer.status !== "sold" && !/test: hostile/i.test(f.offer.title));
+  const history = `${asked.join(" ")} ${bought.join(" ")}`.toLowerCase();
+  const near = (f: Fact) => (p.area?.lat != null && f.offer!.place?.lat != null ? distanceKm(p.area.lat, p.area.lon, f.offer!.place.lat, f.offer!.place.lon) : 50);
+  const scored = pub.map(f => ({ f, km: near(f), fits: f.offer!.title.toLowerCase().split(/\W+/).filter(w => w.length > 3 && history.includes(w)).length }))
+    .filter(x => x.km <= 40 || /online/i.test(`${x.f.offer!.place?.name} ${x.f.offer!.attributes?.mode ?? ""}`))
+    .sort((a, b) => b.fits - a.fits || a.km - b.km);
+  const seenOwner = new Set<string>(), available: Available[] = [];
+  for (const { f } of scored) { if (seenOwner.has(f.owner) || available.length >= 24) continue; seenOwner.add(f.owner); available.push({ id: f.id, title: f.offer!.title, where: f.offer!.place?.name ?? "Online" }); }
+  const d = await decide(model, StartIdeasTask, { area: p.area?.name ?? "", offers, asked, bought, available });
+  return { ideas: d.output.map(({ label, text }) => ({ label, text })), byModel: d.byModel };
 }));
 /**
  * Delete the account: the agent stops at once, everything the person keeps (notes, listings, rules, limits, stock,

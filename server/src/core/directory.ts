@@ -105,7 +105,7 @@ export interface Found {
 }
 
 /** People whose Public facts fit a brief, best first. */
-export async function search(db: Docs, model: Model | null, brief: Brief, me: string): Promise<{ found: Found[]; overBudget: Found[]; rankedByModel: boolean; considered: number }> {
+export async function search(db: Docs, model: Model | null, brief: Brief, me: string): Promise<{ found: Found[]; overBudget: Found[]; closest: Found[]; rankedByModel: boolean; considered: number }> {
   const query = `${brief.shared.title}. ${brief.shared.summary} ${brief.shared.requirements.map(r => `${r.label}: ${r.value}`).join("; ")}`;
   const v = await model?.embed?.([query], "query");
   let near = v ? await db.nearest(FACTS, "embedding", v[0], [["tier", "==", "public"]], 60) : [];
@@ -164,7 +164,21 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
     for (const c of list) c.why = r.output.why[c.fact.id] ?? null;
     byModel = r.byModel;
   }
-  return { found: list.slice(0, 8).map(c => ({ ...c, fact: { id: c.fact.id, text: c.fact.text, offer: c.fact.offer } })), overBudget: overBudget.slice(0, 3), rankedByModel: byModel, considered: best.size };
+  // Nothing fits exactly: the nearest real listings on Collab, whatever their category or area, so a request never
+  // ends with nothing to try. Shown as "not an exact fit" — the owner decides whether their agent asks.
+  const nearest: Found[] = [];
+  if (!list.length && !overBudget.length) {
+    const seen = new Set<string>();
+    for (const { doc, distance } of [...(near as { doc: Fact; distance: number }[])].sort((x, y) => x.distance - y.distance)) {
+      if (nearest.length >= 3 || distance > 0.75 || doc.owner === me || seen.has(doc.owner) || !doc.offer || doc.offer.status === "sold") continue;
+      seen.add(doc.owner);
+      const profile = (await db.get(PROFILES, doc.owner)) as Profile | null;
+      if (!profile || profile.paused || (profile as { deleted?: boolean }).deleted) continue;
+      nearest.push({ profile: { uid: doc.owner, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: await stats(db, doc.owner) },
+        fact: { id: doc.id, text: doc.text, offer: doc.offer }, why: "Closest on Collab — not an exact fit", distanceKm: null, met: [], unknown: [], score: 1 - distance });
+    }
+  }
+  return { found: list.slice(0, 8).map(c => ({ ...c, fact: { id: c.fact.id, text: c.fact.text, offer: c.fact.offer } })), overBudget: overBudget.slice(0, 3), closest: nearest, rankedByModel: byModel, considered: best.size };
 }
 
 /**

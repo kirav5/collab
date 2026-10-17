@@ -105,7 +105,9 @@ export function geminiFromEnv(env = process.env): (Model & { status(): ModelStat
     async grounded(item, area, per = "item") {
       // Low thinking keeps a search-grounded answer to ~10–15 s; a call that hangs is cut at 22 s and tried once more on
       // the main model (shorter), so a person waits ~35 s at worst instead of watching a spinner for 45.
-      for (const [selected, timeout] of [[policy().models.grounding, 22_000], [models[0], 13_000]] as const) {
+      // A second try goes to a different, faster model — the same one again just times out again.
+      const backup = [...cheap, ...models].find(m => m !== policy().models.grounding) ?? models[0];
+      for (const [selected, timeout] of [[policy().models.grounding, 18_000], [backup, 16_000]] as const) {
       const started = Date.now();
       try {
         const res = await ai.models.generateContent({ model: selected,
@@ -127,7 +129,8 @@ export function geminiFromEnv(env = process.env): (Model & { status(): ModelStat
       return null;
     },
     async search(prompt, task) {
-      for (const [selected, timeout] of [[policy().models.grounding, 25_000], [models[0], 15_000]] as const) {
+      const backup = [...cheap, ...models].find(m => m !== policy().models.grounding) ?? models[0];
+      for (const [selected, timeout] of [[policy().models.grounding, 20_000], [backup, 16_000]] as const) {
         const started = Date.now();
         try {
           const res = await ai.models.generateContent({ model: selected, contents: prompt,
