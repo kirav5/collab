@@ -81,7 +81,8 @@ export async function ingestInventory(db: Docs, secret: string, grantId: string,
     if (r.source === "connector" && observedAt < r.observedAt) { ignored = true; return null; }
     const onHand = ev.type === "stock.set" ? Number(ev.onHand) : r.onHand + Number(ev.delta);
     if (!Number.isInteger(onHand) || onHand < 0) { ignored = true; return null; }
-    return { ...r, onHand, source: "connector", observedAt: Math.min(observedAt, now), revision: r.revision + 1, updatedAt: now };
+    // A restock from the shop's own system re-arms the low-stock alert, as a count set here does.
+    return { ...r, onHand, source: "connector", observedAt: Math.min(observedAt, now), revision: r.revision + 1, updatedAt: now, ...(onHand > r.onHand ? { lowAlerted: false } : {}) };
   });
   await db.merge(GRANTS, g.id, { lastEventAt: now, ...(g.status === "degraded" ? { status: "active", lastError: null } : {}) });
   return { applied: !ignored, duplicate: false, ...(ignored ? { reason: "older than the current count, or invalid" } : {}) };

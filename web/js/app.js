@@ -297,7 +297,9 @@ async function sellFromPhoto(file) {
     const image = cv.toDataURL("image/jpeg", 0.82);
     const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
     input.value = "";
-    if (!(await publicIntake(r.text, null, r.photo))) toast("Couldn't make a listing from that — try typing what it is.");
+    // The preview is the copy on this phone: the server shows the photo to others only once it's on a public listing.
+    const preview = URL.createObjectURL(await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.82)));
+    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: preview }))) toast("Couldn't make a listing from that — try typing what it is.");
   } catch (err) { toast(err.message || "Couldn't read that photo."); }
 }
 
@@ -1052,17 +1054,17 @@ async function cardAction(a, el, { s, m, c }) {
     const r = await api("/api/terms/suggest", { category: c.offer?.category ?? "", text: c.publicText ?? c.text }).catch(err => { toast(err.message); return null; });
     if (r?.terms.length) c.terms = r.terms;
     else if (r) toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own.");
-    c.instant = !!el.closest(".card")?.querySelector("[data-instant-new]")?.checked;
   }
   if (a === "offer-publish") {
     if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
     busy(el, true, "Publishing");
     // The details buyers usually ask about, answered here, join the public text; the terms are saved as the seller's own.
-    const card = el.closest(".card");
-    const extra = [...card.querySelectorAll("[data-missing]")].filter(i => i.value.trim()).map(i => `${i.dataset.missing}: ${i.value.trim().replace(/[.]+$/, "")}.`)
-      .filter(x => !String(c.publicText ?? c.text).includes(x)).join(" ");
-    const terms = [...card.querySelectorAll("[data-term-text]")].map(i => ({ label: i.previousElementSibling?.value.trim() ?? "", text: i.value.trim() })).filter(t => t.label && t.text);
-    const instant = !!card.querySelector("[data-instant-new]")?.checked;
+    // All read from the card's state (what was typed is kept there), not from whichever improvement panel is open.
+    const base = String(c.publicText ?? c.text);
+    const extra = (c.missing ?? []).map(m => [m.label, String(c.missingAnswers?.[m.label] ?? "").trim()]).filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${v.replace(/[.]+$/, "")}.`).filter(x => !base.includes(x)).join(" ");
+    const terms = (c.terms ?? []).map(t => ({ label: String(t.label ?? "").trim(), text: String(t.text ?? "").trim() })).filter(t => t.label && t.text);
+    const instant = !!c.instant;
     if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
     // A note being made public is published in place (no private copy left behind).
     const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount), ...(c.photo ? { photoId: c.photo.id } : {}) });
@@ -1070,8 +1072,8 @@ async function cardAction(a, el, { s, m, c }) {
     if (fact.floorKeptPrivate) toast("Your lowest price was left out of the public text — it stays private.");
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
     // How many they have: tracked from the start, so "is it in stock?" never needs them.
-    const stock = Number(card.querySelector('[data-edit="stock"]')?.value);
-    if (fact.offer && Number.isInteger(stock) && stock >= 0 && card.querySelector('[data-edit="stock"]')?.value !== "") await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
+    const stock = c.stock;
+    if (fact.offer && Number.isInteger(stock) && stock >= 0) await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
     // Weekly hours: bookable times two weeks ahead, in the seller's own time zone, refilled by the server.
     if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message));
     if (c.offer && c.floor) {

@@ -25,7 +25,7 @@ export function passHTML(d, { qr = "", seller = false, link = "", manage = false
   const state = d.cancelled ? `<span class="pass-state" style="color:var(--danger)">Cancelled</span>`
     : d.collectedAt ? `<span class="pass-state done">✓ ${k.done} · ${esc(at(d.collectedAt))}</span>` : `<span class="pass-state">${k.ready}</span>`;
   // A booking can still move or be called off until it happens — by either side, from the pass.
-  const changeable = manage && d.kind === "booking" && d.slot && !d.collectedAt && !d.cancelled;
+  const changeable = manage && d.kind === "booking" && d.slot && d.slot > Date.now() / 1000 && !d.collectedAt && !d.cancelled;
   return `<div class="pass ${d.collectedAt ? "is-done" : ""}">
     <div class="pass-top"><span class="label sq ink">${k.name}</span>${state}</div>
     ${qr && !d.collectedAt && !d.cancelled ? `<div class="pass-qr" aria-label="${esc(k.name)} QR code">${qr}</div>` : ""}

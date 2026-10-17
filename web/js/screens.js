@@ -33,6 +33,9 @@ async function sharedLog() {
  * Other people only ever appear as counts — the server sends nothing else. Read at most once a minute (each read is a
  * metered call); an empty part is left out, and a forecast is shown only when the response has one.
  */
+/** The last insights card drawn (kept between repaints so the slot never flickers empty). */
+let shopInsightsHTML = "";
+
 async function insightsCard() {
   const facts = await cached("/api/facts").catch(() => []);
   if (!facts.some(f => f.tier === "public" && f.offer)) return "";
@@ -50,7 +53,7 @@ async function insightsCard() {
     tile("Prices agreed", "fresh", (i.prices ?? []).slice(0, 3).map(p => row(p.item, `${esc(money(p.agreed))}${p.listed != null ? `<span class="faint">/${esc(money(p.listed))}</span>` : ""}`)), "agreed / listed"),
     tile("Your buyers", "fresh", b.total ? [row("New", n(b.total - b.repeat)), row("Repeat", n(b.repeat)), row("Bargained", n(b.bargained)), row("At your price", n(b.atListed))] : []),
     tile("Often bought together", "accent", (i.together ?? []).slice(0, 3).map(t => row(t.item, n(t.buyers))), "by your buyers"),
-    tile("Next 7 days", "talk", f?.available ? (f.items ?? []).slice(0, 3).map(x => row(x.label, n(x.next7))) : [], "expected sales"),
+    tile("Next 7 days", "talk", f?.available ? (f.items ?? []).slice(0, 3).map(x => row(x.label, n(x.next7))) : [], "requests expected near you"),
   ].filter(Boolean);
   const lines = (i.summary ?? []).filter(Boolean);
   const head = `<div class="row">${label("Insights", "sq ink")}<span class="small faint end">${n(i.days) || 30} days</span></div>`;
@@ -389,7 +392,11 @@ export const screens = {
 
   people: {
     async html(S) {
-      const [contacts, insights] = await Promise.all([cached("/api/contacts").catch(() => []), insightsCard()]);
+      const contacts = await cached("/api/contacts").catch(() => []);
+      // Insights take a moment (they read a month of conversations and ask Gemini): the screen draws at once with the
+      // last card (or a placeholder), and the card fills its slot when it's ready.
+      insightsCard().then(h => { if (h === shopInsightsHTML) return; shopInsightsHTML = h; const slot = document.getElementById("shop-insights"); if (slot) slot.innerHTML = h; }).catch(() => {});
+      const insights = `<div id="shop-insights">${shopInsightsHTML}</div>`;
       const card = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
       let qr = "";

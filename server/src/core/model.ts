@@ -158,6 +158,8 @@ export interface Engagement {
   noteIdeas?: string[];
   /** What the buyer asked for when the seller has fewer in stock (then `quantity` is what's there). */
   wanted?: number;
+  /** What capped it: the stock, or the seller's own per-buyer rule (which isn't missed demand). */
+  wantedLimit?: "stock" | "rule";
   reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable" | "choose_slot";
     expiresAt: number | null; reason?: string; slotId?: string | null; slot?: { start: number; end: number } | null };
   /** The requester's goal this conversation is a task of (see core/goals.ts). */

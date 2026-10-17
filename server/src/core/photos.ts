@@ -12,11 +12,15 @@ import { hasContact } from "../market/text.ts";
 import { newId } from "../market/types.ts";
 
 export const PHOTOS = "photos";
-export interface PhotoRecord { id: string; owner: string; mimeType: string; where: "gcs" | "doc"; object?: string; data?: string; bytes: number; createdAt: number }
+export interface PhotoRecord { id: string; owner: string; mimeType: string; where: "gcs" | "doc"; object?: string; data?: string; bytes: number; createdAt: number;
+  /** The public listing it's on; until then it's served to no one (the seller's preview is a copy on their phone). */
+  factId?: string | null }
 export interface PhotoRead { item: string; details: string; condition: string; text: string }
 
 const CONDITIONS = ["new", "like new", "good", "fair", "for parts", "n/a"];
-export const MAX_PHOTO_BYTES = 900_000;
+// Small enough to fit one database record (1 MiB, base64) when there's no bucket; phones send about 150–350 KB.
+export const MAX_PHOTO_BYTES = 700_000;
+export const photoIdOk = (id: unknown): id is string => typeof id === "string" && /^[a-z0-9]{6,40}$/i.test(id);
 
 export const PhotoTask: Task<{ image: { mimeType: string; data: string }; caption: string; area: string }, PhotoRead> = {
   name: "offer.photo",
@@ -54,6 +58,18 @@ export async function readPhoto(model: Model | null, image: { mimeType: string; 
 const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/devstorage.read_write"] });
 const bucketUrl = (bucket: string, name: string) => `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(name)}`;
 
+/** Removes a photo (its listing was deleted): the record, and the object in Cloud Storage. */
+export async function deletePhoto(db: Docs, id: string, bucket: string | undefined): Promise<void> {
+  if (!photoIdOk(id)) return;
+  const rec = (await db.get(PHOTOS, id)) as PhotoRecord | null;
+  if (!rec) return;
+  if (rec.where === "gcs" && bucket && rec.object) {
+    try { const client = await auth.getClient(); await client.request({ url: bucketUrl(bucket, rec.object), method: "DELETE" }); }
+    catch (err) { log.warn("photo couldn't be removed from Cloud Storage", { id, error: String(err).slice(0, 160) }); }
+  }
+  await db.delete(PHOTOS, id);
+}
+
 /** Keeps a photo: in Cloud Storage when the bucket is configured and writable, else in the database. */
 export async function savePhoto(db: Docs, owner: string, mimeType: string, data: string, bucket: string | undefined, now: number): Promise<PhotoRecord> {
   const id = newId(), bytes = Math.floor((data.length * 3) / 4);
@@ -75,10 +91,13 @@ export async function savePhoto(db: Docs, owner: string, mimeType: string, data:
   return rec;
 }
 
-/** The photo's bytes, wherever it's kept. */
+/** The photo's bytes, wherever it's kept — only while it's on a public listing. */
 export async function loadPhoto(db: Docs, id: string, bucket: string | undefined): Promise<{ mimeType: string; body: Buffer } | null> {
+  if (!photoIdOk(id)) return null;
   const rec = (await db.get(PHOTOS, id)) as PhotoRecord | null;
-  if (!rec) return null;
+  if (!rec?.factId) return null;
+  const f = (await db.get("facts", rec.factId)) as { tier: string; offer?: { photo?: string } | null } | null;
+  if (!f || f.tier !== "public" || f.offer?.photo !== `/public/photos/${id}`) return null;
   if (rec.where === "doc") return rec.data ? { mimeType: rec.mimeType, body: Buffer.from(rec.data, "base64") } : null;
   if (!bucket || !rec.object) return null;
   try {

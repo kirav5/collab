@@ -183,7 +183,10 @@ export async function offerReply(text, d, extra = {}) {
   const said = d.offer ? "Here's your listing. Answer what you can — your agent handles those questions for you."
     : d.basics ? `Looks like ${d.basics.label.toLowerCase()}. Add a price and area to list it.`
     : "This will be a public note others' agents can find.";
-  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review", ...extra }] };
+  // A count the seller stated ("4 available") starts their stock, so it doesn't have to be typed again.
+  const stated = Number(d.offer?.attributes?.quantity);
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review",
+    ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}), ...extra }] };
 }
 
 // MARK: - What only this device can do

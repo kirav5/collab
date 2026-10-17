@@ -168,7 +168,8 @@ function mayClose(l: DelegatedLimit | null, e: Engagement, s: Side, deal: Propos
 }
 
 /** An offer for more units than the seller has in tracked, confirmed stock — refused before anyone is asked. */
-export class ShortStock extends Error { available: number; constructor(available: number, message: string) { super(message); this.available = available; } }
+/** Fewer than asked can be had: out of stock, or (`byRule`) the seller's own per-buyer limit — which isn't missed demand. */
+export class ShortStock extends Error { available: number; byRule: boolean; constructor(available: number, message: string, byRule = false) { super(message); this.available = available; this.byRule = byRule; } }
 export async function inStock(db: Docs, e: Engagement): Promise<number | null> {
   if (!e.offer.factId) return null;
   const r = await resourceFor(db, e.offer.factId);
@@ -705,7 +706,7 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   const free = await inStock(db, e);
   if (cap && units > cap && (free === null || cap <= free)) {
     const mine = s === sellerOf(e);
-    throw new ShortStock(cap, mine ? `Your rule is at most ${cap} per buyer.` : `${e[sellerOf(e)].name} sells at most ${cap} per buyer — offer for ${cap} instead?`);
+    throw new ShortStock(cap, mine ? `Your rule is at most ${cap} per buyer.` : `${e[sellerOf(e)].name} sells at most ${cap} per buyer — offer for ${cap} instead?`, true);
   }
   // More than the seller has can't be sold: refused before anyone is asked, with what's there.
   if (free !== null && free < units) {

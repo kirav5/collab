@@ -124,6 +124,9 @@ export async function moveHold(db: Docs, id: string, holdId: string, slotId: str
     const h = r.holds.find(x => x.id === holdId && (x.state === "held" || x.state === "committed"));
     if (!h) throw new CapacityError("NOT_FOUND", "This booking isn't active any more.");
     if (h.slotId === slotId) throw new CapacityError("VERSION_CONFLICT", "That's already the booked time.");
+    // A time that has started has happened (or been missed): it can't be moved to another one.
+    const was = r.slots.find(s => s.id === h.slotId);
+    if (was && was.start <= now) throw new CapacityError("VERSION_CONFLICT", "This booking's time has started — it can't be changed now.");
     to = r.slots.find(s => s.id === slotId) ?? null;
     if (!to || to.start <= now) throw new CapacityError("NOT_FOUND", "Pick an upcoming time.");
     if (available(r, now, slotId) < h.qty) throw new CapacityError("CAPACITY_UNAVAILABLE", "That time was just taken — pick another.");
@@ -136,6 +139,8 @@ export async function moveHold(db: Docs, id: string, holdId: string, slotId: str
 export async function cancelBooking(db: Docs, id: string, holdId: string, now: number): Promise<Resource> {
   return change(db, id, now, r => {
     if (r.type !== "slots") throw new CapacityError("NOT_FOUND", "Only a booked time can be cancelled here.");
+    const h = r.holds.find(x => x.id === holdId), was = h ? r.slots.find(s => s.id === h.slotId) : null;
+    if (was && was.start <= now) throw new CapacityError("VERSION_CONFLICT", "This booking's time has started — it can't be cancelled now.");
     return { ...r, holds: r.holds.map(x => (x.id === holdId && (x.state === "held" || x.state === "committed") ? { ...x, state: "released" as const } : x)) };
   });
 }
@@ -153,9 +158,12 @@ export async function lowStock(db: Docs, id: string, lowAt: number, now: number)
   let told: { left: number; title: string; owner: string; factId: string | null } | null = null;
   await db.update(RESOURCES, id, (r: Resource | null) => {
     told = null;
-    if (!r || r.type !== "quantity" || r.lowAlerted) return null;
-    const left = available(r, now);
-    if (left > lowAt) return null;
+    if (!r || r.type !== "quantity") return null;
+    // What's physically left (sold units are already off); another buyer's short unpaid hold isn't a sale.
+    const left = r.onHand;
+    // Back above the line (restocked here, or by the shop's billing system): the next dip is told again.
+    if (left > lowAt) return r.lowAlerted ? { ...r, lowAlerted: false, updatedAt: now } : null;
+    if (r.lowAlerted) return null;
     told = { left, title: r.title, owner: r.owner, factId: r.factId };
     return { ...r, lowAlerted: true, updatedAt: now };
   });

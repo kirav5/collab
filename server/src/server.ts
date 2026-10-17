@@ -36,7 +36,7 @@ import { suggestTerms } from "./core/terms.ts";
 import { NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
 import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.ts";
 import { analytics } from "./core/analytics.ts";
-import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, loadPhoto, readPhoto, savePhoto } from "./core/photos.ts";
+import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
 import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
 import { type AgentRules, type RulesContext, RulesTask, checkRules, readRules, rulesLines } from "./core/rules.ts";
 import { orderText, storefront } from "./core/storefront.ts";
@@ -349,7 +349,7 @@ const missed = (m: Omit<DemandMiss, "id">, category: string | null, area: string
 app.get("/api/shop/insights", route(async req => {
   const p = await me(req.uid);
   await spend(req.uid, 1);
-  const [i, forecast] = await Promise.all([shopInsights(db, model, req.uid, p.area ?? null, now(), num(req.query.days, 1, 90) ?? 30),
+  const [i, forecast] = await Promise.all([shopInsights(db, model, req.uid, p.area ?? null, now(), num(req.query.days, 7, 90) ?? 30),
     bq.forecastFor(db, req.uid, p.area?.name ?? null, now())]);
   return { ...i, forecast };
 }));
@@ -504,7 +504,7 @@ app.post("/api/people/:handle/order", route(async req => {
   try { await offerDeal(db, e, "requester", each, said, said, quantity, false); }
   catch (err) {
     if (err instanceof ShortStock) {
-      await missed({ seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: err.available, buyer: req.uid, at: now() }, f.offer.category, p.area?.name ?? null);
+      if (!err.byRule) await missed({ seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: err.available, buyer: req.uid, at: now() }, f.offer.category, p.area?.name ?? null);
       throw new HttpError(409, err.message, "CAPACITY_UNAVAILABLE", { available: err.available });
     }
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
@@ -829,9 +829,10 @@ app.post("/api/facts", route(async req => {
     // A chat memory is always Private: sharing it means rewriting it as a fact of its own.
     ...(b.source === "chat" ? { source: "chat" as const, tier: "private" as const } : {}) }));
   // A photo the owner took for this listing goes on it (only their own photo, only on a public offering).
-  const photoId = typeof b.photoId === "string" ? b.photoId.slice(0, 40) : null;
+  const photoId = photoIdOk(b.photoId) ? b.photoId : null;
   const ph = photoId && fact.offer && b.tier === "public" ? ((await db.get(PHOTOS, photoId)) as PhotoRecord | null) : null;
   const withPhoto = ph && ph.owner === req.uid ? ((await db.update(FACTS, fact.id, (cur: Fact | null) => (cur?.offer ? { ...cur, offer: { ...cur.offer, photo: `/public/photos/${ph.id}` } } : null))) as Fact | null) : null;
+  if (withPhoto && ph) await db.merge(PHOTOS, ph.id, { factId: fact.id });
   const out = withPhoto ? publicFact(withPhoto) : fact;
   return body === raw ? out : { ...out, floorKeptPrivate: true };
 }));
@@ -859,6 +860,8 @@ app.post("/api/facts/:id/delete", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
   if (!f || f.owner !== req.uid) throw new HttpError(404, "not found");
   await db.delete(FACTS, f.id);
+  const photo = f.offer?.photo?.match(/^\/public\/photos\/([a-z0-9]+)$/i)?.[1];
+  if (photo) await deletePhoto(db, photo, env.PHOTO_BUCKET).catch(() => {});
   await db.delete(LIMITS, `fact:${f.id}`);
   for (const a of await db.find(ANSWERS, [["factId", "==", f.id]], 200)) await db.delete(ANSWERS, docId(`${f.id}:${savedKey(a.question)}`));
   return { ok: true };
@@ -1066,7 +1069,7 @@ app.post("/api/briefs/:id/engage", route(async req => {
     const cap = f.offer?.maxPerBuyer;
     const free = want > 1 && f.offer ? Math.min(await inStock(db, e) ?? Infinity, cap ?? Infinity) : null;
     if (free !== null && Number.isFinite(free) && free < want) {
-      if (free > 0) { e.quantity = free; e.wanted = want; e.events.push({ at: now(), who: "system", text: `${p.name} ${cap === free ? `sells at most ${free} per buyer` : `has ${free} in stock`} — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
+      if (free > 0) { e.quantity = free; e.wanted = want; e.wantedLimit = cap === free && (await inStock(db, e) ?? Infinity) > free ? "rule" : "stock"; e.events.push({ at: now(), who: "system", text: `${p.name} ${cap === free ? `sells at most ${free} per buyer` : `has ${free} in stock`} — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
       else e.events.push({ at: now(), who: "system", text: `${p.name} is out of stock right now — you can still ask when more come in.` });
     }
     if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
@@ -1235,7 +1238,8 @@ app.post("/api/engagements/:id/pay", route(async req => {
   // crashed request) can be taken over.
   const t0 = now();
   const claimable = (p: any) => p?.status === "awaiting" || (p?.status === "paying" && t0 - (p.claim?.at ?? 0) > policy().timing.paymentClaimStaleSec);
-  const claimed = (await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur && cur.phase === "agreed" && claimable(cur.payment)
+  if (before.fulfilment?.state === "cancelled") throw new HttpError(409, "This deal was cancelled — nothing to pay.", "VERSION_CONFLICT");
+  const claimed = (await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur && cur.phase === "agreed" && cur.fulfilment?.state !== "cancelled" && claimable(cur.payment)
     ? { ...cur, payment: { ...cur.payment!, status: "paying", claim: { key, at: t0 } } } : null))) as Engagement | null;
   if (!claimed) {
     const cur = await load(db, id);
@@ -1341,8 +1345,12 @@ app.post("/api/engagements/:id/booking", route(async req => {
   const side = e.requester.uid === req.uid ? "requester" : "provider", r = e.reservation;
   if (e.phase !== "agreed" || !r?.holdId || !r.slotId || !["held", "committed"].includes(r.state)) throw new HttpError(409, "There's no booked time to change.", "VERSION_CONFLICT");
   if (["delivered", "accepted", "disputed", "cancelled"].includes(e.fulfilment?.state ?? "")) throw new HttpError(409, "This booking has already happened or ended.", "VERSION_CONFLICT");
+  // Only a paid booking is changed here (before paying, the buyer just picks another time), and only before it starts.
+  if (!["paid", "outside"].includes(e.payment?.status ?? "")) throw new HttpError(409, "Pay for the booking first, or pick another time before paying.", "VERSION_CONFLICT");
+  if (r.slot && r.slot.start <= now()) throw new HttpError(409, "This booking's time has started — it can't be changed or cancelled now.", "VERSION_CONFLICT");
   const me_ = e[side], other = e[side === "requester" ? "provider" : "requester"], item = e.offer.title.split(" · ")[0];
-  const when = (s: { start: number }) => new Date(s.start * 1000).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  const tz = ((await db.get(RESOURCES, r.resourceId)) as Resource | null)?.timezone || "Asia/Kolkata";
+  const when = (s: { start: number }) => new Date(s.start * 1000).toLocaleString("en-IN", { timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
   if (req.body?.action === "cancel") {
     try { await cancelBooking(db, r.resourceId, r.holdId, now()); } catch (err) { if (err instanceof CapacityError) throw new HttpError(409, err.message, err.code); throw err; }
     const settle = e.payment?.status === "paid" ? " The demo payment needs no refund." : e.payment?.status === "outside" ? " Settle any refund between you." : "";
@@ -1421,7 +1429,7 @@ app.post("/api/resources/:id/stock", route(async req => {
 // reports a problem. Each side's report also feeds the other side's track record.
 async function markDelivered(id: string, seller: "requester" | "provider", at: number, note: string) {
   await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => {
-    if (!cur || cur.phase !== "agreed" || ["delivered", "accepted", "disputed"].includes(cur.fulfilment?.state ?? "")) return null;
+    if (!cur || cur.phase !== "agreed" || ["delivered", "accepted", "disputed", "cancelled"].includes(cur.fulfilment?.state ?? "")) return null;
     return { ...cur, fulfilment: { state: "delivered", deliveredAt: at, note }, outcome: { ...(cur.outcome ?? {}), [seller]: "happened" },
       events: [...cur.events, { at, who: seller, text: note, by: "owner" }], updatedAt: at };
   });
@@ -1430,6 +1438,7 @@ app.post("/api/engagements/:id/delivered", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark this delivered.", "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
+  if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
   await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered."); await clearStats(db, e);
   const buyer = e[buyerOf(e)];
   if (buyer.uid) void pushTo(buyer.uid, `Handed over: ${e.offer.title.split(" · ")[0]}`, "Confirm it's as agreed, or report a problem.", `/?engagement=${e.id}`);
@@ -1574,7 +1583,8 @@ async function typedOffer(e: Engagement, side: "requester" | "provider", q: stri
   catch (err) {
     if (err instanceof ShortStock) {
       const seller = e[e.seller ?? "provider"];
-      if (seller.uid) await missed({ seller: seller.uid, factId: e.offer.factId, item: e.offer.title.split(" · ")[0], wanted: n, available: err.available, buyer: uid, at: now() }, e.offer.category, e.brief?.area ?? null);
+      // Missed demand is a buyer asking for more than the stock; not the seller's own offer, nor their per-buyer rule.
+      if (seller.uid && side !== (e.seller ?? "provider") && !err.byRule) await missed({ seller: seller.uid, factId: e.offer.factId, item: e.offer.title.split(" · ")[0], wanted: n, available: err.available, buyer: uid, at: now() }, e.offer.category, e.brief?.area ?? null);
       throw shortStock(err.message, err.available, offered.amount, n, isTotal);
     }
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;

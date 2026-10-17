@@ -311,6 +311,7 @@ test("ordering from a card: buy several (bounded by stock), offer a price, book 
   assert.equal(b.reservation.state, "held"); assert.equal(b.reservation.slotId, lesson.slots[1].id);
   assert.equal((await as("o-b", "/api/people/o-s")).shop.find((i: any) => i.factId === lessons.id).slots.length, 1, "the held time is no longer offered");
   assert.equal((await as("o-b", `/api/engagements/${b.id}/pickup`).catch(() => null)), null, "no pass before paying");
+  assert.equal((await raw("o-b", `/api/engagements/${b.id}/booking`, { action: "cancel" })).status, 409, "unpaid: change the time before paying instead");
   await as("o-b", `/api/engagements/${b.id}/paid-outside`, {});
   const pass = await as("o-b", `/api/engagements/${b.id}/pickup`);
   assert.equal(pass.kind, "booking"); assert.equal(pass.slot, lesson.slots[1].start);
@@ -708,13 +709,17 @@ test("a photo becomes a listing: read into a sentence, kept, served publicly, an
   const r = await as("ph-s", "/api/offers/photo", { image: png, mimeType: "image/png", caption: "Brass desk lamp, ₹450" });
   assert.match(r.text, /Brass desk lamp/); assert.match(r.text, /₹450/, "the caption's own price is kept");
   assert.equal(r.photo.stored, "doc", "no bucket configured: kept in the database");
-  const served = await fetch(B + r.photo.url);
-  assert.equal(served.status, 200); assert.equal(served.headers.get("content-type"), "image/png");
+  assert.equal((await fetch(B + r.photo.url)).status, 404, "not served until it's on a public listing");
   const f = await as("ph-s", "/api/facts", { tier: "public", text: "Brass desk lamp for sale in Indiranagar, ₹450 each", photoId: r.photo.id });
   assert.equal(f.offer.photo, r.photo.url, "on the listing");
+  const served = await fetch(B + r.photo.url);
+  assert.equal(served.status, 200); assert.equal(served.headers.get("content-type"), "image/png");
+  assert.equal((await raw("ph-s", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Indiranagar, ₹400 each", photoId: "../x" })).status, 200, "a bad photo id is ignored, not a 500");
   assert.equal((await as("ph-x", "/api/people/ph-shop")).shop.find((i: any) => i.factId === f.id).photo, r.photo.url, "buyers see it on the shop card");
   const stolen = await as("ph-x", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Indiranagar, ₹400 each", photoId: r.photo.id });
   assert.equal(stolen.offer?.photo, undefined, "someone else's photo can't be attached");
+  await as("ph-s", `/api/facts/${f.id}/delete`, {});
+  assert.equal((await fetch(B + r.photo.url)).status, 404, "deleting the listing deletes its photo");
 });
 
 test("shop insights: demand you missed (beyond stock, turned away), prices agreed, buyers — other people only as counts", async () => {

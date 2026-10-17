@@ -268,7 +268,7 @@ function offerCard(c, at) {
   const o = c.offer;
   return `<div class="card" ${at}>
     <div class="row">${label(!o && c.basics ? `Offering · ${c.basics.label}` : c.photo ? "Offering · read from your photo by Gemini" : "Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
-    ${c.photo ? `<img class="item-photo" src="${esc(c.photo.url)}" alt="Your photo">` : ""}
+    ${c.photo ? `<img class="item-photo" src="${esc(c.photo.url)}" alt="Your photo" onerror="this.remove()">` : ""}
     ${o ? `<b>${esc(o.title)}</b><p class="small muted">${esc(o.place.name)} · ${esc(o.category.replace(/-/g, " "))}</p>
       ${Object.keys(o.attributes).length ? `<dl class="kv">${Object.entries(o.attributes).filter(([k]) => k !== "negotiable").map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}` : ""}
     ${!o && c.basics ? `<p class="small muted">Price and area are required. The rest is optional.</p>` : ""}

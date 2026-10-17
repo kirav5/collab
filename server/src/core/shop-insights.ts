@@ -22,7 +22,7 @@ export async function recordMiss(db: Docs, m: Omit<DemandMiss, "id">) {
   await db.set(DEMAND, `${m.seller}:${m.factId ?? "x"}:${m.buyer}:${Math.floor(m.at / 3600)}`, { ...m, id: `${m.seller}:${m.at}` });
 }
 
-const DAY = 86_400, MIN_PEOPLE = 2;
+const DAY = 86_400, MIN_PEOPLE = 2, MIN_BUYERS = 5;
 const itemOf = (title: string) => title.split(" · ")[0].replace(/\s+/g, " ").trim().slice(0, 60);
 const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, "").replace(/\b(a|an|the|some|for|sale|in|of)\b/g, " ").replace(/\s+/g, " ").trim();
 const unitsOf = (e: Engagement) => { const d = e.negotiation.deal; return d?.items?.length ? d.items.reduce((n, l) => n + l.quantity, 0) : (d?.terms?.quantity ?? 1) > 1 ? d!.terms!.quantity! : 1; };
@@ -49,7 +49,8 @@ export async function shopInsights(db: Docs, model: Model | null, uid: string, a
   const offers = facts.filter(f => f.tier === "public" && f.offer);
   const cats = new Set(offers.map(f => f.offer!.category));
   const sold = mine.filter(e => (e[e.seller ?? "provider"].uid === uid) && e.updatedAt >= since);
-  const agreed = sold.filter(e => e.phase === "agreed" && e.negotiation.deal);
+  // A cancelled booking isn't a sale.
+  const agreed = sold.filter(e => e.phase === "agreed" && e.negotiation.deal && e.fulfilment?.state !== "cancelled");
 
   // Demand you missed: asked for more than you had (in conversations), and orders turned away for stock.
   const misses = ((await db.find(DEMAND, [["seller", "==", uid]], 500)) as DemandMiss[]).filter(m => m.at >= since);
@@ -58,7 +59,7 @@ export async function shopInsights(db: Docs, model: Model | null, uid: string, a
     const k = key(item), m = missed.get(k) ?? { item, wanted: 0, had, people: new Set<string>() };
     m.wanted += wanted; m.had = Math.min(m.had, had); m.people.add(who); missed.set(k, m);
   };
-  for (const e of sold) if (e.wanted && e.quantity && e.wanted > e.quantity) addMiss(itemOf(e.offer.title), e.wanted, e.quantity, e.requester.uid ?? e.requester.handle);
+  for (const e of sold) if (e.wanted && e.quantity && e.wanted > e.quantity && e.wantedLimit !== "rule") addMiss(itemOf(e.offer.title), e.wanted, e.quantity, e.requester.uid ?? e.requester.handle);
   for (const m of misses) addMiss(m.item, m.wanted, m.available, m.buyer);
 
   // Requests near you, in what you sell, that nobody filled (counts only; at least two people).
@@ -79,7 +80,8 @@ export async function shopInsights(db: Docs, model: Model | null, uid: string, a
 
   // What buyers' agents ask you most.
   const asks = new Map<string, { question: string; times: number }>();
-  for (const e of sold) for (const q of e.qa ?? []) { const k = key(q.question); if (k.length < 6) continue; const a = asks.get(k) ?? { question: q.question, times: 0 }; a.times++; asks.set(k, a); }
+  // Questions the buyer's side asked (not the seller agent's own requirement questions).
+  for (const e of sold) for (const q of e.qa ?? []) { if (q.from === (e.seller ?? "provider")) continue; const k = key(q.question); if (k.length < 6) continue; const a = asks.get(k) ?? { question: q.question, times: 0 }; a.times++; asks.set(k, a); }
 
   // Prices people actually agree, per item, against your listed price.
   const byItem = new Map<string, { item: string; listed: number | null; unit: number[] }>();
@@ -92,7 +94,9 @@ export async function shopInsights(db: Docs, model: Model | null, uid: string, a
   const buyerOf = (e: Engagement) => e[(e.seller ?? "provider") === "provider" ? "requester" : "provider"];
   const counts = new Map<string, number>();
   for (const e of agreed) { const b = buyerOf(e).uid ?? buyerOf(e).handle; counts.set(b, (counts.get(b) ?? 0) + 1); }
-  const bargained = agreed.filter(e => e.offer.price != null && e.negotiation.deal!.price < e.offer.price).length;
+  // Bargained: agreed below the listed price per unit (a multi-line deal's price is its total).
+  const unitPrice = (e: Engagement) => { const d = e.negotiation.deal!; return d.items?.length ? d.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) / unitsOf(e) : d.price; };
+  const bargained = agreed.filter(e => e.offer.price != null && unitPrice(e) < e.offer.price).length;
 
   // Often bought together: what your buyers bought from others, by at least two of them.
   const together = new Map<string, { item: string; people: Set<string> }>();
@@ -113,7 +117,8 @@ export async function shopInsights(db: Docs, model: Model | null, uid: string, a
     asked: [...asks.values()].filter(a => a.times >= 2).sort((a, b) => b.times - a.times).slice(0, 3),
     prices: [...byItem.values()].map(x => ({ item: x.item, listed: x.listed, agreed: Math.round(median(x.unit)!), deals: x.unit.length })).sort((a, b) => b.deals - a.deals).slice(0, 5),
     buyers: { total: counts.size, repeat: [...counts.values()].filter(n => n >= 2).length, bargained, atListed: agreed.length - bargained },
-    together: [...together.values()].filter(t => t.people.size >= MIN_PEOPLE).map(t => ({ item: t.item, buyers: t.people.size })).sort((a, b) => b.buyers - a.buyers).slice(0, 3),
+    // Only with enough buyers that a count can't point at one of the seller's own (named) buyers.
+    together: counts.size < MIN_BUYERS ? [] : [...together.values()].filter(t => t.people.size >= MIN_PEOPLE && t.people.size <= counts.size - 2).map(t => ({ item: t.item, buyers: t.people.size })).sort((a, b) => b.buyers - a.buyers).slice(0, 3),
   };
   const s = await decide(model, SummaryTask, out);
   return { ...out, summary: s.output.lines, byModel: s.byModel };
