@@ -92,6 +92,8 @@ const ICONS = {
 };
 export const icon = (name, size = 18) => `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ""}</svg>`;
 
+/** Three dots that pulse while something is loading or the agent is working. */
+export const dots = () => `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
 export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)}</span>`;
 /** The Collab mark (styles: .logo in styles.css). cls "live" loops it, "intro" plays it once. */
 export const logo = (cls = "") => `<svg class="logo${cls ? " " + cls : ""}" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>`;

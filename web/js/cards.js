@@ -8,7 +8,7 @@ import { gpay } from "./gpay.js";
 const gpayOk = () => gpay.available;
 import { live, poke } from "./live.js";
 import { fitsReasons } from "./fits.js";
-import { avatarHTML, brand, byTag, esc, label, logo, money, shortName, tag, tierTag, time, icon } from "./ui.js";
+import { avatarHTML, brand, byTag, esc, label, logo, money, shortName, tag, tierTag, time, icon, dots } from "./ui.js";
 import { cap, limitPast, limitWords, listingRoles, offerWords, partyRoles, rolesOf } from "./roles.js";
 
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -16,7 +16,7 @@ const VERDICT = { met: tag("met", "fresh"), unmet: tag("not met", "danger"), unc
 const SOURCE = { public: tag("Public", "fresh"), protected: tag("Protected", "accent"), owner: tag("Owner", "ink"), brief: tag("Brief"), listing: tag("Listing") };
 
 /** The agent at work: the steps it goes through, lit one after another, the last one bold when it's nearly back. */
-export const calibrating = (lines, title = "your agent") => `<div class="calib" aria-live="polite"><span class="row" style="gap:8px">${logo("live")}<span class="label">${esc(title)} is working</span></span><div class="calib-bar"></div>
+export const calibrating = (lines, title = "your agent") => `<div class="calib" aria-live="polite"><span class="row" style="gap:8px">${logo("live")}<span class="label">${esc(title)} is working</span>${dots()}</span><div class="calib-bar"></div>
   ${lines.map((l, i) => `<span class="calib-line" style="--i:${i}">› ${esc(l)}${i < lines.length - 1 ? "…" : ""}</span>`).join("")}</div>`;
 
 export function renderCard(card, m, i) {
@@ -62,7 +62,7 @@ function discoveryCard(c, at) {
   };
   const more = (c.found ?? []).filter(f => !f.over && !(c.engaged ?? []).some(id => live.engagements.get(id)?.offer?.factId === f.fact.id)).length;
   return `<div class="card disc" ${at}>
-    <div class="row">${live_ ? `<span class="live-dot" aria-hidden="true"></span>` : ""}${label(live_ ? `Talking to ${live_} agent${live_ === 1 ? "" : "s"}` : `${es.length} conversation${es.length === 1 ? "" : "s"}`, "sq ink")}
+    <div class="row">${live_ ? `<span class="live-dot" aria-hidden="true"></span>` : ""}${label(live_ ? `Talking to ${live_} agent${live_ === 1 ? "" : "s"}` : `${es.length} conversation${es.length === 1 ? "" : "s"}`, "sq ink")}${live_ ? dots() : ""}
       ${nNeed ? `<span class="end">${tag(`${nNeed} need${nNeed === 1 ? "s" : ""} you`, "wait")}</span>` : ""}</div>
     ${c.title ? `<span class="small faint">${esc(c.title)}</span>` : ""}
     ${live_ ? `<div class="work-line" aria-hidden="true"></div>` : ""}
@@ -1097,7 +1097,7 @@ export function messageHTML(m) {
   return `<div class="msg-agent" data-anim="m-${esc(m.id)}" data-anim-sig="${m.pending ? "p" : "d"}"><div class="row">${brand()}${label("· " + (m.engine ?? "Gemini"))}${label("· " + time(m.at))}</div>
     ${m.photo ? `<img class="item-photo" src="${esc(m.photo)}" alt="" style="max-width:220px">` : ""}
     ${m.pending === "calibrating" ? calibrating(m.photo ? ["reading the photo", "working out what it is", "writing the listing", "coming back around"] : ["reading what you said", "working out what to do", "lining things up", "coming back around"])
-      : m.pending ? `<span class="thinking">${logo("live spinner")}${label(m.pending)}</span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}
+      : m.pending ? `<span class="thinking">${logo("live spinner")}${label(m.pending)}${dots()}</span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}
     ${(m.cards ?? []).map((c, i) => renderCard(c, m, i)).join("")}</div>`;
 }
 
