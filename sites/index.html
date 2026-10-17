@@ -77,7 +77,7 @@ nav .btn { padding: 8px 12px; font-size: 11px; }
 @media (max-width: 760px) { nav .links { display: none; } nav .btn { margin-left: auto; } }
 
 /* Hero */
-.hero { padding: 72px 0 40px; position: relative; }
+.hero { padding: 72px 0 40px; position: relative; overflow-x: clip; }
 .hero h1 { font-size: clamp(40px, 7.2vw, 88px); line-height: 1.0; letter-spacing: -.045em; font-weight: 650; margin: 18px 0 22px; max-width: 13ch; }
 .hero p.lede { font-size: clamp(17px, 2vw, 20px); color: var(--text2); max-width: 46ch; margin: 0 0 30px; }
 .hero .ctas { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -101,7 +101,7 @@ nav .btn { padding: 8px 12px; font-size: 11px; }
 .avatar.speaking .ring { animation: ring 1s ease-out; }
 @keyframes ring { 0% { opacity: .9; inset: -2px; } 100% { opacity: 0; inset: -10px; } }
 .who b { display: block; font-size: 14px; font-weight: 600; }
-.who > div > span { font-size: 12px; color: var(--text3); }
+.who > div:not(.avatar) > span { font-size: 12px; color: var(--text3); }
 .ctx { border: 1px solid var(--hairline); border-radius: 5px; padding: 10px 11px; display: grid; gap: 7px; font-size: 13px; background: var(--bg); }
 .ctx .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .ctx .row .k { color: var(--text3); }
@@ -180,7 +180,7 @@ nav .btn { padding: 8px 12px; font-size: 11px; }
   .ctx .optional { display: none; }
 }
 @media (max-width: 520px) {
-  .who > div > span { display: none; }
+  .who > div:not(.avatar) > span { display: none; }
   .ctx { font-size: 12px; padding: 8px; }
   .msg { max-width: 92%; font-size: 13.5px; }
 }
@@ -200,51 +200,6 @@ section { padding: 96px 0; border-top: 1px solid var(--hairline); }
 .net .query .q { font-size: 14px; padding: 8px 12px; border: 1px solid var(--hairline); background: color-mix(in srgb, var(--bg) 85%, transparent); border-radius: 4px; min-height: 38px; display: flex; align-items: center; gap: 8px; max-width: 100%; }
 .net .query .caret { width: 1px; height: 16px; background: var(--accent); animation: blink 1s infinite; }
 @media (max-width: 600px) { .net { height: 380px; } }
-
-/* Lifecycle */
-.flow { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
-.flow > div { padding: 22px 18px 24px; border-right: 1px solid var(--hairline); background: var(--surface); position: relative; }
-.flow > div:last-child { border-right: 0; }
-.flow .n { font-family: var(--mono); font-size: 11px; color: var(--accent-ink); letter-spacing: .08em; }
-.flow h3 { font-size: 18px; margin: 10px 0 8px; letter-spacing: -.01em; }
-.flow p { margin: 0; color: var(--text2); font-size: 14px; }
-.flow .bar2 { position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform .6s ease; }
-.flow > div.lit .bar2 { transform: scaleX(1); }
-@media (max-width: 900px) { .flow { grid-template-columns: 1fr 1fr; } .flow > div { border-bottom: 1px solid var(--hairline); } .flow > div:nth-child(2n) { border-right: 0; } .flow > div:last-child { grid-column: 1 / -1; border-bottom: 0; } }
-@media (max-width: 520px) { .flow { grid-template-columns: 1fr; } .flow > div { border-right: 0; } }
-
-/* Privacy levels */
-.levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.level { border: 1px solid var(--hairline); border-radius: 8px; padding: 22px; background: var(--surface); display: grid; gap: 12px; align-content: start; }
-.level h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
-.level p { margin: 0; color: var(--text2); font-size: 15px; }
-.level.priv { background: var(--peri-fill); border-color: color-mix(in srgb, var(--peri) 40%, transparent); }
-.level.priv h3 { color: var(--peri); }
-.meter { display: flex; gap: 3px; }
-.meter i { height: 4px; flex: 1; background: var(--hairline); border-radius: 2px; }
-.meter i.on { background: currentColor; }
-.wallnote { margin-top: 18px; border: 1px dashed color-mix(in srgb, var(--peri) 50%, transparent); border-radius: 8px; padding: 16px 18px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 15px; color: var(--text2); }
-.wallnote code { font-family: var(--mono); font-size: 13px; }
-@media (max-width: 820px) { .levels { grid-template-columns: 1fr; } }
-
-/* Roles */
-.roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
-.role { padding: 26px 22px; border-right: 1px solid var(--hairline); display: grid; gap: 12px; align-content: start; background: var(--surface); }
-.role:last-child { border-right: 0; }
-.role h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
-.role ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.role li { color: var(--text2); font-size: 15px; padding-left: 16px; position: relative; }
-.role li::before { content: ""; position: absolute; left: 0; top: .62em; width: 6px; height: 6px; background: var(--accent); }
-@media (max-width: 820px) { .roles { grid-template-columns: 1fr; } .role { border-right: 0; border-bottom: 1px solid var(--hairline); } .role:last-child { border-bottom: 0; } }
-
-/* Proof */
-.proof { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-.proof > div { border: 1px solid var(--hairline); border-radius: 8px; padding: 20px; background: var(--surface); display: grid; gap: 10px; align-content: start; }
-.proof h3 { margin: 0; font-size: 18px; }
-.proof p { margin: 0; color: var(--text2); font-size: 14px; }
-.proof code { font-family: var(--mono); font-size: 11px; color: var(--text3); overflow-wrap: anywhere; }
-@media (max-width: 900px) { .proof { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 520px) { .proof { grid-template-columns: 1fr; } }
 
 /* Uses marquee */
 .uses { overflow: hidden; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 18px 0; -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent); mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent); }
@@ -354,6 +309,106 @@ footer .end { margin-left: auto; }
 @media (max-width: 900px) { .theme { grid-template-columns: 1fr 1fr; } .theme > div { border-right: 1px solid var(--hairline) !important; border-bottom: 1px solid var(--hairline) !important; } .theme > div:nth-child(2n) { border-right: 0 !important; } }
 @media (max-width: 520px) { .theme { grid-template-columns: 1fr; } .theme > div { border-right: 0 !important; } }
 
+/* Icons: one sprite, drawn with the text colour */
+.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* Hero: copy left, agent orbit right */
+.hero-top { display: grid; grid-template-columns: 1.1fr .9fr; gap: 24px; align-items: center; }
+.orbit { position: relative; aspect-ratio: 1; width: 100%; max-width: 440px; justify-self: end; }
+.orbit svg.rings { position: absolute; inset: 0; width: 100%; height: 100%; }
+.orbit .spin { position: absolute; inset: 0; animation: spin 60s linear infinite; }
+.orbit .node { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border: 1px solid var(--hairline); background: var(--surface); border-radius: 8px; display: grid; place-items: center; color: var(--text2); animation: spin 60s linear infinite reverse; transition: color .3s, border-color .3s, box-shadow .3s; }
+.orbit .node.lit { color: var(--talk); border-color: var(--talk); box-shadow: 0 0 0 4px color-mix(in srgb, var(--talk) 18%, transparent), 0 0 24px color-mix(in srgb, var(--talk) 35%, transparent); }
+.orbit .node.lit.deal { color: var(--fresh); border-color: var(--fresh); box-shadow: 0 0 0 4px color-mix(in srgb, var(--fresh) 18%, transparent); }
+.orbit .core { position: absolute; left: 50%; top: 50%; width: 76px; height: 76px; margin: -38px 0 0 -38px; background: var(--accent); display: grid; place-items: center; }
+.orbit .core::after { content: ""; width: 30px; height: 30px; background: var(--bg); }
+.orbit .core::before { content: ""; position: absolute; inset: -14px; border: 1px solid var(--accent); opacity: .5; animation: breathe 2.4s ease-in-out infinite; }
+.orbit .beam { position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; background: var(--accent); box-shadow: 0 0 12px var(--accent); pointer-events: none; }
+.orbit .beam.back { background: var(--talk); box-shadow: 0 0 12px var(--talk); }
+.orbit .chip { position: absolute; font-family: var(--mono); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; padding: 4px 7px; border-radius: 2px; background: var(--inverse); color: var(--on-inverse); white-space: nowrap; transform: translate(-50%, -150%); pointer-events: none; animation: pop .3s both; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes breathe { 50% { inset: -22px; opacity: .1; } }
+@media (max-width: 900px) { .hero-top { grid-template-columns: 1fr; } .orbit { justify-self: center; max-width: 340px; } }
+
+/* Scenario tabs with icons */
+.scen button .ic { width: 16px; height: 16px; }
+@media (max-width: 600px) { .scen button .t { display: none; } .scen button { padding: 9px 10px; } .scen button[aria-selected="true"] .t { display: inline; } }
+
+/* Cases wall */
+.cases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.case { border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); padding: 14px; display: grid; gap: 12px; cursor: pointer; transition: transform .25s, border-color .25s, box-shadow .25s; text-align: left; color: var(--text); font: inherit; }
+.case:hover, .case.spot { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 30px -18px var(--accent); }
+.case .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.case .ico { width: 38px; height: 38px; border-radius: 6px; display: grid; place-items: center; background: var(--surface2); color: var(--text); transition: background .25s, color .25s; }
+.case:hover .ico, .case.spot .ico { background: var(--accent); color: var(--on-accent); }
+.case b { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.case .mini { position: relative; height: 14px; }
+.case .mini::before { content: ""; position: absolute; left: 7px; right: 7px; top: 50%; border-top: 1px dashed var(--hairline); }
+.case .mini i { position: absolute; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 2px; }
+.case .mini i.a { left: 0; background: var(--accent); }
+.case .mini i.b { right: 0; background: var(--inverse); }
+.case .mini i.p { width: 6px; height: 6px; margin-top: -3px; left: 10px; background: var(--talk); animation: ping 2.2s ease-in-out infinite; }
+.case .mini i.done { right: 0; width: 10px; background: var(--fresh); opacity: 0; animation: done 2.2s ease-in-out infinite; }
+@keyframes ping { 0%, 100% { left: 10px; } 50% { left: calc(100% - 16px); } }
+@keyframes done { 0%, 80% { opacity: 0; } 90%, 100% { opacity: 1; } }
+@media (max-width: 900px) { .cases { grid-template-columns: repeat(2, 1fr); } }
+
+/* Flow: five steps with a travelling token */
+.flow2 { position: relative; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); padding: 46px 28px 36px; }
+.flow2 .line { position: absolute; left: 10%; right: 10%; top: 78px; height: 2px; background: var(--hairline); }
+.flow2 .fill { position: absolute; left: 10%; top: 78px; height: 2px; background: var(--accent); width: 0; }
+.flow2 .steps2 { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); }
+.flow2 .st { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.flow2 .st .c { width: 64px; height: 64px; border-radius: 50%; border: 1px solid var(--hairline); background: var(--bg); display: grid; place-items: center; color: var(--text3); transition: all .35s; position: relative; z-index: 1; }
+.flow2 .st .c .ic { width: 26px; height: 26px; }
+.flow2 .st.on .c { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 14%, transparent); transform: scale(1.06); }
+.flow2 .st b { font-size: 15px; }
+.flow2 .st span { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text3); }
+@media (max-width: 600px) { .flow2 { padding: 34px 8px 26px; } .flow2 .st .c { width: 46px; height: 46px; } .flow2 .st .c .ic { width: 20px; height: 20px; } .flow2 .line, .flow2 .fill { top: 57px; } .flow2 .st b { font-size: 13px; } .flow2 .st span { display: none; } }
+
+/* Privacy wall sorter */
+.sorter { position: relative; height: 340px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.sorter .side-l, .sorter .side-r { position: absolute; top: 14px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); display: flex; gap: 8px; align-items: center; }
+.sorter .side-l { left: 16px; } .sorter .side-r { right: 16px; }
+.sorter .wallv { position: absolute; left: 50%; top: 40px; bottom: 16px; width: 3px; margin-left: -1.5px; background: var(--peri); opacity: .55; border-radius: 2px; transition: box-shadow .2s, opacity .2s; }
+.sorter .wallv.hit { opacity: 1; box-shadow: 0 0 0 5px color-mix(in srgb, var(--peri) 22%, transparent), 0 0 24px var(--peri); }
+.sorter .walltag { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); }
+.sorter .tok { position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 7px 10px; border-radius: 4px; border: 1px solid var(--hairline); background: var(--bg); white-space: nowrap; will-change: transform; }
+.sorter .tok .ic { width: 14px; height: 14px; }
+.sorter .tok.pub { border-color: color-mix(in srgb, var(--talk) 50%, transparent); }
+.sorter .tok.priv { border-color: color-mix(in srgb, var(--peri) 60%, transparent); background: var(--peri-fill); color: var(--peri); }
+.sorter .tok.red { border-color: color-mix(in srgb, var(--peri) 60%, transparent); color: var(--peri); font-family: var(--mono); font-size: 12px; }
+.sorter .legend { position: absolute; left: 16px; bottom: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 600px) { .sorter { height: 380px; } .sorter .tok { font-size: 12px; padding: 6px 8px; } }
+
+/* Proof: chain + once-only scan */
+.proof2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+.chain { border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); padding: 22px; display: grid; gap: 0; align-content: center; }
+.link { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; padding: 12px 0; position: relative; }
+.link:not(:last-child)::after { content: ""; position: absolute; left: 21px; top: 56px; bottom: -12px; width: 2px; background: var(--hairline); }
+.link .c { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--hairline); display: grid; place-items: center; color: var(--text3); background: var(--bg); transition: all .35s; position: relative; z-index: 1; }
+.link b { font-size: 15px; display: block; }
+.link code { font-family: var(--mono); font-size: 11px; color: var(--text3); }
+.link .ok { font-family: var(--mono); font-size: 14px; color: var(--fresh); opacity: 0; transition: opacity .3s; }
+.link.on .c { border-color: var(--fresh); color: var(--fresh); box-shadow: 0 0 0 5px color-mix(in srgb, var(--fresh) 14%, transparent); }
+.link.on .ok { opacity: 1; }
+.link .hashv { font-family: var(--mono); font-size: 11px; color: var(--text2); }
+.scan { border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); padding: 22px; display: grid; justify-items: center; gap: 14px; position: relative; overflow: hidden; }
+.scan .qrbig { width: 168px; height: 168px; display: grid; grid-template-columns: repeat(11, 1fr); gap: 2px; padding: 10px; background: #fff; border-radius: 6px; position: relative; }
+.scan .qrbig i { background: #0a0a0a; border-radius: 1px; }
+.scan .qrbig i.o { background: transparent; }
+.scan .laser { position: absolute; left: 4px; right: 4px; height: 2px; background: var(--accent); box-shadow: 0 0 12px var(--accent); top: 6px; opacity: 0; }
+.scan .stamp { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-8deg) scale(1.6); font-family: var(--mono); font-weight: 700; font-size: 15px; letter-spacing: .1em; padding: 8px 12px; border: 2px solid currentColor; border-radius: 4px; background: var(--surface); opacity: 0; transition: transform .3s cubic-bezier(.2,.8,.2,1.4), opacity .2s; white-space: nowrap; }
+.scan .stamp.show { opacity: 1; transform: translate(-50%, -50%) rotate(-8deg) scale(1); }
+.scan .stamp.good { color: var(--fresh); } .scan .stamp.bad { color: var(--danger); }
+.scan .cap { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text3); min-height: 16px; }
+@media (max-width: 820px) { .proof2 { grid-template-columns: 1fr; } }
+
+/* Theme tiles with icons */
+.theme .ico2 { width: 36px; height: 36px; border-radius: 6px; display: grid; place-items: center; background: var(--surface2); color: var(--accent-ink); margin-bottom: 4px; }
+.theme > div { transition: background .3s; }
+.theme > div:hover { background: var(--surface2); }
+
 .reveal { opacity: 0; transform: translateY(14px); transition: opacity .7s ease, transform .7s ease; }
 .reveal.in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) {
@@ -365,14 +420,50 @@ footer .end { margin-left: auto; }
 </head>
 <body>
 
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-shirt" viewBox="0 0 24 24"><path d="M8 3 3 6l2 4 2-1v12h10V9l2 1 2-4-5-3c-1 2-2.5 3-4 3S9 5 8 3z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M15 3a5 5 0 0 0-2 7l-9 9 2 2 9-9a5 5 0 0 0 7-2l-3 1-3-3 1-3z"/></symbol>
+  <symbol id="i-bike" viewBox="0 0 24 24"><circle cx="5.5" cy="16" r="3.5"/><circle cx="18.5" cy="16" r="3.5"/><path d="M5.5 16 9 9h7l2.5 7M9 9l3 7h-6.5M14 6h3"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zM8 7h8"/></symbol>
+  <symbol id="i-cake" viewBox="0 0 24 24"><path d="M3 21h18M5 21v-8h14v8M5 16c2.3 1.5 4.7 1.5 7 0s4.7-1.5 7 0M12 13V9M12 4c1 1 1 2.2 0 3-1-.8-1-2 0-3z"/></symbol>
+  <symbol id="i-proj" viewBox="0 0 24 24"><rect x="2.5" y="7" width="19" height="10" rx="2"/><circle cx="15.5" cy="12" r="2.5"/><path d="M6 17v2.5M18 17v2.5M5.5 10.5h4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 7.5 20 18M8.5 16.5 20 6"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8h4l2-3h6l2 3h4v12H3z"/><circle cx="12" cy="13.5" r="3.5"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l-1 13H6zM9 8V6a3 3 0 0 1 6 0v2"/></symbol>
+  <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 5h12v11H2zM14 9h4l4 4v3h-8"/><circle cx="6" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-7 9 7M5 9.5V20h14V9.5M10 20v-5h4v5"/></symbol>
+  <symbol id="i-drill" viewBox="0 0 24 24"><path d="M3 6h11v7H3zM14 8.5h7M7 13l-1 8h4l1-8"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M15.5 14.2c2.7.2 4.5 2.2 4.5 5.3"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.3-4.3"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h14l-3-3M20 16H6l3 3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 19h1.5M19 14v1.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9.5 3 7.5 21M16.5 3l-2 18M4 9h16.5M3.5 15H20"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 24 24"><path d="m4 20 4.5-1L19 8.5 15.5 5 5 15.5zM13.5 7l3.5 3.5"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 10h19M6 15h4"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3c.6 4.6 3.4 7.4 9 9-5.6 1.6-8.4 4.4-9 9-.6-4.6-3.4-7.4-9-9 5.6-1.6 8.4-4.4 9-9z"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24"><path d="m3 17 6-6 4 4 8-8M15 7h6v6"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
+  <symbol id="i-rupee" viewBox="0 0 24 24"><path d="M6 4h12M6 9h12M6 4h3a5 5 0 0 1 0 10H6l8 7"/></symbol>
+  <symbol id="i-store" viewBox="0 0 24 24"><path d="M3 9 5 4h14l2 5M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0zM5 13v8h14v-8M10 21v-5h4v5"/></symbol>
+</svg>
+
 <nav>
   <div class="wrap">
     <a class="brand" href="#"><span class="mark"></span>Collab</a>
     <div class="links">
       <a href="#how">Agents</a>
+      <a href="#cases">Use cases</a>
       <a href="#discovery">Discovery</a>
       <a href="#insights">Insights</a>
-      <a href="#privacy">Privacy</a>
       <a href="#theme">Retail &amp; Commerce</a>
     </div>
     <a class="btn accent" href="https://collab-55.web.app">Open Collab</a>
@@ -381,12 +472,21 @@ footer .end { margin-left: auto; }
 
 <header class="hero">
   <div class="wrap">
-    <span class="label sq">Everyone's agent for getting things done together</span>
-    <h1>Your agent talks to <span class="soft">their agent.</span></h1>
-    <p class="lede">Buy, sell, book or restock in your own words. Your agent finds who fits, talks to their agents, and works out a deal. It never goes past your private limit, and it only asks you when it matters.</p>
-    <div class="ctas">
-      <a class="btn accent" href="https://collab-55.web.app">Try it now →</a>
-      <a class="btn ghost" href="#how">Watch the agents work</a>
+    <div class="hero-top">
+      <div>
+        <span class="label sq">Everyone's agent</span>
+        <h1>Your agent talks to <span class="soft">their agent.</span></h1>
+        <p class="lede">Say what you need. Agents find, talk and agree, inside your limits.</p>
+        <div class="ctas">
+          <a class="btn accent" href="https://collab-55.web.app">Try it now →</a>
+          <a class="btn ghost" href="#how">Watch</a>
+        </div>
+      </div>
+      <div class="orbit" id="orbit" aria-hidden="true">
+        <svg class="rings" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="var(--hairline)" stroke-width=".3" stroke-dasharray="1 1.5"/><circle cx="50" cy="50" r="24" fill="none" stroke="var(--hairline)" stroke-width=".3"/></svg>
+        <div class="spin" id="spin"></div>
+        <div class="core"></div>
+      </div>
     </div>
 
     <div class="scen" id="scen" role="tablist" aria-label="Use cases"></div>
@@ -395,7 +495,7 @@ footer .end { margin-left: auto; }
     <div class="stage" id="how" aria-label="Animated example: two agents work out a deal">
       <div class="stage-head">
         <span class="live"></span>
-        <span class="label" style="color:var(--text)">Live example</span>
+        <span class="label" style="color:var(--text)">Live</span>
         <span class="label" id="sTitle"></span>
         <div class="proto"><span class="tag talk">A2A</span><span class="tag">Gemini</span><span class="tag">AP2 · test</span></div>
       </div>
@@ -404,12 +504,11 @@ footer .end { margin-left: auto; }
           <div class="who"><div class="avatar you" id="avYou"><span id="avYouT"></span><span class="ring"></span></div><div><b id="nYou"></b><span id="rYou"></span></div></div>
           <div class="ctx" id="ctxYou"></div>
           <div class="ctx private">
-            <span class="lock">● Private · never sent</span>
+            <span class="lock">● Private</span>
             <div class="row"><span class="k" id="lkYou"></span><span class="v" id="lvYou"></span></div>
           </div>
           <div class="status" id="stYou"><span class="dot"></span><span>Ready</span></div>
         </aside>
-
         <div class="channel">
           <div class="wire" aria-hidden="true">
             <div class="line"></div>
@@ -419,20 +518,18 @@ footer .end { margin-left: auto; }
           </div>
           <div class="feed" id="feed" aria-live="polite"></div>
         </div>
-
         <aside class="side right">
           <div class="who"><div class="avatar them" id="avThem"><span id="avThemT"></span><span class="ring"></span></div><div><b id="nThem"></b><span id="rThem"></span></div></div>
           <div class="ctx" id="ctxThem"></div>
           <div class="ctx private">
-            <span class="lock">● Private · never sent</span>
+            <span class="lock">● Private</span>
             <div class="row"><span class="k" id="lkThem"></span><span class="v" id="lvThem"></span></div>
           </div>
           <div class="status" id="stThem"><span class="dot"></span><span>Ready</span></div>
         </aside>
       </div>
-
       <div class="track">
-        <div class="label"><span>Offers on the table</span><span id="trackNote">Only these numbers cross the wall</span></div>
+        <div class="label"><span>Offers</span><span id="trackNote">Only offers cross the wall</span></div>
         <div class="bar" id="bar">
           <div class="rail"></div>
           <div class="zone" id="zone"></div>
@@ -440,7 +537,6 @@ footer .end { margin-left: auto; }
           <div class="pin them" id="pinThem"><span class="v">—</span><span class="stem"></span></div>
         </div>
       </div>
-
       <div class="stage-foot">
         <div class="steps" id="steps"></div>
         <button class="replay" id="replay" type="button">↺ Replay</button>
@@ -453,22 +549,49 @@ footer .end { margin-left: auto; }
   <div class="belt" id="belt"></div>
 </div>
 
+<section id="cases">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div><span class="label sq">Use cases</span><h2>One agent. <span class="soft">Every deal.</span></h2></div>
+      <p>Buy, sell, book, rent, restock. Tap one to watch it.</p>
+    </div>
+    <div class="cases" id="caseGrid"></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div><span class="label sq">The flow</span><h2>A sentence <span class="soft">to done.</span></h2></div>
+      <p>Five steps. You only tap at the end.</p>
+    </div>
+    <div class="flow2 reveal" id="flow2">
+      <div class="line"></div><div class="fill" id="flowFill"></div>
+      <div class="steps2">
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-mic"/></svg></div><b>Say it</b><span>Text · voice · QR</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-search"/></svg></div><b>Discover</b><span>Vector search</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-swap"/></svg></div><b>Talk</b><span>A2A</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-check"/></svg></div><b>Agree</b><span>One tap</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-qr"/></svg></div><b>Done</b><span>Pass · booking</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="discovery">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div><span class="label sq">Discovery &amp; matching</span><h2>Every agent finds the others <span class="soft">that fit.</span></h2></div>
-      <p>Your request goes out as an intent, not a broadcast. Gemini embeddings and vector search find the public offerings that fit. Hard filters drop what can't work, and Gemini ranks the rest with reasons you can read. Each match gets its own private two-agent conversation.</p>
+      <div><span class="label sq">Discovery &amp; matching</span><h2>Finds who fits. <span class="soft">Says why.</span></h2></div>
+      <p>Intent in. Ranked matches out.</p>
     </div>
     <div class="pipe reveal" id="pipe">
-      <span>Intent</span><i>→</i><span>Gemini embedding</span><i>→</i><span>Vector search</span><i>→</i><span>Hard filters</span><i>→</i><span>Gemini rank + reasons</span><i>→</i><span>Agents talk</span>
+      <span>Intent</span><i>→</i><span>Embedding</span><i>→</i><span>Vector search</span><i>→</i><span>Filters</span><i>→</i><span>Gemini rank</span><i>→</i><span>Agents talk</span>
     </div>
     <div class="disc">
       <div class="net reveal" id="net">
         <canvas id="netCanvas" aria-hidden="true"></canvas>
         <div class="query"><div class="q"><span class="label" style="color:var(--accent-ink)">Intent</span><span id="qText"></span><span class="caret"></span></div></div>
-        <div class="legend">
-          <span class="tag accent">■ You</span><span class="tag talk">■ Matched agents</span><span class="tag">■ Everyone else</span>
-        </div>
+        <div class="legend"><span class="tag accent">■ You</span><span class="tag talk">■ Matches</span><span class="tag">■ Others</span></div>
       </div>
       <div class="matches reveal" id="matches" aria-live="polite">
         <div class="head"><span class="label">Ranked matches</span><span class="tag" id="mCount">—</span></div>
@@ -478,18 +601,18 @@ footer .end { margin-left: auto; }
   </div>
 </section>
 
-<section>
+<section id="privacy">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div><span class="label sq">The flow</span><h2>From a sentence <span class="soft">to done.</span></h2></div>
-      <p>The same steps work for buying, hiring, renting and restocking. Steps you don't need get skipped. A fixed price needs no haggling, and a factual answer ends right away.</p>
+      <div><span class="label sq">Privacy wall</span><h2>Offers cross. <span class="soft">Secrets don't.</span></h2></div>
+      <p>Every message is checked at the wall.</p>
     </div>
-    <div class="flow" id="flow">
-      <div><span class="bar2"></span><span class="n">01</span><h3>Say it</h3><p>Type, speak or scan a shop's QR. Gemini shapes the request and asks only for what's missing.</p></div>
-      <div><span class="bar2"></span><span class="n">02</span><h3>Discover</h3><p>Embeddings and vector search find the offerings that fit. Hard filters, ranked with reasons.</p></div>
-      <div><span class="bar2"></span><span class="n">03</span><h3>Agents talk</h3><p>Over A2A. Each answers from what its owner shared and quotes evidence. No invented numbers.</p></div>
-      <div><span class="bar2"></span><span class="n">04</span><h3>Agree</h3><p>Each side bargains inside its own private limit. Both owners confirm with one tap.</p></div>
-      <div><span class="bar2"></span><span class="n">05</span><h3>Follow through</h3><p>Signed cart, test payment, then a pickup pass scanned exactly once, or a booking.</p></div>
+    <div class="sorter reveal" id="sorter">
+      <span class="side-l"><svg class="ic" style="width:14px;height:14px"><use href="#i-user"/></svg>Your agent</span>
+      <span class="tag peri walltag">Wall</span>
+      <span class="side-r">Their agent<svg class="ic" style="width:14px;height:14px"><use href="#i-store"/></svg></span>
+      <div class="wallv" id="wallv"></div>
+      <div class="legend"><span class="tag talk">Shared</span><span class="tag peri">Private · stays</span><span class="tag peri">Contact · removed</span></div>
     </div>
   </div>
 </section>
@@ -497,116 +620,46 @@ footer .end { margin-left: auto; }
 <section id="insights">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div><span class="label sq">Analytics &amp; forecasting</span><h2>Every conversation becomes <span class="soft">a business view.</span></h2></div>
-      <p>Sellers see the demand they missed, what buyers ask, the prices they actually agree, and next week's demand, forecast with BigQuery <code style="font-family:var(--mono);font-size:.9em">AI.FORECAST</code> (TimesFM). Other people show up only as counts, and only when at least two people account for them.</p>
+      <div><span class="label sq">Analytics &amp; forecasting</span><h2>Chats become <span class="soft">insights.</span></h2></div>
+      <p>Missed demand, real prices, next week's forecast. Counts only, no names.</p>
     </div>
-
     <div class="board">
       <div class="panel w4 reveal">
         <span class="tag example">Example data</span>
-        <span class="label">Demand forecast · BigQuery AI.FORECAST</span>
-        <div class="hero-num"><b id="fcNum">0</b><span>requests for <strong style="color:var(--text)">kitchenware</strong> expected near you in the next 7 days</span></div>
-        <div class="legend2"><span style="color:var(--text3)"><i></i>Requests per day · last 4 weeks</span><span style="color:var(--accent)"><i class="dash"></i>Forecast · next 7 days</span></div>
+        <span class="label">Forecast · BigQuery AI.FORECAST</span>
+        <div class="hero-num"><b id="fcNum">0</b><span>kitchenware requests, next 7 days</span></div>
+        <div class="legend2"><span style="color:var(--text3)"><i></i>Last 4 weeks</span><span style="color:var(--accent)"><i class="dash"></i>Forecast</span></div>
         <div class="chart" id="fcChart"><div class="tip" id="fcTip"></div></div>
       </div>
-
       <div class="panel w2 reveal">
-        <span class="label">Your buyers · 30 days</span>
+        <span class="label">Buyers · 30 days</span>
         <div class="tiles">
           <div><b data-count="38">0</b><span>Buyers</span></div>
-          <div><b data-count="11">0</b><span>Came back</span></div>
-          <div><b data-count="24">0</b><span>Paid your price</span></div>
-          <div><b data-count="14">0</b><span>Bargained down</span></div>
+          <div><b data-count="11">0</b><span>Repeat</span></div>
+          <div><b data-count="24">0</b><span>Paid list price</span></div>
+          <div><b data-count="14">0</b><span>Bargained</span></div>
         </div>
-        <span class="label" style="margin-top:4px">Often bought together</span>
-        <div class="together"><span>Lunch boxes<b>9</b></span><span>Steel tumblers<b>6</b></span><span>Bottle brushes<b>4</b></span></div>
+        <span class="label" style="margin-top:4px">Bought together</span>
+        <div class="together"><span>Lunch boxes<b>9</b></span><span>Tumblers<b>6</b></span><span>Brushes<b>4</b></span></div>
       </div>
-
       <div class="panel w3 reveal">
         <span class="label">Demand you missed</span>
-        <p class="sub">People wanted more than you had in stock</p>
         <div class="hbars" id="missed"></div>
-        <div class="legend2"><span style="color:var(--text3)"><i class="dot"></i>You had</span><span style="color:var(--accent)"><i class="dot"></i>People wanted</span></div>
+        <div class="legend2"><span style="color:var(--text3)"><i class="dot"></i>Had</span><span style="color:var(--accent)"><i class="dot"></i>Wanted</span></div>
       </div>
-
       <div class="panel w3 reveal">
-        <span class="label">Listed vs agreed price</span>
-        <p class="sub">The median price your agent actually closed at</p>
+        <span class="label">Listed vs agreed</span>
         <div class="dots" id="dots"></div>
-        <div class="legend2"><span style="color:var(--text3)"><i class="dot"></i>Listed</span><span style="color:var(--accent)"><i class="dot"></i>Agreed (median)</span></div>
+        <div class="legend2"><span style="color:var(--text3)"><i class="dot"></i>Listed</span><span style="color:var(--accent)"><i class="dot"></i>Agreed</span></div>
         <div class="tip" id="dotTip"></div>
       </div>
-
-      <div class="panel w2 reveal">
-        <span class="label">What buyers ask most</span>
-        <ul class="qs">
-          <li><span>Is it food-grade steel?</span><span>×23</span></li>
-          <li><span>Can I pick up today?</span><span>×17</span></li>
-          <li><span>Discount on 10 or more?</span><span>×12</span></li>
-          <li><span>Does the lid leak?</span><span>×8</span></li>
-        </ul>
-      </div>
-
-      <div class="panel w4 summary reveal">
-        <span class="label" style="color:var(--accent-ink)">■ What to do next · Gemini summary</span>
+      <div class="panel w6 summary reveal">
+        <span class="label" style="color:var(--accent-ink)">■ Next steps · Gemini</span>
         <ul>
-          <li>Restock <b>steel water bottles</b>: <b>9</b> people wanted <b>185</b> more than you had this month.</li>
-          <li><b>14</b> nearby requests for <b>lunch boxes</b> went unfilled, and you don't list them yet.</li>
-          <li>Your agent closes bottles at <b>₹240</b> against <b>₹280</b> listed. Listing at <b>₹260</b> may sell faster.</li>
+          <li>Restock <b>steel bottles</b>. <b>9</b> people wanted <b>185</b> more.</li>
+          <li>List <b>lunch boxes</b>. <b>14</b> requests nearby went unfilled.</li>
         </ul>
-        <span class="small" style="font-size:13px;color:var(--text3)">Every number Gemini writes must be one of the numbers above. If it isn't, the summary is replaced by a plain one.</span>
       </div>
-    </div>
-  </div>
-</section>
-
-<section id="privacy">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div><span class="label sq">Who sees what</span><h2>You decide what <span class="soft">your agent can say.</span></h2></div>
-      <p>Everything starts private. You can make a fact protected for specific people and topics, or public so any agent can find it.</p>
-    </div>
-    <div class="levels">
-      <div class="level priv reveal"><span class="label" style="color:var(--peri)">Default</span><h3>Private</h3><div class="meter" style="color:var(--peri)"><i class="on"></i><i></i><i></i></div><p>Stays in your account. It's never given to an agent talking to someone else. Your device can draft an answer from it, and you decide whether to share it.</p></div>
-      <div class="level reveal"><span class="label">By rule</span><h3>Protected</h3><div class="meter" style="color:var(--talk)"><i class="on"></i><i class="on"></i><i></i></div><p>Shared only with the people your rules name, on those topics and at that level of detail. It goes automatically, or after you check.</p></div>
-      <div class="level reveal"><span class="label">Discoverable</span><h3>Public</h3><div class="meter" style="color:var(--accent)"><i class="on"></i><i class="on"></i><i class="on"></i></div><p>Any agent can find it and be told it. This is how shops, providers and people get discovered.</p></div>
-    </div>
-    <div class="wallnote reveal">
-      <span class="tag peri">Privacy wall</span>
-      <span>Every message between agents passes through the wall. Phone numbers, e-mails and links are removed, and other contacts' names are replaced. Analytics never export names, request text, budgets or limits. <code>98xx…</code> → <code>[number removed]</code></span>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div><span class="label sq">For everyone</span><h2>One agent. <span class="soft">Every role you play.</span></h2></div>
-      <p>The same person buys groceries, sells a used bike and teaches a class. A shop is also a buyer when it restocks. These are roles, not account types.</p>
-    </div>
-    <div class="roles reveal">
-      <div class="role"><span class="label" style="color:var(--accent-ink)">People &amp; households</span><h3>Get what you need without chasing anyone.</h3><ul><li>Buy from a shop or a neighbour</li><li>Book a repair, a tutor, a salon</li><li>Sell what you no longer use</li></ul></div>
-      <div class="role"><span class="label" style="color:var(--talk)">Shops &amp; businesses</span><h3>An agent at the counter, all day.</h3><ul><li>Answers enquiries from what you shared</li><li>Quotes and negotiates within your floor</li><li>Shows missed demand and next week's forecast</li></ul></div>
-      <div class="role"><span class="label" style="color:var(--fresh)">Providers &amp; gig workers</span><h3>Fewer bad leads. More booked work.</h3><ul><li>Qualifies requests before they reach you</li><li>Keeps your rates, slots and boundaries</li><li>Builds a record of completed work</li></ul></div>
-    </div>
-  </div>
-</section>
-
-<section id="theme">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div><span class="label sq">AI Builder Cup 2026 · Retail &amp; Commerce</span><h2>One system across <span class="soft">the whole brief.</span></h2></div>
-      <p>The Retail &amp; Commerce brief asks for conversational commerce, product discovery, personalization, demand forecasting, basket analysis, customer segmentation and inventory intelligence. In Collab they are all one agent network.</p>
-    </div>
-    <div class="theme reveal">
-      <div><span class="label">Conversational commerce</span><h3>Agents that close the deal</h3><p>Buyer and seller agents ask, answer and negotiate over A2A, then hand off to a signed cart.</p></div>
-      <div><span class="label">Product discovery</span><h3>Intent, not keywords</h3><p>Gemini embeddings plus Firestore vector search, hard filters, and ranking with reasons.</p></div>
-      <div><span class="label">Hyper-personalization</span><h3>Your context, your rules</h3><p>Your agent remembers preferences and limits, and shares only what you allowed.</p></div>
-      <div><span class="label">Demand forecasting</span><h3>Next 7 days, per category</h3><p>BigQuery AI.FORECAST (TimesFM) over request history, cached daily per seller.</p></div>
-      <div><span class="label">Basket analysis</span><h3>Often bought together</h3><p>What your buyers also bought elsewhere, counted only when two or more people did.</p></div>
-      <div><span class="label">Customer segmentation</span><h3>New, repeat, bargainers</h3><p>Who pays your price and who negotiates, with no names attached.</p></div>
-      <div><span class="label">Inventory intelligence</span><h3>Demand you missed</h3><p>"Wanted 200, had 15", turned-away orders, and nearby requests nobody filled.</p></div>
-      <div><span class="label">Fair-price check</span><h3>Grounded in sources</h3><p>Gemini with Google Search grounding. Every price traces to a source, or it says there isn't enough evidence.</p></div>
     </div>
   </div>
 </section>
@@ -614,21 +667,47 @@ footer .end { margin-left: auto; }
 <section id="trust">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div><span class="label sq">After the deal</span><h2>Agreements anyone <span class="soft">can check.</span></h2></div>
-      <p>Gemini proposes, code checks, and deterministic rules decide when the model is down or wrong. Every step after the handshake leaves a record you can verify against Collab's published public key.</p>
+      <div><span class="label sq">After the deal</span><h2>Signed. Paid. <span class="soft">Collected once.</span></h2></div>
+      <p>Every step checkable with Collab's public key.</p>
     </div>
-    <div class="proof">
-      <div class="reveal"><span class="tag fresh">Agreed</span><h3>Hashed once</h3><p>Both owners confirm, and the deal's SHA-256 is registered write-once.</p><code>sha256(deal)</code></div>
-      <div class="reveal"><span class="tag talk">Cart</span><h3>Signed by the seller's agent</h3><p>A cart mandate for exactly the agreed item and amount.</p><code>Ed25519 · /public/keys</code></div>
-      <div class="reveal"><span class="tag wait">Pay</span><h3>AP2-shaped, test mode</h3><p>Checkout and payment mandates bound to the cart, with an idempotency key. No money moves.</p><code>JWS · SD-JWT · RFC 8785</code></div>
-      <div class="reveal"><span class="tag accent">Collect</span><h3>Handed over once</h3><p>The seller scans the pickup pass. It's atomic and seller-only, and it can't be used twice.</p><code>collectedAt · once</code></div>
+    <div class="proof2">
+      <div class="chain reveal" id="chain">
+        <div class="link"><div class="c"><svg class="ic"><use href="#i-check"/></svg></div><div><b>Both agree</b><span class="hashv" id="hashv">sha256 ·</span></div><span class="ok">✓</span></div>
+        <div class="link"><div class="c"><svg class="ic"><use href="#i-pen"/></svg></div><div><b>Cart signed</b><code>Ed25519</code></div><span class="ok">✓</span></div>
+        <div class="link"><div class="c"><svg class="ic"><use href="#i-card"/></svg></div><div><b>Paid</b><code>AP2 · test mode</code></div><span class="ok">✓</span></div>
+        <div class="link"><div class="c"><svg class="ic"><use href="#i-qr"/></svg></div><div><b>Pass issued</b><code>scan once</code></div><span class="ok">✓</span></div>
+      </div>
+      <div class="scan reveal" id="scan">
+        <span class="label">Pickup pass</span>
+        <div class="qrbig" id="qrbig"><div class="laser" id="laser"></div><div class="stamp" id="stamp"></div></div>
+        <span class="cap" id="scanCap">Waiting for scan</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="theme">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div><span class="label sq">AI Builder Cup 2026 · Retail &amp; Commerce</span><h2>The whole brief. <span class="soft">One network.</span></h2></div>
+      <p>Every theme pillar, built in.</p>
+    </div>
+    <div class="theme reveal">
+      <div><span class="ico2"><svg class="ic"><use href="#i-chat"/></svg></span><span class="label">Conversational commerce</span><h3>Agents close deals</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-search"/></svg></span><span class="label">Product discovery</span><h3>Intent, not keywords</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-user"/></svg></span><span class="label">Personalization</span><h3>Your context, your rules</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-trend"/></svg></span><span class="label">Demand forecasting</span><h3>Next 7 days</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-bag"/></svg></span><span class="label">Basket analysis</span><h3>Bought together</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-people"/></svg></span><span class="label">Segmentation</span><h3>New, repeat, bargainers</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-box"/></svg></span><span class="label">Inventory intelligence</span><h3>Demand you missed</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-tag"/></svg></span><span class="label">Fair price</span><h3>Search-grounded</h3></div>
     </div>
   </div>
 </section>
 
 <section class="closing">
   <div class="wrap reveal">
-    <span class="label sq">Built for AI Builder Cup 2026 · Retail &amp; Commerce</span>
+    <span class="label sq">AI Builder Cup 2026</span>
     <h2>Stop coordinating. <span class="soft">Start collaborating.</span></h2>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <a class="btn accent" href="https://collab-55.web.app">Open Collab →</a>
@@ -640,7 +719,7 @@ footer .end { margin-left: auto; }
 <footer>
   <div class="wrap">
     <a class="brand" href="#"><span class="mark"></span>Collab</a>
-    <span>Payments are test mode. No money moves. Insight figures on this page are example data.</span>
+    <span>Test-mode payments. Insight figures are examples.</span>
     <span class="end"><a href="https://collab-55.web.app">collab-55.web.app</a></span>
   </div>
 </footer>
@@ -652,79 +731,125 @@ footer .end { margin-left: auto; }
   const wait = (ms) => new Promise((r) => setTimeout(r, reduced ? Math.min(ms, 250) : ms));
   const rupee = (v) => '₹' + v.toLocaleString('en-IN');
   const P = (v) => '<span class="price">' + rupee(v) + '</span>';
+  const icon = (id, cls) => '<svg class="ic' + (cls ? ' ' + cls : '') + '"><use href="#i-' + id + '"/></svg>';
+  const onView = (node, fn, threshold = .3) => new IntersectionObserver((es, ob) => { if (es[0].isIntersecting) { ob.disconnect(); fn(); } }, { threshold }).observe(node);
 
   /* ---------- Use cases: each is one two-agent conversation ---------- */
   const SCENARIOS = [
-    {
-      tab: 'Pickup today', title: 'Cotton kurta · size M · pickup today',
-      you: { init: 'AS', name: "Asha's agent", role: 'Represents Asha', ctx: [['Wants', 'Kurta, M, cotton'], ['Where', 'Near Indiranagar'], ['When', 'Today']], lk: "Most she'll pay", limit: 1400 },
-      them: { init: 'MT', name: "Meera Textiles' agent", role: 'Represents the shop', ctx: [['Shares', 'Stock, sizes'], ['Listed', '₹1,600'], ['Open', '10am–9pm']], lk: "Lowest it'll take", limit: 1150 },
+    { tab: 'Pickup', icon: 'shirt', title: 'Kurta · size M · today',
+      you: { init: 'AS', name: "Asha's agent", role: 'Buyer', ctx: [['Wants', 'Kurta, M'], ['Where', 'Indiranagar']], lk: 'Max', limit: 1400 },
+      them: { init: 'MT', name: 'Meera Textiles', role: 'Shop', ctx: [['Listed', '₹1,600'], ['Stock', '2']], lk: 'Floor', limit: 1150 },
       range: [1000, 1700], deal: 1350,
       beats: [
-        { from: 'you', st: 'Asking', html: 'Asha needs a cotton kurta in size M, to pick up today. Do you have one?' },
-        { from: 'them', st: 'Answering', html: 'Yes. Two in stock, indigo and rust. Both cotton, both size M.<span class="meta" style="margin:6px 0 0">Evidence · "Kurta, cotton, M — qty 2"</span>' },
-        { from: 'them', html: 'Listed at ' + P(1600) + '. Or call me on <span class="strike">98450 12345</span> <span class="redact">[number removed]</span>', them: 1600 },
-        { kind: 'sys', html: "The privacy wall removed a phone number before it reached Asha's agent." },
-        { from: 'you', st: 'Negotiating', html: 'Could you do ' + P(1150) + '? She can come in within the hour.', you: 1150 },
-        { from: 'them', st: 'Negotiating', html: "Can't go that low. " + P(1450) + ", and I'll keep the indigo one aside.", them: 1450 },
-        { from: 'you', html: P(1300) + ", and she'll pick it up today.", you: 1300, zone: true },
-        { from: 'them', html: 'Meet me at ' + P(1350) + " and it's hers.", them: 1350 },
-        { kind: 'ask', html: 'Indigo cotton kurta, M, for ' + P(1350) + ', pickup today?' },
-        { kind: 'deal', head: 'Indigo cotton kurta · M · ' + P(1350), ticks: ['SHA-256 registered once', 'Cart signed · Ed25519', 'Paid · AP2 test mode', 'Pickup pass · scan once'], qr: true },
-      ],
-    },
-    {
-      tab: 'Bulk restock', title: 'Steel water bottles · 200 units · café restock',
-      you: { init: 'RC', name: "Ravi's Café agent", role: 'Represents the café', ctx: [['Wants', '200 steel bottles'], ['By', 'Friday'], ['Pays', 'On delivery']], lk: 'Most per bottle', limit: 240 },
-      them: { init: 'SW', name: "Steelware Co. agent", role: 'Represents the wholesaler', ctx: [['Shares', 'Stock, bulk rates'], ['Listed', '₹280 / unit'], ['In stock', '150']], lk: 'Lowest per bottle', limit: 205 },
+        { from: 'you', st: 'Asking', html: 'Cotton kurta, size M, today?' },
+        { from: 'them', st: 'Answering', html: 'Yes. Indigo or rust. ' + P(1600) + '. Call <span class="strike">98450 12345</span> <span class="redact">[removed]</span>', them: 1600 },
+        { from: 'you', st: 'Negotiating', html: P(1150) + '? Pickup in an hour.', you: 1150 },
+        { from: 'them', st: 'Negotiating', html: P(1450), them: 1450 },
+        { from: 'you', html: P(1300), you: 1300, zone: true },
+        { from: 'them', html: P(1350) + '. Deal.', them: 1350 },
+        { kind: 'ask', html: 'Indigo kurta for ' + P(1350) + '?' },
+        { kind: 'deal', head: 'Kurta · ' + P(1350), ticks: ['Cart signed', 'Paid (test)', 'Pickup pass'], qr: true },
+      ] },
+    { tab: 'Restock', icon: 'box', title: 'Steel bottles · 200 units',
+      you: { init: 'RC', name: "Ravi's Café", role: 'Business buyer', ctx: [['Wants', '200 bottles'], ['By', 'Friday']], lk: 'Max / unit', limit: 240 },
+      them: { init: 'SW', name: 'Steelware Co.', role: 'Wholesaler', ctx: [['Listed', '₹280'], ['Stock', '150']], lk: 'Floor', limit: 205 },
       range: [180, 300], deal: 240,
       beats: [
-        { from: 'you', st: 'Asking', html: 'Ravi needs 200 steel water bottles, 750 ml, by Friday. Can you supply them?' },
-        { from: 'them', st: 'Checking stock', html: 'Only <b>150</b> in stock right now. I can do 150 by Friday.<span class="meta" style="margin:6px 0 0">Stock check · wanted 200, had 150</span>' },
-        { kind: 'sys', html: 'Logged for the wholesaler\'s insights as missed demand: <b>50</b> units. No buyer details are kept.' },
-        { from: 'you', st: 'Negotiating', html: '150 works. At that volume, ' + P(210) + ' a bottle?', you: 210 },
-        { from: 'them', st: 'Negotiating', html: 'Listed at ' + P(280) + '. For 150 I can do ' + P(255) + '.', them: 255 },
-        { from: 'you', html: P(230) + ', and Ravi pays on delivery.', you: 230, zone: true },
-        { from: 'them', html: P(240) + ' a bottle, delivered Thursday.', them: 240 },
-        { kind: 'ask', html: '150 steel bottles at ' + P(240) + ' each (' + P(36000) + '), delivered Thursday?' },
-        { kind: 'deal', head: '150 × steel bottle · ' + P(240) + ' · total ' + P(36000), ticks: ['SHA-256 registered once', 'Cart signed · 150 units', 'Paid · AP2 test mode', 'Delivery Thursday'], qr: false },
-      ],
-    },
-    {
-      tab: 'Book a service', title: 'AC repair · this Saturday · home visit',
-      you: { init: 'PR', name: "Priya's agent", role: 'Represents Priya', ctx: [['Needs', 'AC not cooling'], ['When', 'Saturday AM'], ['Where', 'HSR Layout']], lk: "Most she'll pay", limit: 600 },
-      them: { init: 'CF', name: "CoolFix agent", role: 'Represents the technician', ctx: [['Shares', 'Slots, service area'], ['Visit', '₹650'], ['Area', 'HSR, Koramangala']], lk: 'Lowest visit fee', limit: 500 },
+        { from: 'you', st: 'Asking', html: '200 steel bottles by Friday?' },
+        { from: 'them', st: 'Checking stock', html: 'Only <b>150</b>. ' + P(280) + ' each.', them: 280 },
+        { kind: 'sys', html: icon('trend') + ' Missed demand logged: 50 units' },
+        { from: 'you', st: 'Negotiating', html: '150 at ' + P(210) + '?', you: 210 },
+        { from: 'them', st: 'Negotiating', html: P(255), them: 255 },
+        { from: 'you', html: P(230), you: 230, zone: true },
+        { from: 'them', html: P(240) + ', delivered Thursday.', them: 240 },
+        { kind: 'ask', html: '150 × ' + P(240) + ' = ' + P(36000) + '?' },
+        { kind: 'deal', head: '150 bottles · ' + P(36000), ticks: ['Cart signed', 'Paid (test)', 'Delivery Thu'], qr: false },
+      ] },
+    { tab: 'Repair', icon: 'wrench', title: 'AC repair · Saturday',
+      you: { init: 'PR', name: "Priya's agent", role: 'Customer', ctx: [['Needs', 'AC repair'], ['When', 'Sat AM']], lk: 'Max', limit: 600 },
+      them: { init: 'CF', name: 'CoolFix', role: 'Technician', ctx: [['Visit', '₹650'], ['Area', 'HSR']], lk: 'Floor', limit: 500 },
       range: [400, 750], deal: 575,
       beats: [
-        { from: 'you', st: 'Asking', html: "Priya's split AC isn't cooling. Any slot this Saturday morning in HSR Layout?" },
-        { from: 'them', st: 'Answering', html: 'Saturday 11:00 is free. The visit covers diagnosis. Gas refill or parts are quoted on site.<span class="meta" style="margin:6px 0 0">Evidence · "Sat 11:00 open · HSR in area"</span>' },
-        { from: 'them', html: 'Visit fee is ' + P(650) + '.', them: 650 },
-        { from: 'you', st: 'Negotiating', html: 'Could it be ' + P(500) + ' if she books today?', you: 500 },
-        { from: 'them', st: 'Negotiating', html: P(600) + ', and it\'s waived if she goes ahead with the repair.', them: 600, zone: true },
-        { from: 'you', html: P(550) + ', with the waiver?', you: 550 },
-        { from: 'them', html: P(575) + ', waiver included. Deal?', them: 575 },
-        { kind: 'ask', html: 'CoolFix visit Saturday 11:00 for ' + P(575) + ', waived if she goes ahead with the repair?' },
-        { kind: 'deal', head: 'Booked · Sat 11:00 · ' + P(575) + ' visit', ticks: ['SHA-256 registered once', 'Slot held for Priya', 'Reminder Friday evening', 'Quote for parts on site'], qr: false },
-      ],
-    },
-    {
-      tab: 'Resale', title: 'Used cycle · neighbour to neighbour',
-      you: { init: 'DV', name: "Dev's agent", role: 'Represents Dev', ctx: [['Wants', 'Kids\' cycle, 20"'], ['Where', 'Same society'], ['When', 'This week']], lk: "Most he'll pay", limit: 4000 },
-      them: { init: 'KB', name: "Kabir's agent", role: 'Represents Kabir', ctx: [['Shares', 'Photos, condition'], ['Listed', '₹4,500'], ['Age', '2 years']], lk: "Lowest he'll take", limit: 3600 },
+        { from: 'you', st: 'Asking', html: 'AC not cooling. Saturday morning?' },
+        { from: 'them', st: 'Answering', html: 'Sat 11:00 free. Visit ' + P(650) + '.', them: 650 },
+        { from: 'you', st: 'Negotiating', html: P(500) + '?', you: 500 },
+        { from: 'them', st: 'Negotiating', html: P(600) + ', waived if repaired.', them: 600, zone: true },
+        { from: 'you', html: P(550), you: 550 },
+        { from: 'them', html: P(575) + '. Deal.', them: 575 },
+        { kind: 'ask', html: 'Sat 11:00 for ' + P(575) + '?' },
+        { kind: 'deal', head: 'Booked · Sat 11:00', ticks: ['Slot held', 'Reminder Fri', 'Fee waived if repaired'], qr: false },
+      ] },
+    { tab: 'Resale', icon: 'bike', title: 'Used cycle · neighbours',
+      you: { init: 'DV', name: "Dev's agent", role: 'Buyer', ctx: [['Wants', '20" cycle'], ['Where', 'Same block']], lk: 'Max', limit: 4000 },
+      them: { init: 'KB', name: "Kabir's agent", role: 'Seller', ctx: [['Listed', '₹4,500'], ['Age', '2 yrs']], lk: 'Floor', limit: 3600 },
       range: [3000, 5000], deal: 3900,
       beats: [
-        { from: 'you', st: 'Asking', html: 'Is the 20" cycle still available? Any rust, and do the brakes work?' },
-        { from: 'them', st: 'Answering', html: 'Still available. No rust, and the brakes were serviced last month. Only scuffs on the frame.<span class="meta" style="margin:6px 0 0">Evidence · listing photos 2–4 · "serviced Sept"</span>' },
-        { from: 'them', html: 'Kabir listed it at ' + P(4500) + '. Message him at <span class="strike">kabir.s@mail.com</span> <span class="redact">[e-mail removed]</span>', them: 4500 },
-        { kind: 'sys', html: 'The privacy wall removed an e-mail address. The handover happens through the pass.' },
-        { from: 'you', st: 'Negotiating', html: 'Dev can do ' + P(3500) + ' and collect tomorrow.', you: 3500 },
-        { from: 'them', st: 'Negotiating', html: P(4200) + '. It\'s barely been used.', them: 4200 },
-        { from: 'you', html: P(3800) + ', cash or UPI on pickup.', you: 3800, zone: true },
-        { from: 'them', html: P(3900) + ' and it\'s his.', them: 3900 },
-        { kind: 'ask', html: 'Kids\' 20" cycle for ' + P(3900) + ', collect tomorrow?' },
-        { kind: 'deal', head: 'Kids\' cycle · ' + P(3900), ticks: ['SHA-256 registered once', 'Marked paid another way', 'Pickup pass · scan once', 'Both owners confirmed'], qr: true },
-      ],
-    },
+        { from: 'you', st: 'Asking', html: 'Any rust? Brakes OK?' },
+        { from: 'them', st: 'Answering', html: 'No rust. Serviced last month. Mail <span class="strike">kabir@mail.com</span> <span class="redact">[removed]</span>' },
+        { from: 'them', html: P(4500), them: 4500 },
+        { from: 'you', st: 'Negotiating', html: P(3500) + ', collect tomorrow.', you: 3500 },
+        { from: 'them', st: 'Negotiating', html: P(4200), them: 4200 },
+        { from: 'you', html: P(3800), you: 3800, zone: true },
+        { from: 'them', html: P(3900) + '. Deal.', them: 3900 },
+        { kind: 'ask', html: 'Cycle for ' + P(3900) + '?' },
+        { kind: 'deal', head: 'Cycle · ' + P(3900), ticks: ['Paid another way', 'Pickup pass'], qr: true },
+      ] },
+    { tab: 'Tutor', icon: 'book', title: 'Maths tutor · Saturdays',
+      you: { init: 'MN', name: "Meena's agent", role: 'Parent', ctx: [['Needs', 'Class 8 maths'], ['When', 'Saturdays']], lk: 'Max / hr', limit: 600 },
+      them: { init: 'AR', name: "Arjun's agent", role: 'Tutor', ctx: [['Rate', '₹700/hr'], ['Free', 'Sat 10am']], lk: 'Floor / hr', limit: 450 },
+      range: [350, 800], deal: 600,
+      beats: [
+        { from: 'you', st: 'Asking', html: 'Class 8 maths, Saturdays?' },
+        { from: 'them', st: 'Answering', html: 'Sat 10am free. ' + P(700) + '/hr.', them: 700 },
+        { from: 'you', st: 'Negotiating', html: P(450) + '/hr for 4 weeks?', you: 450 },
+        { from: 'them', st: 'Negotiating', html: P(650) + '/hr', them: 650, zone: true },
+        { from: 'you', html: P(550) + '/hr', you: 550 },
+        { from: 'them', html: P(600) + '/hr. Deal.', them: 600 },
+        { kind: 'ask', html: '4 Saturdays at ' + P(600) + '/hr?' },
+        { kind: 'deal', head: '4 lessons booked', ticks: ['Sat 10am × 4', 'Calendar added'], qr: false },
+      ] },
+    { tab: 'Bakery', icon: 'cake', title: 'Eggless cake · Sunday',
+      you: { init: 'NH', name: "Neha's agent", role: 'Customer', ctx: [['Wants', '1 kg, eggless'], ['When', 'Sunday']], lk: 'Max', limit: 1100 },
+      them: { init: 'BN', name: 'Bake Nest', role: 'Home baker', ctx: [['Listed', '₹1,200'], ['Notice', '24 h']], lk: 'Floor', limit: 850 },
+      range: [700, 1300], deal: 1050,
+      beats: [
+        { from: 'you', st: 'Asking', html: 'Eggless chocolate, 1 kg, Sunday?' },
+        { from: 'them', st: 'Answering', html: 'Yes, with 24 h notice. ' + P(1200) + '.', them: 1200 },
+        { from: 'you', st: 'Negotiating', html: P(900) + '?', you: 900 },
+        { from: 'them', st: 'Negotiating', html: P(1100), them: 1100, zone: true },
+        { from: 'you', html: P(1000), you: 1000 },
+        { from: 'them', html: P(1050) + '. Deal.', them: 1050 },
+        { kind: 'ask', html: 'Cake for ' + P(1050) + ', Sunday 5pm?' },
+        { kind: 'deal', head: 'Cake · ' + P(1050), ticks: ['Order confirmed', 'Pickup pass'], qr: true },
+      ] },
+    { tab: 'Rent', icon: 'proj', title: 'Projector · one night',
+      you: { init: 'OT', name: 'Office team', role: 'Renter', ctx: [['Needs', 'Projector'], ['When', 'Fri night']], lk: 'Max', limit: 1500 },
+      them: { init: 'RG', name: 'Rent-a-Gear', role: 'Rental shop', ctx: [['Listed', '₹1,800'], ['Deposit', '₹3,000']], lk: 'Floor', limit: 1000 },
+      range: [800, 2000], deal: 1400,
+      beats: [
+        { from: 'you', st: 'Asking', html: 'Projector Friday night? HDMI?' },
+        { from: 'them', st: 'Answering', html: 'Yes, HDMI. ' + P(1800) + ' + deposit.', them: 1800 },
+        { from: 'you', st: 'Negotiating', html: P(1000) + '?', you: 1000 },
+        { from: 'them', st: 'Negotiating', html: P(1600), them: 1600 },
+        { from: 'you', html: P(1300), you: 1300, zone: true },
+        { from: 'them', html: P(1400) + '. Deal.', them: 1400 },
+        { kind: 'ask', html: 'Fri–Sat for ' + P(1400) + '?' },
+        { kind: 'deal', head: 'Projector · ' + P(1400), ticks: ['Deposit refundable', 'Return Sat', 'Pickup pass'], qr: true },
+      ] },
+    { tab: 'Phone fix', icon: 'phone', title: 'Screen repair · today',
+      you: { init: 'KR', name: "Kiran's agent", role: 'Customer', ctx: [['Needs', 'New screen'], ['When', 'Today']], lk: 'Max', limit: 3000 },
+      them: { init: 'FM', name: 'FixIt Mobile', role: 'Repair shop', ctx: [['Listed', '₹3,200'], ['Ready', '6pm']], lk: 'Floor', limit: 2400 },
+      range: [2000, 3500], deal: 2800,
+      beats: [
+        { from: 'you', st: 'Asking', html: 'Screen today? Original part?' },
+        { from: 'them', st: 'Answering', html: 'Original, ready 6pm. ' + P(3200) + '.', them: 3200 },
+        { from: 'you', st: 'Negotiating', html: P(2400) + '?', you: 2400 },
+        { from: 'them', st: 'Negotiating', html: P(3000), them: 3000, zone: true },
+        { from: 'you', html: P(2700), you: 2700 },
+        { from: 'them', html: P(2800) + '. Deal.', them: 2800 },
+        { kind: 'ask', html: 'Screen for ' + P(2800) + ', 6pm?' },
+        { kind: 'deal', head: 'Repair · ' + P(2800), ticks: ['90-day warranty', 'Ready 6pm', 'Pickup pass'], qr: true },
+      ] },
   ];
 
   /* ---------- Stage ---------- */
@@ -736,8 +861,8 @@ footer .end { margin-left: auto; }
 
   SCENARIOS.forEach((sc, i) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.setAttribute('role', 'tab');
-    b.innerHTML = '<span class="n">0' + (i + 1) + '</span>' + sc.tab + '<span class="prog"></span>';
+    b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-label', sc.tab);
+    b.innerHTML = icon(sc.icon) + '<span class="t">' + sc.tab + '</span><span class="prog"></span>';
     b.addEventListener('click', () => { auto = false; play(i); });
     scenEl.appendChild(b);
   });
@@ -753,14 +878,13 @@ footer .end { margin-left: auto; }
     $('lk' + side).textContent = d.lk; $('lv' + side).textContent = rupee(d.limit);
   }
 
-  function qr(el) {
-    // A decorative 7×7 pattern with three finder corners.
-    const fixed = new Set([0,1,2,7,9,14,15,16, 4,5,6,11,13,18,19,20, 28,29,30,35,37,42,43,44]);
-    const holes = new Set([8, 12, 36]);
-    for (let i = 0; i < 49; i++) {
-      const c = document.createElement('i');
-      if (holes.has(i) || (!fixed.has(i) && Math.random() > .5)) c.className = 'o';
-      el.appendChild(c);
+  function qrFill(el, size) {
+    // A decorative pattern with three finder corners; not a real code.
+    const finder = (r, c) => { for (const [r0, c0] of [[0, 0], [0, size - 3], [size - 3, 0]]) if (r >= r0 && r < r0 + 3 && c >= c0 && c < c0 + 3) return (r - r0 === 1 && c - c0 === 1) ? 'hole' : 'on'; return null; };
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+      const i = document.createElement('i'), f = finder(r, c);
+      if (f === 'hole' || (!f && Math.random() > .5)) i.className = 'o';
+      el.appendChild(i);
     }
   }
 
@@ -770,7 +894,7 @@ footer .end { margin-left: auto; }
       const w = packet.parentElement.clientWidth;
       const start = from === 'you' ? 18 : w - 18, end = from === 'you' ? w - 18 : 18;
       packet.className = 'packet' + (from === 'you' ? ' from-you' : '');
-      const dur = 900; let t0 = null, hit = false;
+      const dur = 800; let t0 = null, hit = false;
       const step = (t) => {
         if (!t0) t0 = t;
         const p = Math.min(1, (t - t0) / dur);
@@ -787,10 +911,10 @@ footer .end { margin-left: auto; }
   function addMsg(b) {
     const m = document.createElement('div');
     m.className = 'msg ' + (b.kind || b.from);
-    if (b.kind === 'ask') m.innerHTML = '<span class="meta">Asking both owners · one tap</span>' + b.html + '<div class="btns"><span class="on">Confirm</span><span>Not now</span></div>';
+    if (b.kind === 'ask') m.innerHTML = '<span class="meta">Both owners · one tap</span>' + b.html + '<div class="btns"><span class="on">Confirm</span><span>Not now</span></div>';
     else if (b.kind === 'deal') {
-      m.innerHTML = '<span class="meta">✓ Both confirmed · deal recorded</span>' + b.head + '<div class="pass">' + (b.qr ? '<div class="qr"></div>' : '<div class="qr" style="background:var(--surface2);display:grid;place-items:center;font-family:var(--mono);font-size:22px;color:var(--fresh)">✓</div>') + '<div class="ticks">' + b.ticks.map((t) => '<span><b>✓</b> ' + t + '</span>').join('') + '</div></div>';
-      if (b.qr) qr(m.querySelector('.qr'));
+      m.innerHTML = '<span class="meta">✓ Agreed</span>' + b.head + '<div class="pass"><div class="qr"' + (b.qr ? '' : ' style="background:var(--surface2);display:grid;place-items:center;color:var(--fresh)"') + '>' + (b.qr ? '' : icon('check')) + '</div><div class="ticks">' + b.ticks.map((t) => '<span><b>✓</b> ' + t + '</span>').join('') + '</div></div>';
+      if (b.qr) qrFill(m.querySelector('.qr'), 7);
     } else {
       const meta = b.from === 'you' ? S.you.name : b.from === 'them' ? S.them.name : '';
       m.innerHTML = (meta ? '<span class="meta">' + meta + '</span>' : '') + b.html;
@@ -803,7 +927,7 @@ footer .end { margin-left: auto; }
   async function play(ix) {
     const id = ++run;
     cur = ix; S = SCENARIOS[ix];
-    [...scenEl.children].forEach((b, i) => { b.setAttribute('aria-selected', i === ix); b.querySelector('.prog').style.width = i < ix && auto ? '100%' : '0'; });
+    [...scenEl.children].forEach((b, i) => { b.setAttribute('aria-selected', i === ix); b.querySelector('.prog').style.width = '0'; });
     $('sTitle').textContent = S.title;
     fillSide('You', S.you); fillSide('Them', S.them);
     feed.innerHTML = '';
@@ -811,9 +935,9 @@ footer .end { margin-left: auto; }
     zone.classList.remove('show');
     setStatus($('stYou'), '', 'Ready'); setStatus($('stThem'), '', 'Ready');
     stepsEl.innerHTML = ''; S.beats.forEach(() => stepsEl.appendChild(document.createElement('i')));
-    $('trackNote').textContent = 'Only these numbers cross the wall';
+    $('trackNote').textContent = 'Only offers cross the wall';
     const prog = scenEl.children[ix].querySelector('.prog');
-    await wait(600);
+    await wait(500);
     for (let i = 0; i < S.beats.length; i++) {
       if (id !== run) return;
       const b = S.beats[i];
@@ -823,7 +947,7 @@ footer .end { margin-left: auto; }
         await fly(b.from);
         if (id !== run) return;
       }
-      if (b.kind === 'ask') { setStatus($('stYou'), 'wait', 'Waiting on owner'); setStatus($('stThem'), 'wait', 'Waiting on owner'); }
+      if (b.kind === 'ask') { setStatus($('stYou'), 'wait', 'Your tap'); setStatus($('stThem'), 'wait', 'Your tap'); }
       if (b.kind === 'deal') { setStatus($('stYou'), 'done', 'Agreed'); setStatus($('stThem'), 'done', 'Agreed'); placePin(pinYou, S.deal); placePin(pinThem, S.deal); }
       addMsg(b);
       if (b.you) placePin(pinYou, b.you);
@@ -832,13 +956,13 @@ footer .end { margin-left: auto; }
         // Where both private limits overlap. Neither agent ever sees this; only the page does.
         zone.style.left = pct(S.them.limit) + '%'; zone.style.width = (pct(S.you.limit) - pct(S.them.limit)) + '%';
         zone.classList.add('show');
-        $('trackNote').textContent = 'Green: where both private limits overlap (neither agent sees it)';
+        $('trackNote').textContent = 'Green: hidden overlap';
       }
       [...stepsEl.children].forEach((el, k) => el.classList.toggle('on', k <= i));
       prog.style.transition = 'width .4s'; prog.style.width = ((i + 1) / S.beats.length * 100) + '%';
-      await wait(b.kind === 'sys' ? 1700 : b.kind === 'ask' ? 2200 : 1900);
+      await wait(b.kind === 'ask' ? 1800 : 1500);
     }
-    await wait(4500);
+    await wait(3500);
     if (id === run) play(auto ? (ix + 1) % SCENARIOS.length : ix);
   }
 
@@ -846,33 +970,159 @@ footer .end { margin-left: auto; }
   new IntersectionObserver((es) => { if (es[0].isIntersecting && !started) { started = true; play(0); } }, { threshold: .2 }).observe($('how'));
   $('replay').addEventListener('click', () => play(cur));
 
+  /* ---------- Hero orbit: your agent reaches out to others ---------- */
+  const ORBIT = ['shirt', 'box', 'wrench', 'bike', 'book', 'cake', 'proj', 'phone', 'scissors', 'camera'];
+  const spin = $('spin'), orbit = $('orbit');
+  const onodes = ORBIT.map((ic, i) => {
+    const a = (i / ORBIT.length) * Math.PI * 2 - Math.PI / 2, n = document.createElement('div');
+    n.className = 'node'; n.innerHTML = icon(ic);
+    n.style.left = (50 + Math.cos(a) * 40) + '%'; n.style.top = (50 + Math.sin(a) * 40) + '%';
+    spin.appendChild(n); return n;
+  });
+  const words = [['Ask', 'In stock'], ['Offer', 'Counter'], ['Book?', 'Sat 11:00'], ['Price?', '₹3,900'], ['Slot?', 'Sat 10am'], ['Eggless?', 'Yes'], ['HDMI?', 'Yes'], ['Today?', '6pm']];
+  async function orbitLoop() {
+    let k = 0;
+    while (true) {
+      const n = onodes[Math.floor(Math.random() * onodes.length)];
+      const r = n.getBoundingClientRect(), o = orbit.getBoundingClientRect();
+      const tx = r.left + r.width / 2 - o.left - o.width / 2, ty = r.top + r.height / 2 - o.top - o.height / 2;
+      const w = words[k++ % words.length];
+      if (!reduced) {
+        const beam = document.createElement('div'); beam.className = 'beam'; orbit.appendChild(beam);
+        await beam.animate([{ transform: 'translate(0,0)' }, { transform: `translate(${tx}px,${ty}px)` }], { duration: 700, easing: 'ease-in-out' }).finished;
+        beam.remove();
+      }
+      n.classList.add('lit');
+      const chip = document.createElement('div'); chip.className = 'chip'; chip.textContent = w[1];
+      chip.style.left = `calc(50% + ${tx}px)`; chip.style.top = `calc(50% + ${ty}px)`; orbit.appendChild(chip);
+      if (!reduced) {
+        const back = document.createElement('div'); back.className = 'beam back'; orbit.appendChild(back);
+        await back.animate([{ transform: `translate(${tx}px,${ty}px)` }, { transform: 'translate(0,0)' }], { duration: 700, easing: 'ease-in-out' }).finished;
+        back.remove();
+      }
+      n.classList.add('deal');
+      await wait(900);
+      n.classList.remove('lit', 'deal'); chip.remove();
+      await wait(300);
+    }
+  }
+  orbitLoop();
+
   /* ---------- Uses belt ---------- */
-  const uses = ['Buy a kurta for pickup today', 'Restock 200 steel bottles', 'Book an AC repair for Saturday', 'Sell a used cycle to a neighbour', 'Find a tutor for Saturday mornings', 'Order an eggless birthday cake', 'Rent a projector for a night', 'Get a phone screen repaired', 'Wholesale rice for the shop', 'Get tailoring done by Friday', 'Borrow a drill', 'Hire a photographer'];
+  const uses = ['Kurta for pickup today', '200 steel bottles', 'AC repair Saturday', 'Used cycle', 'Maths tutor', 'Eggless cake', 'Projector for a night', 'Phone screen today', 'Blouse stitching', 'Wedding photographer', 'Weekly groceries', 'Wholesale rice', 'Salon at 6pm', 'Moving help', 'Borrow a drill', 'Party supplies'];
   const belt = $('belt');
   [...uses, ...uses].forEach((u) => { const s = document.createElement('span'); s.textContent = u; belt.appendChild(s); });
 
+  /* ---------- Cases wall: tap one to play it above ---------- */
+  const CASES = [
+    ['shirt', 'Shop pickup', 'Retail', 0], ['box', 'Bulk restock', 'Wholesale', 1], ['wrench', 'Home repair', 'Service', 2], ['bike', 'Resale', 'Peer to peer', 3],
+    ['book', 'Tutoring', 'Booking', 4], ['cake', 'Made to order', 'Home business', 5], ['proj', 'Rentals', 'Rental', 6], ['phone', 'Device repair', 'Service', 7],
+    ['scissors', 'Tailoring', 'Made to order', 5], ['camera', 'Photography', 'Gig work', 4], ['bag', 'Groceries', 'Retail', 0], ['store', 'Wholesale', 'Business', 1],
+    ['user', 'Salon slot', 'Booking', 4], ['truck', 'Moving help', 'Gig work', 2], ['drill', 'Borrow tools', 'Sharing', 6], ['people', 'Event supplies', 'Group', 1],
+  ];
+  const grid = $('caseGrid');
+  CASES.forEach(([ic, name, kind, sc], i) => {
+    const c = document.createElement('button');
+    c.type = 'button'; c.className = 'case reveal';
+    c.innerHTML = '<div class="top"><span class="ico">' + icon(ic) + '</span><span class="tag">' + kind + '</span></div><b>' + name + '</b><div class="mini"><i class="a"></i><i class="b"></i><i class="p" style="animation-delay:' + (-(i * .37) % 2.2).toFixed(2) + 's"></i><i class="done" style="animation-delay:' + (-(i * .37) % 2.2).toFixed(2) + 's"></i></div>';
+    c.addEventListener('click', () => { auto = false; $('how').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' }); play(sc); });
+    grid.appendChild(c);
+  });
+  let spotIx = 0;
+  setInterval(() => { const cs = grid.children; [...cs].forEach((c) => c.classList.remove('spot')); cs[spotIx++ % cs.length].classList.add('spot'); }, 1100);
+
+  /* ---------- Flow: a token walks the five steps ---------- */
+  const flowSteps = [...$('flow2').querySelectorAll('.st')], fill = $('flowFill');
+  onView($('flow2'), async function loop() {
+    while (true) {
+      flowSteps.forEach((s) => s.classList.remove('on')); fill.style.transition = 'none'; fill.style.width = '0';
+      await wait(400);
+      for (let i = 0; i < flowSteps.length; i++) {
+        flowSteps[i].classList.add('on');
+        fill.style.transition = 'width .8s ease'; fill.style.width = (i / (flowSteps.length - 1) * 80) + '%';
+        await wait(900);
+      }
+      await wait(1800);
+    }
+  });
+
+  /* ---------- Privacy wall sorter ---------- */
+  const TOKENS = [
+    { t: 'Size M', ic: 'shirt', k: 'pub' }, { t: 'Max ₹1,400', ic: 'lock', k: 'priv' }, { t: 'Pickup today', ic: 'pin', k: 'pub' },
+    { t: '98450 12345', ic: 'phone', k: 'red', r: '[number removed]' }, { t: 'Home address', ic: 'home', k: 'priv' }, { t: 'Offer ₹1,300', ic: 'rupee', k: 'pub' },
+    { t: 'asha@mail.com', ic: 'mail', k: 'red', r: '[e-mail removed]' }, { t: 'Budget notes', ic: 'lock', k: 'priv' },
+  ];
+  const sorter = $('sorter'), wallv = $('wallv');
+  onView(sorter, async () => {
+    let i = 0, lane = 0;
+    while (true) {
+      const d = TOKENS[i++ % TOKENS.length];
+      const W = sorter.clientWidth, H = sorter.clientHeight, y = 60 + (lane++ % 5) * ((H - 120) / 5);
+      const el = document.createElement('div');
+      el.className = 'tok ' + (d.k === 'priv' ? 'priv' : 'pub');
+      el.innerHTML = icon(d.ic) + '<span>' + d.t + '</span>';
+      sorter.appendChild(el);
+      const w = el.offsetWidth, wallX = W / 2 - w - 6, startX = 16;
+      el.style.top = y + 'px';
+      if (reduced) { el.style.transform = `translateX(${d.k === 'priv' ? startX : W - w - 16}px)`; await wait(900); el.remove(); continue; }
+      await el.animate([{ transform: `translateX(${startX - 30}px)`, opacity: 0 }, { transform: `translateX(${wallX}px)`, opacity: 1 }], { duration: 1100, easing: 'cubic-bezier(.3,.7,.4,1)', fill: 'forwards' }).finished;
+      wallv.classList.add('hit'); setTimeout(() => wallv.classList.remove('hit'), 300);
+      if (d.k === 'priv') {
+        await el.animate([{ transform: `translateX(${wallX}px)` }, { transform: `translateX(${wallX - 14}px)` }, { transform: `translateX(${wallX - 4}px)` }, { transform: `translateX(${wallX - 10}px)` }], { duration: 420, fill: 'forwards' }).finished;
+        el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 900, delay: 900, fill: 'forwards' }).finished.then(() => el.remove());
+      } else {
+        if (d.k === 'red') { el.className = 'tok red'; el.innerHTML = icon('lock') + '<span>' + d.r + '</span>'; }
+        const w2 = el.offsetWidth;
+        el.animate([{ transform: `translateX(${W / 2 + 6}px)` }, { transform: `translateX(${W - w2 - 16}px)` }], { duration: 1000, easing: 'cubic-bezier(.3,.7,.4,1)', fill: 'forwards' }).finished
+          .then(() => el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 700, delay: 1300, fill: 'forwards' }).finished).then(() => el.remove());
+      }
+      await wait(650);
+    }
+  }, .2);
+
+  /* ---------- Proof: chain lights up, then the pass scans once ---------- */
+  const links = [...$('chain').querySelectorAll('.link')], qrbig = $('qrbig'), laser = $('laser'), stamp = $('stamp'), cap = $('scanCap');
+  qrFill(qrbig, 11);
+  const hex = () => Array.from({ length: 12 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+  onView($('chain'), async () => {
+    while (true) {
+      links.forEach((l) => l.classList.remove('on')); stamp.className = 'stamp'; cap.textContent = 'Waiting for scan'; $('hashv').textContent = 'sha256 ·';
+      await wait(600);
+      for (const l of links) { l.classList.add('on'); if (l === links[0]) $('hashv').textContent = 'sha256 · ' + hex() + '…'; await wait(700); }
+      for (const [text, cls, label] of [['COLLECTED ✓', 'good', 'Handed over · 17:42'], ['ALREADY USED', 'bad', 'Second scan refused']]) {
+        cap.textContent = 'Scanning…';
+        if (!reduced) await laser.animate([{ top: '6px', opacity: 1 }, { top: 'calc(100% - 8px)', opacity: 1 }, { top: '6px', opacity: 0 }], { duration: 1200, easing: 'ease-in-out' }).finished;
+        stamp.textContent = text; stamp.className = 'stamp ' + cls + ' show'; cap.textContent = label;
+        await wait(1700);
+        stamp.className = 'stamp ' + cls;
+        await wait(300);
+      }
+      await wait(800);
+    }
+  }, .3);
+
   /* ---------- Discovery network + ranked matches ---------- */
   const INTENTS = [
-    { q: 'Cotton kurta, size M, pickup today', matches: [
-      { n: 'Meera Textiles', s: 94, why: ['In stock · M', '1.2 km', 'Open now', 'Within limit'] },
-      { n: 'Handloom House', s: 81, why: ['In stock', '3.4 km', 'Open now'] },
+    { q: 'Kurta, size M, today', matches: [
+      { n: 'Meera Textiles', s: 94, why: ['In stock', '1.2 km', 'Open'] },
+      { n: 'Handloom House', s: 81, why: ['In stock', '3.4 km'] },
       { n: 'Fab Corner', s: 72, why: ['Size L only', '0.8 km'] } ],
-      out: [['Silk & Co.', 'closed today'], ['Online store', 'no pickup']] },
-    { q: '200 steel water bottles by Friday', matches: [
-      { n: 'Steelware Co.', s: 91, why: ['150 in stock', 'Bulk rates', 'Delivers'] },
-      { n: 'Kitchen Depot', s: 77, why: ['80 in stock', 'Delivers Fri'] },
-      { n: 'Metro Wholesale', s: 70, why: ['Made to order', '5-day lead'] } ],
-      out: [['Bottle Hub', 'retail only'], ['Steel Mart', 'out of area']] },
-    { q: 'AC repair, Saturday morning, HSR Layout', matches: [
-      { n: 'CoolFix', s: 93, why: ['Sat 11:00 free', 'Serves HSR', '4.8 ★ jobs'] },
-      { n: 'Arctic Care', s: 79, why: ['Sat 14:00 free', 'Serves HSR'] },
-      { n: 'QuickServ', s: 66, why: ['Sunday only', 'Serves HSR'] } ],
-      out: [['ChillPro', 'no Saturday slots'], ['Zen AC', 'outside service area']] },
-    { q: 'Kids\' cycle, 20 inch, in my society', matches: [
-      { n: 'Kabir · Block C', s: 90, why: ['20"', 'Same society', 'Serviced'] },
-      { n: 'Anita · Block A', s: 74, why: ['18"', 'Same society'] },
-      { n: 'Sam · nearby', s: 61, why: ['20"', '2.1 km', 'Needs repair'] } ],
-      out: [['Ravi', 'already sold'], ['Bike shop', 'new only']] },
+      out: [['Silk & Co.', 'closed'], ['Online store', 'no pickup']] },
+    { q: '200 steel bottles by Friday', matches: [
+      { n: 'Steelware Co.', s: 91, why: ['150 in stock', 'Bulk rates'] },
+      { n: 'Kitchen Depot', s: 77, why: ['80 in stock', 'Delivers'] },
+      { n: 'Metro Wholesale', s: 70, why: ['5-day lead'] } ],
+      out: [['Bottle Hub', 'retail only'], ['Steel Mart', 'too far']] },
+    { q: 'AC repair, Saturday, HSR', matches: [
+      { n: 'CoolFix', s: 93, why: ['Sat 11:00', 'Serves HSR'] },
+      { n: 'Arctic Care', s: 79, why: ['Sat 14:00'] },
+      { n: 'QuickServ', s: 66, why: ['Sunday only'] } ],
+      out: [['ChillPro', 'no slots'], ['Zen AC', 'out of area']] },
+    { q: 'Eggless cake, 1 kg, Sunday', matches: [
+      { n: 'Bake Nest', s: 92, why: ['Eggless', 'Sunday ok'] },
+      { n: 'Sugar Studio', s: 80, why: ['Eggless', '4 km'] },
+      { n: 'Corner Bakery', s: 68, why: ['Needs 48 h'] } ],
+      out: [['Donut Lab', 'no eggless'], ['Cake Co.', 'closed Sun']] },
   ];
   const canvas = $('netCanvas'), ctx = canvas.getContext('2d');
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -894,7 +1144,7 @@ footer .end { margin-left: auto; }
     list.innerHTML = ''; $('mCount').textContent = 'Searching…'; lightPipe(0);
     q.textContent = '';
     for (const ch of it.q) { if (id !== netRun) return; q.textContent += ch; await wait(reduced ? 0 : 30); }
-    lightPipe(1); await wait(500); lightPipe(2);
+    lightPipe(1); await wait(450); lightPipe(2);
     phase = 1; phaseT = 0;
     nodes.forEach((n) => (n.m = 0));
     matched = [...nodes].sort(() => Math.random() - .5).slice(0, 5);
@@ -903,7 +1153,7 @@ footer .end { margin-left: auto; }
     lightPipe(3);
     for (const [n, why] of it.out) {
       const c = document.createElement('div'); c.className = 'mcard out';
-      c.innerHTML = '<div class="t"><span>' + n + '</span><span class="s">Filtered · ' + why + '</span></div>';
+      c.innerHTML = '<div class="t"><span>' + n + '</span><span class="s">✕ ' + why + '</span></div>';
       list.appendChild(c); await wait(260);
     }
     await wait(400); if (id !== netRun) return;
@@ -912,17 +1162,17 @@ footer .end { margin-left: auto; }
     for (let i = 0; i < it.matches.length; i++) {
       const m = it.matches[i], c = document.createElement('div');
       c.className = 'mcard' + (i === 0 ? ' top' : '');
-      c.innerHTML = '<div class="t"><span>' + (i + 1) + '. ' + m.n + '</span><span class="s">' + m.s + '% fit</span></div><div class="meter2"><i></i></div><div class="why">' + m.why.map((w) => '<span class="tag">' + w + '</span>').join('') + '</div>';
+      c.innerHTML = '<div class="t"><span>' + (i + 1) + '. ' + m.n + '</span><span class="s">' + m.s + '%</span></div><div class="meter2"><i></i></div><div class="why">' + m.why.map((w) => '<span class="tag">' + w + '</span>').join('') + '</div>';
       list.appendChild(c);
       requestAnimationFrame(() => requestAnimationFrame(() => { c.querySelector('.meter2 i').style.width = m.s + '%'; }));
       await wait(350);
     }
     const f = document.createElement('div'); f.className = 'mcard out';
-    f.innerHTML = '<div class="t"><span>' + it.out.length + ' filtered out</span><span class="s">' + it.out.map((o) => o[1]).join(' · ') + '</span></div>';
+    f.innerHTML = '<div class="t"><span>' + it.out.length + ' filtered</span><span class="s">' + it.out.map((o) => o[1]).join(' · ') + '</span></div>';
     list.appendChild(f);
     $('mCount').textContent = it.matches.length + ' matches';
     phase = 2; phaseT = 0; lightPipe(5);
-    await wait(6500);
+    await wait(6000);
     if (id !== netRun) return;
     phase = 0;
     if (netVisible) runIntent(); else netIdle = true;
@@ -1017,13 +1267,10 @@ footer .end { margin-left: auto; }
     const cross = el('line', { y1: padT, y2: h - padB, stroke: 'var(--text3)', 'stroke-width': 1, opacity: 0 }, svg);
     const dot = el('circle', { r: 4.5, fill: 'var(--accent)', stroke: 'var(--surface)', 'stroke-width': 2, opacity: 0 }, svg);
     box.insertBefore(svg, tip);
-    // Draw-in once visible.
     const L = hp.getTotalLength ? hp.getTotalLength() : 1000;
     hp.style.strokeDasharray = L; hp.style.strokeDashoffset = L;
     fp.style.opacity = 0;
-    const go = () => { hp.style.transition = 'stroke-dashoffset 1.4s ease'; hp.style.strokeDashoffset = 0; setTimeout(() => { fp.style.transition = 'opacity .6s'; fp.style.opacity = 1; }, reduced ? 0 : 1300); count($('fcNum'), fc.reduce((a, b) => a + b, 0)); };
-    new IntersectionObserver((es, ob) => { if (es[0].isIntersecting) { ob.disconnect(); go(); } }, { threshold: .4 }).observe(box);
-    // Crosshair + tooltip.
+    onView(box, () => { hp.style.transition = 'stroke-dashoffset 1.4s ease'; hp.style.strokeDashoffset = 0; setTimeout(() => { fp.style.transition = 'opacity .6s'; fp.style.opacity = 1; }, reduced ? 0 : 1300); count($('fcNum'), fc.reduce((a, b) => a + b, 0)); }, .4);
     svg.addEventListener('pointermove', (e) => {
       const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * w;
       const i = Math.max(0, Math.min(n - 1, Math.round((px - padL) / (w - padL - padR) * (n - 1))));
@@ -1032,7 +1279,7 @@ footer .end { margin-left: auto; }
       dot.setAttribute('cx', x(i)); dot.setAttribute('cy', y(v)); dot.setAttribute('opacity', 1);
       dot.setAttribute('fill', isF ? 'var(--accent)' : 'var(--text3)');
       const day = i - (hist.length - 1);
-      tip.innerHTML = (day === 0 ? 'Today' : day > 0 ? '+' + day + (day === 1 ? ' day' : ' days') : Math.abs(day) + (day === -1 ? ' day ago' : ' days ago')) + ' · <b>' + v + '</b> requests' + (isF ? ' (forecast ' + lo[i - hist.length] + '–' + hi[i - hist.length] + ')' : '');
+      tip.innerHTML = (day === 0 ? 'Today' : day > 0 ? '+' + day + (day === 1 ? ' day' : ' days') : Math.abs(day) + (day === -1 ? ' day ago' : ' days ago')) + ' · <b>' + v + '</b> requests' + (isF ? ' (' + lo[i - hist.length] + '–' + hi[i - hist.length] + ')' : '');
       tip.style.left = (x(i) / w * 100) + '%'; tip.style.top = (y(v) / h * r.height) + 'px'; tip.classList.add('on');
     });
     svg.addEventListener('pointerleave', () => { tip.classList.remove('on'); cross.setAttribute('opacity', 0); dot.setAttribute('opacity', 0); });
@@ -1046,19 +1293,19 @@ footer .end { margin-left: auto; }
   }
 
   function missedBars() {
-    const rows = [['Steel water bottles', 200, 15, 9], ['Lunch boxes, 3-tier', 64, 20, 5], ['Pressure cooker gaskets', 40, 12, 3]];
+    const rows = [['Steel bottles', 200, 15, 9], ['Lunch boxes', 64, 20, 5], ['Cooker gaskets', 40, 12, 3]];
     const max = 200, box = $('missed');
-    box.innerHTML = rows.map(([item, want, had, ppl]) => '<div class="hbar" title="' + ppl + ' people wanted ' + want + ', you had ' + had + '"><div class="top"><span>' + item + '</span><span>wanted ' + want + ' · had ' + had + ' · ' + ppl + ' people</span></div><div class="track2"><i class="had" data-w="' + (had / max * 100) + '"></i><i data-w="' + (want / max * 100) + '"></i></div></div>').join('');
-    new IntersectionObserver((es, ob) => { if (es[0].isIntersecting) { ob.disconnect(); box.querySelectorAll('i').forEach((i) => (i.style.width = i.dataset.w + '%')); } }, { threshold: .4 }).observe(box);
+    box.innerHTML = rows.map(([item, want, had, ppl]) => '<div class="hbar" title="' + ppl + ' people wanted ' + want + ', you had ' + had + '"><div class="top"><span>' + item + '</span><span>' + had + ' / ' + want + '</span></div><div class="track2"><i class="had" data-w="' + (had / max * 100) + '"></i><i data-w="' + (want / max * 100) + '"></i></div></div>').join('');
+    onView(box, () => box.querySelectorAll('i').forEach((i) => (i.style.width = i.dataset.w + '%')), .4);
   }
 
   function dotPlot() {
-    const rows = [['Steel bottles', 280, 240, 21], ['Lunch boxes', 450, 420, 9], ['Tumbler set', 350, 350, 6], ['Tiffin carrier', 620, 540, 4]];
+    const rows = [['Steel bottles', 280, 240, 21], ['Lunch boxes', 450, 420, 9], ['Tumbler set', 350, 350, 6], ['Tiffin', 620, 540, 4]];
     const lo = 200, hi = 650, p = (v) => ((v - lo) / (hi - lo)) * 100, box = $('dots'), tip = $('dotTip');
     box.innerHTML = rows.map(([item, listed, agreed, deals]) =>
       '<div class="dotrow"><span>' + item + '</span><div class="ln"><span class="seg" style="left:' + p(Math.min(listed, agreed)) + '%;width:' + (p(Math.max(listed, agreed)) - p(Math.min(listed, agreed))) + '%"></span>' +
       '<span class="pt listed" style="left:' + p(listed) + '%" data-t="' + item + ' · listed ' + rupee(listed) + '"></span>' +
-      '<span class="pt agreed" style="left:' + p(agreed) + '%" data-t="' + item + ' · agreed ' + rupee(agreed) + ' (median of ' + deals + ' deals)"></span></div></div>').join('');
+      '<span class="pt agreed" style="left:' + p(agreed) + '%" data-t="' + item + ' · agreed ' + rupee(agreed) + ' (' + deals + ' deals)"></span></div></div>').join('');
     const panel = box.parentElement;
     box.addEventListener('pointerover', (e) => {
       const t = e.target.closest('.pt'); if (!t) return;
@@ -1069,16 +1316,11 @@ footer .end { margin-left: auto; }
   }
 
   forecastChart(); missedBars(); dotPlot();
-  document.querySelectorAll('[data-count]').forEach((n) => new IntersectionObserver((es, ob) => { if (es[0].isIntersecting) { ob.disconnect(); count(n, +n.dataset.count); } }).observe(n));
+  document.querySelectorAll('[data-count]').forEach((n) => onView(n, () => count(n, +n.dataset.count), .3));
 
-  /* ---------- Reveal + flow lighting ---------- */
+  /* ---------- Reveal ---------- */
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .12 });
   document.querySelectorAll('.reveal').forEach((n) => io.observe(n));
-  const flow = $('flow');
-  new IntersectionObserver(async (es, ob) => {
-    if (!es[0].isIntersecting) return; ob.disconnect();
-    for (const n of flow.children) { n.classList.add('lit'); await wait(260); }
-  }, { threshold: .3 }).observe(flow);
 })();
 </script>
 </body>
