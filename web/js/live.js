@@ -16,8 +16,10 @@ function notify(title, body, open, kind = "attention") {
   notice({ title, body, kind, label: { attention: "Needs you", deal: "Deal", success: "Payment", info: "New match" }[kind], action: "Open", onClick: open });
   try {
     // With push on, the server's notification already arrives — no second one from the page.
-    if (document.hidden && !session.pushOn && "Notification" in window && Notification.permission === "granted")
-      new Notification(title, { body, tag: title + body, icon: "/icon-192.png", badge: "/badge-96.png" });
+    if (document.hidden && !session.pushOn && "Notification" in window && Notification.permission === "granted") {
+      const n = new Notification(title, { body, tag: title + body, icon: "/icon-192.png", badge: "/badge-96.png" });
+      n.onclick = () => { window.focus(); n.close(); open?.(); };
+    }
   } catch { /* not available */ }
 }
 
@@ -28,9 +30,9 @@ function setEngagements(list, openChat, quiet = false) {
     if (e.phase === "agreed" && !e.payment && !carts.has(e.id)) { carts.add(e.id); api(`/api/engagements/${e.id}/cart`, {}).then(x => { live.engagements.set(x.id, x); emit(); }).catch(() => {}); }
     const prev = live.engagements.get(e.id);
     live.engagements.set(e.id, e);
-    if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify(`${e.requester.name}'s agent wrote`, e.title, () => openChat("requests", e.id), "attention");
-    if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("requests", e.id), "deal");
-    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", e.title, () => openChat("requests", e.id), "success");
+    if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify(`${e.requester.name}'s agent wrote`, e.title, () => openChat("engagement", e.id), "attention");
+    if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("engagement", e.id), "deal");
+    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", e.title, () => openChat("engagement", e.id), "success");
     seen.engagements.add(e.id);
   }
   if (!quiet) emit();
@@ -39,7 +41,7 @@ function setEngagements(list, openChat, quiet = false) {
 function setInbox(items, openChat) {
   live.inbox = items.sort((a, b) => b.createdAt - a.createdAt);
   for (const i of items) {
-    if (!first && !seen.inbox.has(i.id) && i.kind !== "move") notify(i.question ?? (i.kind === "confirm" ? "Confirm the deal" : i.title), i.question ? "Their agent asks — answer once, and your agent remembers it" : i.kind === "confirm" ? i.title : "", () => openChat("requests", i.engagementId));
+    if (!first && !seen.inbox.has(i.id) && i.kind !== "move") notify(i.question ?? (i.kind === "confirm" ? "Confirm the deal" : i.title), i.question ? "Their agent asks — answer once, and your agent remembers it" : i.kind === "confirm" ? i.title : "", () => openChat("engagement", i.engagementId));
     seen.inbox.add(i.id);
   }
 }

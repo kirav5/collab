@@ -815,7 +815,29 @@ const findCard = el => {
 
 // MARK: - Actions
 
-function openScreen(screen, focus) { S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
+/**
+ * Where a notification, a shortcut or a link points: a conversation opens itself (in the side panel; the whole screen
+ * on a phone), waiting for it to load if it just arrived; a person's card, Activity or a screen open as they are.
+ */
+async function openLink(link) {
+  const qp = new URL(link || "/", location.origin).searchParams;
+  if (location.search) history.replaceState(null, "", location.pathname);
+  if (qp.get("to")) return openDirect(qp.get("to"));
+  if (qp.get("engagement")) return openEngagement(qp.get("engagement"));
+  if (qp.get("alerts")) return openScreen("requests");
+  if (qp.get("screen") && screens[qp.get("screen")]) return openScreen(qp.get("screen"));
+}
+async function openEngagement(id) {
+  for (let i = 0; i < 12 && !live.engagements.has(id); i++) { await refresh(openScreen).catch(() => {}); if (!live.engagements.has(id)) await new Promise(r => setTimeout(r, 700)); }
+  if (!live.engagements.has(id)) return openScreen("requests");
+  if (S.screen !== "chat") { S.screen = "chat"; paint(); }
+  showEngagement(id);
+}
+
+function openScreen(screen, focus) {
+  // Notifications and alerts name a conversation: that conversation opens, not the list it's in.
+  if (screen === "engagement" && focus) { openEngagement(focus); return; }
+  S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
 
 function onEdit(e) {
   const el = e.target;
@@ -1482,10 +1504,12 @@ document.addEventListener("visibilitychange", async () => {
 // A push that arrives while Collab is open shows here (the system shows it when Collab is closed).
 addEventListener("collab-push", e => {
   const n = e.detail ?? {};
-  notice({ title: n.title ?? "Collab", body: n.body ?? "", kind: "attention", label: "Your agent", action: "Open", onClick: () => { if (n.link && n.link !== "/") location.href = n.link; } });
+  notice({ title: n.title ?? "Collab", body: n.body ?? "", kind: "attention", label: "Your agent", action: "Open", onClick: () => openLink(n.link) });
   refresh(openScreen);
 });
 navigator.serviceWorker?.addEventListener("message", e => {
+  // A notification tapped while Collab is open: go there, without a reload.
+  if (e.data?.type === "collab-open") { openLink(e.data.link); return; }
   if (e.data?.type === "collab-updated") notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
 });
 
@@ -1509,14 +1533,11 @@ timing("app");
 // Links from notifications, the installed app's shortcuts and QR codes open the right place.
 {
   const qp = new URLSearchParams(location.search);
-  if (qp.get("to")) openDirect(qp.get("to"));
-  else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
-  else if (qp.get("alerts")) openScreen("requests");
-  else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
   if (qp.get("calendar")) {
     toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
     history.replaceState(null, "", location.pathname);
   }
+  else if (location.search) openLink(location.pathname + location.search);
 }
 
 } catch (err) {
