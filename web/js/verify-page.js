@@ -22,14 +22,14 @@ try {
   const paid = r.payment?.status === 'paid' ? 'Paid in the app' : r.payment?.status === 'outside' ? 'Paid outside the app (cash or UPI)' : 'Not paid yet';
   const ok = v => (v === true ? 'valid' : v === null || v === undefined ? 'none' : 'invalid');
   document.querySelector('#details').innerHTML = `<dl class="kv">
-      <dt>Buyer</dt><dd>${esc(r.parties[buyerSide].name)} <span class="faint">@${esc(r.parties[buyerSide].handle)}</span></dd>
-      <dt>Seller</dt><dd>${esc(r.parties[sellerSide].name)} <span class="faint">@${esc(r.parties[sellerSide].handle)}</span></dd>
+      <dt>For</dt><dd>${esc(r.parties[buyerSide].name)} <span class="faint">@${esc(r.parties[buyerSide].handle)}</span></dd>
+      <dt>From</dt><dd>${esc(r.parties[sellerSide].name)} <span class="faint">@${esc(r.parties[sellerSide].handle)}</span></dd>
       <dt>What</dt><dd>${esc(t.title.split(' · ')[0])}${qty > 1 ? ` × ${qty}` : ''}</dd>
       <dt>Agreed price</dt><dd>${amount(total / qty)}${t.unit && t.unit !== 'each' ? `/${esc(t.unit)}` : ''}${qty > 1 ? ` each · ${amount(total)} in all` : ''}</dd>
       <dt>Platform fee</dt><dd>${amount(0)}</dd>
       <dt>Payment</dt><dd>${esc(paid)}</dd>
       <dt>Agreed</dt><dd>${new Date(r.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</dd></dl>
-    ${t.policies?.length ? `<p class="small"><b>Seller's terms, as they stated them</b></p>${t.policies.map(p => `<p class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</p>`).join('')}` : ''}
+    ${t.policies?.length ? `<p class="small"><b>Terms, as stated</b></p>${t.policies.map(p => `<p class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</p>`).join('')}` : ''}
     <p class="small muted">Checked in this browser — agreement: ${ok(result.receipt)} · cart: ${ok(result.cart)} · payment: ${ok(result.payment)}${result.ap2 ? ` · AP2 checkout: ${ok(result.ap2.merchant)} · AP2 mandates: ${ok(result.ap2.mandates)}` : ''}${r.legacyAttestation ? ' · older agreement, attested on export' : ''}</p>`;
   // Show the check failing: the same record with the price changed, verified the same way in this browser.
   const tamper = document.querySelector('#tamper'), out = document.querySelector('#tamper-result');

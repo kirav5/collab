@@ -14,7 +14,7 @@ test("a seller's sentence becomes a floor, a close-at price, a per-buyer cap and
   const lines = rulesLines(r);
   assert.ok(lines.find(l => /Lowest price: ₹400/.test(l.text))?.private, "the floor is private");
   assert.ok(lines.find(l => /at ₹420 or more; between ₹400 and ₹419 you give the final yes/.test(l.text)));
-  assert.equal(lines.find(l => /Most per buyer: 10/.test(l.text))?.private, false, "buyers are told the cap");
+  assert.equal(lines.find(l => /Most per person: 10/.test(l.text))?.private, false, "buyers are told the cap");
 });
 
 test("a buyer's sentence becomes a limit and a must-be-yes question", () => {

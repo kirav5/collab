@@ -268,7 +268,7 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
             ? { factId: offerFact.id, title: offerFact.offer.title, price: offerFact.offer.price.amount, unit: offerFact.offer.price.period ?? null, category: offerFact.offer.category }
             : { factId: offerFact?.owner === provider.uid ? offerFact.id : null, title: t.brief.title, price: null, unit: null, category: t.brief.category || null } });
         e.events.push({ at: Math.floor(Date.now() / 1000), who: "system", text: `${e.requester.name}'s agent sent a request over A2A.` });
-        void pushTo(provider.uid, `New buyer: ${(e.offer.title || e.title).split(" · ")[0].slice(0, 50)}`, `${e.requester.name}'s agent is asking. Yours is replying.`, `/?engagement=${e.id}`);
+        void pushTo(provider.uid, `New request: ${(e.offer.title || e.title).split(" · ")[0].slice(0, 50)}`, `${e.requester.name}'s agent is asking. Yours is replying.`, `/?engagement=${e.id}`);
       }
       e.taskId = ctx.taskId;
       e.contextId = ctx.contextId;

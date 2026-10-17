@@ -87,7 +87,7 @@ isn't the target here. The other four are.
 | E6 | Snap a photo to list an item | Photo → listing: Gemini reads the item and its condition; the seller sets the price | ✅ | (17 Oct) |
 | E7 | Say the listing aloud | Mic in the composer (same as B11) | ✅ | (17 Oct) |
 | E8 | Set stock while listing | Stock count on the offer card | ✅ | (17 Oct) |
-| E9 | Get my shop QR to print | People › Your QR › Download | ⚠️ | Name it **My shop** in the menu; QR first |
+| E9 | Get my QR to print or share | My card › Your QR › Download | ✅ | Named **My card** — it fits a shop, a tutor or someone selling one thing (17 Oct) |
 | E10 | See my card as customers do | Preview opens fresh each time | ✅ | — |
 | E11 | Offer card has many sections | Publish first; questions, terms and rules as "Improve your listing" chips after | ✅ | (17 Oct) |
 | E12 | List ten products | One chat message each | ⚠️ | Paste a list (one per line) → several listings to review |
@@ -159,7 +159,7 @@ isn't the target here. The other four are.
 | J1 | First visit | Name → handle made → chat, under a second | ✅ | — |
 | J2 | Understand what to do | Three short steps and four tiles | ✅ | (17 Oct) |
 | J3 | Menu on a phone | Opens; closes on a tap outside | ✅ | (17 Oct) |
-| J4 | Too many menu items with jargon | Deals · My shop · About me · Privacy · Settings (Activity inside Privacy) | ✅ | (17 Oct) |
+| J4 | Too many menu items with jargon | Activity · My card · About me · Privacy · Settings (what was shared sits inside Privacy); generic words, not shop-only | ✅ | (17 Oct) |
 | J5 | Ask about my notes without a 2 GB download | Matching notes shown at once; AI optional | ✅ | (17 Oct) |
 | J6 | Slow network | Offline shell, send queue | ✅ | — |
 | J7 | Light or dark | Auto/Light/Dark | ✅ | — |
@@ -182,8 +182,8 @@ isn't the target here. The other four are.
 
 | Status | Count |
 |---|---|
-| ✅ smooth | 93 |
-| ⚠️ avoidable effort | 11 |
+| ✅ smooth | 94 |
+| ⚠️ avoidable effort | 10 |
 | ❌ missing | 8 |
 
 ## What to change, ranked by value for the theme and effort
@@ -197,7 +197,7 @@ isn't the target here. The other four are.
 6. Shop-card basket (A6). M.
 
 **Visual design**
-7. **Menu: Deals · My shop · About me · Privacy · Settings** (J4, E9, I7) — fewer items, no jargon. S.
+7. **Menu: Activity · My card · About me · Privacy · Settings** (J4, E9, I7) — fewer items, no jargon, and words that fit everyone (not only shops). S.
 8. One stage tag per deal, colour-coded like Your deals (G10). S.
 9. Offer card: publish first, improvements as chips after (E11). M.
 

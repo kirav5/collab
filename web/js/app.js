@@ -1,6 +1,6 @@
 // Collab on the web: one chat with your agent (it remembers, answers from your notes, shapes requests with Gemini and
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
-// screens Collab has: what your agents are doing (Deals), your QR and agent (My shop), what your agent knows (About me),
+// screens Collab has: what your agents are doing (Activity), your QR and public card (My card), what your agent knows (About me),
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
@@ -116,7 +116,7 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><label class="mic" for="photo-in" title="Sell from a photo" aria-label="Sell something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section>
       <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
@@ -173,8 +173,8 @@ function paintSidebar() {
         ${!session.pushOn && session.push && !("Notification" in window && Notification.permission === "denied") ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
-        ${navRow("requests", "⇄", "Deals", n ? String(n) : "")}
-        ${navRow("people", "▦", "My shop", "")}
+        ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
+        ${navRow("people", "▦", "My card", "")}
         ${navRow("context", "▤", "About me", "")}
         ${navRow("sharing", "◈", "Privacy", "")}
         ${navRow("settings", "⚙", "Settings", "")}
@@ -196,13 +196,13 @@ function groupSessions(list) {
 
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
-  const titles = { context: "About me", people: "My shop", sharing: "Privacy", requests: "Deals", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+  const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#panel-title").innerHTML = S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
   $("#app").classList.toggle("split", S.screen !== "chat");
   $("#panel").hidden = S.screen === "chat";
-  $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask anything — remember, find, offer…";
+  $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
   $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
 }
 
@@ -267,6 +267,11 @@ async function chatHTML() {
   const cur = S.sessions.find(s => s.id === S.current);
   if (!cur || !cur.messages.length) return emptyChat();
   refreshStoreCard(cur);
+  // A listing being made gets its terms suggested at once, in the background (see prefillTerms).
+  cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => {
+    if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i);
+    if (c.type === "offer" && c.step === "review" && c.missing?.length && !c.answersTried) prefillAnswers(cur.id, m.id, i);
+  }));
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
     for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
@@ -312,7 +317,7 @@ async function sellFromPhoto(file) {
     input.value = "";
     // The preview is the copy on this phone: the server shows the photo to others only once it's on a public listing.
     const preview = URL.createObjectURL(await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.82)));
-    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: preview }))) toast("Couldn't make a listing from that — try typing what it is.");
+    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: preview, condition: r.condition }))) toast("Couldn't make a listing from that — try typing what it is.");
   } catch (err) { toast(err.message || "Couldn't read that photo."); }
 }
 
@@ -375,6 +380,48 @@ function refreshStoreCard(cur) {
   });
 }
 
+/** Still waiting for suggested terms (a request older than a minute, say from before a reload, has ended). */
+const termsBusy = c => !!c.termsLoading && Date.now() - c.termsLoading < 60_000;
+
+/** A card as it is now (the session may have been saved or synced since a request started). */
+function cardAt(sid, mid, i) { const s = S.sessions.find(x => x.id === sid), m = s?.messages.find(x => x.id === mid); return m?.cards?.[i] ? { s, m, c: m.cards[i] } : null; }
+
+/**
+ * Terms for a listing, suggested from what others offering the same thing state on the web — started as soon as the
+ * listing card appears (or again on request), and written to the card whatever the owner opens or closes meanwhile.
+ * Never over terms the owner already wrote.
+ */
+async function prefillTerms(sid, mid, i, again = false) {
+  const f = cardAt(sid, mid, i);
+  if (!f || termsBusy(f.c) || (!again && (f.c.termsTried || f.c.terms?.length))) return;
+  Object.assign(f.c, { termsTried: true, termsLoading: Date.now() });
+  await saveSession(f.s); paintContent(true);
+  const r = await api("/api/terms/suggest", { category: f.c.offer?.category ?? "", text: f.c.publicText ?? f.c.text }).catch(() => null);
+  const now_ = cardAt(sid, mid, i);
+  if (!now_) return;
+  now_.c.termsLoading = false;
+  if (r?.terms?.length && (again || !now_.c.terms?.length)) now_.c.terms = r.terms;
+  // The common terms for this kind of offering, to tap in — minus any already there.
+  const have = new Set((now_.c.terms ?? []).map(t => t.label.trim().toLowerCase()));
+  if (r) now_.c.starters = (r.starters ?? []).filter(t => !have.has(t.label.toLowerCase()));
+  if (again && r && !r.terms?.length && !now_.c.starters?.length) toast("Couldn't suggest terms just now — write your own.");
+  await saveSession(now_.s); paintContent(true);
+}
+
+/** Likely answers to the listing's common questions, suggested by Gemini from its words; the owner accepts them. */
+async function prefillAnswers(sid, mid, i) {
+  const f = cardAt(sid, mid, i);
+  if (!f || f.c.answersTried) return;
+  f.c.answersTried = true; await saveSession(f.s);
+  const r = await api("/api/offers/answers", { text: f.c.publicText ?? f.c.text, questions: f.c.missing.map(m => ({ label: m.label, ask: m.ask, options: m.options ?? [] })) }).catch(() => null);
+  const now_ = cardAt(sid, mid, i);
+  if (!now_ || !r?.answers) return;
+  // "answer\u0000guess" marks a guess (the words said nothing); otherwise the words implied it.
+  now_.c.suggestedAnswers = Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, String(v).split("\u0000")[0]]));
+  now_.c.guessedAnswers = Object.fromEntries(Object.entries(r.answers).filter(([, v]) => String(v).includes("\u0000")).map(([k]) => [k, true]));
+  await saveSession(now_.s); paintContent(true);
+}
+
 /** A pass (from its link: "/pickup.html#<id>.<code>") in a modal: the buyer sees the code to show, the seller marks it done. */
 async function openPass(path) {
   const [pid, code] = new URL(path, location.origin).hash.slice(1).split(".");
@@ -427,7 +474,7 @@ async function openPass(path) {
     const b = e.target.closest('[data-act="pass-collect"]');
     if (!b) return;
     busy(b, true);
-    try { await api(`/api/pickup/${encodeURIComponent(pid)}/collect`, { code }); d = await load(); draw(); toast(`${passKind(d).done}. The buyer is asked to confirm.`); refresh(openScreen); }
+    try { await api(`/api/pickup/${encodeURIComponent(pid)}/collect`, { code }); d = await load(); draw(); toast(`${passKind(d).done}. They're asked to confirm.`); refresh(openScreen); }
     catch (err) {
       d = await load().catch(() => d); draw();
       o.querySelector(".pass")?.insertAdjacentHTML("afterend", `<p class="small" role="alert" style="color:var(--danger);margin:0">${esc(err.message)}</p>`);
@@ -859,7 +906,7 @@ async function onClick(e) {
       try {
         const x = await api(`/api/people/${encodeURIComponent(e[sellerSide].handle)}/order`, { offerFactId: e.offer.factId, quantity: n });
         live.engagements.set(x.id, x); session.track("order_from_card", { kind: "again", instant: x.phase === "agreed" });
-        toast(x.phase === "agreed" ? "Ordered — it's agreed. Pay when you're ready." : "Ordered — waiting for the seller to confirm.");
+        toast(x.phase === "agreed" ? "Ordered — it's agreed. Pay when you're ready." : "Ordered — waiting for them to confirm.");
         openScreen("requests", x.id);
       } catch (err) { toast(err.status === 404 ? "That isn't on offer any more." : err.message); busy(el, false); }
       return;
@@ -895,7 +942,7 @@ async function onClick(e) {
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
       live.engagements.set(e.id, e);
       session.track(a === "eng-delivered" ? "delivered" : ok ? "received" : "disputed");
-      toast(a === "eng-delivered" ? "Marked delivered — the buyer will confirm." : ok ? "Thanks — the seller will see it arrived as agreed." : "Problem reported to the seller.");
+      toast(a === "eng-delivered" ? "Marked delivered — they'll confirm." : ok ? "Thanks — they'll see it arrived as agreed." : "Problem reported to them.");
       return refresh(openScreen);
     }
     if (a === "eng-receipt") {
@@ -919,7 +966,7 @@ async function onClick(e) {
             <dt>AP2 mandates</dt><dd>Checkout + Payment Mandates (SD-JWT) by @${esc(r.payment.ap2.checkout.buyer.handle)}'s agent, bound to the checkout hash · ${r.payment.check?.ap2?.mandatesOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
             <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "In the app"}</dd>` : ""}
           </dl>
-          <span class="small muted">AP2 (Agent Payments Protocol): the seller's agent signs a cart for exactly the agreed terms; the buyer's agent signs a payment against that cart only after the buyer taps Pay. The payment goes to the seller's agent over A2A.</span></details>` : ""}</div>`;
+          <span class="small muted">AP2 (Agent Payments Protocol): the agent of whoever offers it signs a cart for exactly the agreed terms; the paying side's agent signs a payment against that cart only after Pay is tapped. The payment goes back to the first agent over A2A.</span></details>` : ""}</div>`;
       return;
     }
     if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect, publicIntake, openPass })) return;
@@ -1082,7 +1129,7 @@ async function cardAction(a, el, { s, m, c }) {
     Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, floor: d.floor ?? c.floor ?? null, basics: null, gate: d.gate ?? null });
     c.insights = await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []);
   }
-  if (a === "offer-suggest-terms") { busy(el, true, "Suggesting"); await suggestTermsFor(c); }
+  if (a === "offer-suggest-terms") { const f = findCard(el); if (f) prefillTerms(f.s.id, f.m.id, Number(el.dataset.card), true); return; }
   // A common term for this kind of offering, tapped in; "Add all" takes the rest.
   if (a === "offer-term-add") {
     const picks = el.dataset.j === "all" ? c.starters ?? [] : [c.starters?.[Number(el.dataset.j)]].filter(Boolean);
@@ -1118,27 +1165,19 @@ async function cardAction(a, el, { s, m, c }) {
     if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
     c.step = "published"; c.publicText = fact.text;
   }
-  // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
-  if (a === "offer-improve") {
-    c.improve = c.improve === el.dataset.k ? null : el.dataset.k;
-    // Terms open with suggestions already there, so there's something to tap rather than a blank form.
-    if (c.improve === "terms" && !c.terms?.length && !c.starters?.length && !c.termsAsked) { c.termsAsked = true; busy(el, true, "Suggesting"); await suggestTermsFor(c); }
+  // Accept every suggested answer still open (the owner's own answers stay).
+  if (a === "offer-use-suggested") {
+    c.missingAnswers = { ...(c.suggestedAnswers ?? {}), ...Object.fromEntries(Object.entries(c.missingAnswers ?? {}).filter(([, v]) => String(v).trim())) };
+    c.answeredMissing = (c.missing ?? []).every(m => String(c.missingAnswers[m.label] ?? "").trim());
   }
+  // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
+  // Each improvement opens and closes on its own; several can be open at once.
+  if (a === "offer-improve") c.openParts = { ...(c.openParts ?? {}), [el.dataset.k]: !c.openParts?.[el.dataset.k] };
   // Making a note public goes through the offering card when it's something offered.
   if (a === "tier" && el.dataset.tier === "public" && c.fact && c.fact.tier !== "public") { busy(el, true, "Reading"); if (await publicIntake(c.fact.text, c.fact.id)) return; }
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
   await saveSession(s);
   paint();
-}
-
-/** Terms for this listing: Gemini's (web-grounded when it can), plus the common ones for this kind of offering to tap in. */
-async function suggestTermsFor(c) {
-  const r = await api("/api/terms/suggest", { category: c.offer?.category ?? c.basics?.category ?? "", text: c.publicText ?? c.text }).catch(err => { toast(err.message); return null; });
-  if (!r) return;
-  if (r.terms.length) c.terms = [...(c.terms ?? []).filter(t => t.label.trim() || t.text.trim()), ...r.terms];
-  const have = new Set((c.terms ?? []).map(t => t.label.trim().toLowerCase()));
-  c.starters = (r.starters ?? []).filter(t => !have.has(t.label.toLowerCase()));
-  if (!r.terms.length && !c.starters.length) toast("Couldn't suggest terms just now — write your own.");
 }
 
 /**
@@ -1165,7 +1204,7 @@ async function publicIntake(text, noteId = null, photo = null) {
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 Sell this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 List this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
   S.screen = "chat"; paint();
   return true;

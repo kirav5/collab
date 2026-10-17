@@ -132,7 +132,7 @@ function plain(i: Omit<ShopInsights, "summary" | "byModel">): string[] {
   const out: string[] = [];
   const m = i.missed[0]; if (m) out.push(`Restock ${m.item}: ${m.wanted} wanted, you had ${m.had}.`);
   const u = i.unmet[0]; if (u) out.push(`${u.requests} people near you asked for ${u.item} and nobody had it.`);
-  const t = i.together[0]; if (t) out.push(`${t.buyers} of your buyers also bought ${t.item} — consider stocking it.`);
+  const t = i.together[0]; if (t) out.push(`${t.buyers} of the people you dealt with also got ${t.item} — consider offering it.`);
   const p = i.prices.find(x => x.listed != null && x.agreed < x.listed); if (p) out.push(`${p.item} usually sells at ₹${p.agreed} against your ₹${p.listed}.`);
   return out.slice(0, 3);
 }
