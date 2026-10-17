@@ -52,7 +52,10 @@ function discoveryCard(c, at) {
   const row = e => {
     const side = mineSide(e), them = side === "provider" ? e.requester : e.provider, need = needs(e);
     const [st, tone] = dealStage(e, side, need);
-    const line = statusLine(e, side, them, items(e), !need && !["agreed", "closed", "declined"].includes(e.phase)).replace(/<[^>]+>/g, "");
+    // What needs the owner, said plainly: the question itself, the deal to confirm, or the limit to set.
+    const ask = items(e).find(i => i.owner === session.uid || i.owner.startsWith("demo-"));
+    const line = need && ask ? (ask.question ? `${ask.owner === session.uid ? "Asks you" : `Asks ${shortName(them.name)} (demo)`}: ${ask.question}` : ask.kind === "confirm" ? `Confirm ${dealAmount(e)}` : ask.kind === "move" ? "Set the most you'd pay to keep going" : "Waiting for you")
+      : statusLine(e, side, them, items(e), !["agreed", "closed", "declined"].includes(e.phase)).replace(/<[^>]+>/g, "");
     return `<button class="disc-row ${need ? "needs" : ""}" data-act="eng-open" data-id="${esc(e.id)}" data-anim="dr-${esc(e.id)}" data-anim-sig="${esc(st + line)}">
       ${avatarHTML(them.name, them.handle, 36)}<span class="disc-text"><b>${esc(them.name)}</b><span class="small muted">${!need && !["agreed", "closed", "declined"].includes(e.phase) ? `<span class="live-dot" aria-hidden="true"></span> ` : ""}${esc(line)}</span></span>
       <span class="disc-side">${tag(st, tone)}<span class="small faint">${need ? "Open ›" : "›"}</span></span></button>`;
@@ -199,7 +202,7 @@ function priceResultHTML(key) {
   if (p.state === "error") return `<div class="card slim"><span class="small">${esc(p.message)}</span></div>`;
   const r = p.r, left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
   return `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
-    <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(x => `<a class="small" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
+    <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.filter((x, k, all) => all.findIndex(y => (y.title || y.url) === (x.title || x.url)) === k).map(x => `<a class="small" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
     <span class="small faint">${esc(r.note)}</span><span class="small faint">Only you see this${r.cached ? " · checked earlier today" : left} · ${new Date(r.checkedAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
     ${r.searchEntryPoint ? `<iframe class="search-entry" title="Google Search suggestions" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(`<base target="_blank">${r.searchEntryPoint}`)}"></iframe>` : ""}</div>`;
 }
