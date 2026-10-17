@@ -8,7 +8,7 @@ import { gpay } from "./gpay.js";
 const gpayOk = () => gpay.available;
 import { live, poke } from "./live.js";
 import { fitsReasons } from "./fits.js";
-import { avatarHTML, byTag, esc, label, logoHTML, money, shortName, tag, tierTag, time } from "./ui.js";
+import { avatarHTML, brand, byTag, esc, label, logo, money, shortName, tag, tierTag, time } from "./ui.js";
 import { cap, limitPast, limitWords, listingRoles, offerWords, partyRoles, rolesOf } from "./roles.js";
 
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -16,7 +16,7 @@ const VERDICT = { met: tag("met", "fresh"), unmet: tag("not met", "danger"), unc
 const SOURCE = { public: tag("Public", "fresh"), protected: tag("Protected", "accent"), owner: tag("Owner", "ink"), brief: tag("Brief"), listing: tag("Listing") };
 
 /** The agent at work: the steps it goes through, lit one after another, the last one bold when it's nearly back. */
-export const calibrating = (lines, title = "your agent") => `<div class="calib" aria-live="polite"><span class="row" style="gap:8px">${logoHTML(16, false, true)}<span class="label">${esc(title)} is working</span></span><div class="calib-bar"></div>
+export const calibrating = (lines, title = "your agent") => `<div class="calib" aria-live="polite"><span class="row" style="gap:8px">${logo("live")}<span class="label">${esc(title)} is working</span></span><div class="calib-bar"></div>
   ${lines.map((l, i) => `<span class="calib-line" style="--i:${i}">› ${esc(l)}${i < lines.length - 1 ? "…" : ""}</span>`).join("")}</div>`;
 
 export function renderCard(card, m, i) {
@@ -1091,7 +1091,7 @@ function inboxBlock(i) {
 
 export function messageHTML(m) {
   if (m.role === "user") return `<div class="msg-user" data-anim="m-${esc(m.id)}"><div class="bubble">${esc(m.text)}</div>${label(time(m.at))}</div>`;
-  return `<div class="msg-agent" data-anim="m-${esc(m.id)}" data-anim-sig="${m.pending ? "p" : "d"}"><div class="row">${label("Collab", "sq ink")}${label("· " + (m.engine ?? "Gemini"))}${label("· " + time(m.at))}</div>
+  return `<div class="msg-agent" data-anim="m-${esc(m.id)}" data-anim-sig="${m.pending ? "p" : "d"}"><div class="row">${brand()}${label("· " + (m.engine ?? "Gemini"))}${label("· " + time(m.at))}</div>
     ${m.photo ? `<img class="item-photo" src="${esc(m.photo)}" alt="" style="max-width:220px">` : ""}
     ${m.pending === "calibrating" ? calibrating(m.photo ? ["reading the photo", "working out what it is", "writing the listing", "coming back around"] : ["reading what you said", "working out what to do", "lining things up", "coming back around"])
       : m.pending ? `<span class="thinking"><span class="spinner"></span>${label(m.pending)}</span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}

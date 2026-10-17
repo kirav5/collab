@@ -80,12 +80,11 @@ export function avatarHTML(name, handle = "", size = 30, photo = null) {
     <text x="15" y="21" text-anchor="middle" font-size="14" font-weight="700" font-family="-apple-system,Inter,sans-serif" fill="hsl(${hue} 50% 22%)">${esc(initial)}</text></svg>`;
 }
 
-/** The two brackets: a pink one and one in the text colour, interlocked (100 × 100). */
-export const MARK_PATHS = `<path class="lb-a" d="M0 0H72V18H18V54H72V72H0Z"/><path class="lb-b" d="M28 28H100V100H28V82H82V46H28Z"/>`;
-/** The logo: the mark, with the wordmark beside it unless `word` is false; `moving` while the agent works. */
-export const logoHTML = (size = 24, word = true, moving = false) =>
-  `<span class="logo${moving ? " logo-anim" : ""}" aria-label="Collab"><svg viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true">${MARK_PATHS}</svg>${word ? `<span class="logo-word" style="font-size:${Math.round(size * 0.9)}px">Collab</span>` : ""}</span>`;
 export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)}</span>`;
+/** The Collab mark (styles: .logo in styles.css). cls "live" loops it, "intro" plays it once. */
+export const logo = (cls = "") => `<svg class="logo${cls ? " " + cls : ""}" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>`;
+/** The mark with the name, where the app used to show "■ Collab". */
+export const brand = () => `<span class="brand">${logo()}${label("Collab", "ink")}</span>`;
 export const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 
 export function tierTag(tier, topics) {

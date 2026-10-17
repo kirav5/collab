@@ -16,7 +16,7 @@ import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
-import { ask, avatarHTML, $, busy, esc, id, label, logoHTML, money, notice, now, shortName, tag, toast } from "./ui.js";
+import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -35,7 +35,7 @@ async function setup() {
   return new Promise(resolve => {
     timing("start_screen");
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
-      ${logoHTML(30)}
+      ${brand()}
       <h1 class="headline">Your agent. <span class="soft">It answers from your context. Your limits never leave.</span></h1>
       ${to ? `<div class="card slim" id="setup-to"><span class="small">You're about to ask <b>@${esc(to)}</b>'s agent.</span></div><p class="small muted">Start your own agent first — just your name. It asks for you, and keeps what's private to you.</p>` : ""}
       ${session.google ? (google
@@ -171,7 +171,7 @@ function paintSidebar() {
   if (!el) return;
   const n = needsYouCount();
   const groups = groupSessions(S.sessions);
-  const html = `<header>${logoHTML(22)}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
+  const html = `<header>${brand()}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
       title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here && engine.mode !== "cloud-only" ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
@@ -1583,7 +1583,7 @@ navigator.serviceWorker?.addEventListener("message", e => {
 // Anything that stops start-up shows a way back instead of a blank page.
 try {
 await signIn();
-if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${logoHTML(26)}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
+if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${brand()}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
 // A returning visitor: their profile and (from a QR) the person they're opening load side by side. A first visit has
 // no profile yet, so the start screen shows at once.
 if (session.uid) {
