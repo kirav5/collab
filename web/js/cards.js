@@ -585,7 +585,8 @@ export function dealStage(e, mine = e.requester.uid === session.uid ? "requester
   if (f === "cancelled") return ["Cancelled", ""];
   if (!paid && Object.values(e.outcome ?? {}).includes("fell_through")) return ["Fell through", ""];
   if (f === "delivered") return mine === seller ? ["Handed over", "peri"] : ["Confirm receipt", "wait"];
-  if (paid) return mine === seller ? ["Paid · hand over", "accent"] : ["Paid · collect", "accent"];
+  const booking = !!e.reservation?.slotId || passKind(e) === "booking";
+  if (paid) return booking ? (mine === seller ? ["Booked · check them in", "accent"] : ["Booked", "accent"]) : mine === seller ? ["Paid · hand over", "accent"] : ["Paid · collect", "accent"];
   return mine === seller ? ["Awaiting payment", "stale"] : ["To pay", "stale"];
 }
 
@@ -614,7 +615,7 @@ export function engagementCard(e, id) {
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(shortName(them.name))}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">To make an offer, name a price — “${mine === "requester" ? "I'll buy it for ₹350" : "I'll sell it for ₹400"}”. Their agent answers within their limits, or they do; nothing is final until both of you confirm.</span>` : ""}
-    ${["asking", "deal", "agreed", "negotiating"].includes(e.phase) && mine === "requester" && !["paid", "outside"].includes(e.payment?.status) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
+    ${["asking", "deal", "negotiating"].includes(e.phase) && mine === "requester" && !["paid", "outside"].includes(e.payment?.status) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>
@@ -675,6 +676,7 @@ function dealBlock(e, mine) {
   else if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
   else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span>${p.mode === "test" ? tag("Demo payment", "stale") : ""}`;
   else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
+  else if (mine === buyer && e.reservation?.state === "choose_slot") pay = `<span class="small muted">Pick a time above, then pay.</span>`;
   else if (mine === buyer) pay = `<div class="row">${gpayOk() === false ? "" : `<button class="btn gpay compact" data-act="eng-pay" data-gpay="1" data-id="${id}" data-amount="${e.payment?.cart?.total?.value ?? e.negotiation.deal.price}" data-currency="${esc(e.offer.currency ?? "INR")}" data-item="${esc(e.offer.title || e.title)}"><b>G</b> Pay ${total} with Google Pay</button>`}<button class="btn accent compact" data-act="eng-pay" data-id="${id}">Pay ${total}</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button>${p.mode === "test" ? tag("Demo payment", "stale") : ""}</div>
       `;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
@@ -692,13 +694,13 @@ function dealBlock(e, mine) {
   const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
     : p?.status === "paid" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
-    <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you're offering it" : "you're getting it"}</span></div>
+    <div class="row"><span class="deal-price">${amount}</span><span class="small muted">${f === "cancelled" ? `cancelled${e.fulfilment?.note ? ` · ${esc(e.fulfilment.note.replace(/^Cancelled by /, "by "))}` : ""}` : `confirmed by both of you · ${mine === seller ? "you're offering it" : "you're getting it"}`}</span></div>
     ${reservationLine(e, mine, buyer)}
     ${pay}
     ${fulfil}
     ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed", "cancelled"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
     ${dealTalk(e, mine, buyer, them, id)}
-    ${mine === buyer && e.offer?.factId && (p?.status === "paid" || p?.status === "outside") ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ Buy again</button><span class="small faint">Same item${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
+    ${mine === buyer && e.offer?.factId && (p?.status === "paid" || p?.status === "outside") && f !== "cancelled" ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ ${passKind(e) === "booking" ? "Book again" : "Get it again"}</button><span class="small faint">Same thing${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
   </div>`;
 }
