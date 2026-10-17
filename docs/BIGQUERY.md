@@ -48,10 +48,10 @@ forecast is tried again after an hour.
 
 ```sql
 SELECT forecast_timestamp, forecast_value, ai_forecast_status FROM AI.FORECAST((
-  SELECT day, COUNT(r.at) AS n
+  SELECT day, COUNT(r.`at`) AS n
   FROM UNNEST(GENERATE_DATE_ARRAY(DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY), DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY))) AS day
   LEFT JOIN `collab-55.collab_analytics.requests` AS r
-    ON DATE(r.at) = day AND r.category = @category AND (@area = '' OR r.area = @area)
+    ON DATE(r.`at`) = day AND r.category = @category AND (@area = '' OR r.area = @area)
   GROUP BY day),
   data_col => 'n', timestamp_col => 'day', horizon => 7)
 ```

@@ -21,6 +21,7 @@ import type { Brief, Engagement, Fact } from "./model.ts";
 import { buyerOf, sellerOf } from "./pay.ts";
 import type { DemandMiss } from "./shop-insights.ts";
 
+// `at` is a reserved word in BigQuery SQL: it is always quoted in queries and DDL.
 export const FORECASTS = "forecasts";
 export const NOT_SET_UP = "BigQuery isn't set up yet";
 const DAY = 86_400, RETRY_FAILED = 3600, TIMEOUT_MS = 5000, QUERY_MS = 20_000, MAX_CATS = 5;
@@ -71,10 +72,10 @@ const PROJECT_ID = /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/, DATASET_ID = /^\w{1,1024}$/
 export function forecastQuery(project: string, dataset: string, category: string, area: string | null) {
   if (!PROJECT_ID.test(project) || !DATASET_ID.test(dataset)) throw new Error("bad BigQuery project or dataset name");
   const query = `SELECT forecast_timestamp, forecast_value, ai_forecast_status FROM AI.FORECAST((
-  SELECT day, COUNT(r.at) AS n
+  SELECT day, COUNT(r.\`at\`) AS n
   FROM UNNEST(GENERATE_DATE_ARRAY(DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY), DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY))) AS day
   LEFT JOIN \`${project}.${dataset}.requests\` AS r
-    ON DATE(r.at) = day AND r.category = @category AND (@area = '' OR r.area = @area)
+    ON DATE(r.\`at\`) = day AND r.category = @category AND (@area = '' OR r.area = @area)
   GROUP BY day),
   data_col => 'n', timestamp_col => 'day', horizon => 7)`;
   const param = (name: string, value: string) => ({ name, parameterType: { type: "STRING" }, parameterValue: { value } });
