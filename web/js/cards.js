@@ -9,7 +9,6 @@ const gpayOk = () => gpay.available;
 import { live, poke } from "./live.js";
 import { byTag, esc, label, money, shortName, tag, tierTag, time } from "./ui.js";
 
-const PHASE = { asking: ["Agents talking", "accent"], negotiating: ["Negotiating", "accent"], deal: ["Deal to confirm", "fresh"], agreed: ["Agreed", "fresh"], declined: ["Declined", "danger"], closed: ["Closed", ""] };
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
 const VERDICT = { met: tag("met", "fresh"), unmet: tag("not met", "danger"), unclear: tag("unclear", "stale") };
 const SOURCE = { public: tag("Public", "fresh"), protected: tag("Protected", "accent"), owner: tag("Owner", "ink"), brief: tag("Brief"), listing: tag("Listing") };
@@ -85,6 +84,7 @@ function shopItem(it, p, off) {
     act = `<div class="row"><button class="btn accent compact" data-act="send-text" data-offer="${esc(it.factId)}" data-text="${esc(`How much is ${it.name}?`)}" ${off}>Ask for a price</button></div>`;
   }
   return `<div class="shop-item" ${data}>
+    ${it.photo ? `<img class="item-photo" src="${esc(it.photo)}" alt="${esc(it.name)}" loading="lazy">` : ""}
     <div class="row"><b>${esc(it.title.split(" · ")[0])}</b><b class="end">${price}</b></div>
     ${it.details && it.details !== it.title ? `<span class="small muted">${esc(it.details)}</span>` : ""}
     ${stock || it.instant || it.perBuyer ? `<div class="row">${stock}${it.instant ? tag("Instant booking", "peri") : ""}${it.perBuyer ? tag(`At most ${it.perBuyer} per buyer`) : ""}</div>` : ""}
@@ -251,30 +251,13 @@ function hoursPick(c, at) {
   </div>`;
 }
 
-function readiness(c) {
-  const o = c.offer, kind = passKind({ offer: { category: o.category } });
-  const items = [
-    [o.price?.amount != null, "A price buyers see"],
-    [(c.floor != null && c.floor < o.price.amount) || (c.rulesOk && c.rules?.rules?.floor != null), "Your lowest price (private) — so your agent can bargain"],
-    [!!autonomyOf(c) || !!c.rulesOk, "Your agent may negotiate (or close) inside it — set below, or in your words"],
-    [!(c.missing?.length) || !!c.answeredMissing, "What buyers usually ask, answered"],
-    [!!c.terms?.length, "Your terms (cancellation, returns, warranty…)"],
-    // What changes hands decides the last practical detail: a count for things, weekly hours for a service.
-    ...(kind === "pickup" ? [[c.stock != null, "How many you have — so stock questions answer themselves"]]
-      : kind === "booking" ? [[!!c.hoursOn && hoursOk(c.hours ?? defaultHours(o)), "Your weekly hours — so buyers pick a time without asking"]] : []),
-    [!!c.instant, kind === "booking" ? "Instant booking at your listed price (optional)" : "Accept orders at your listed price on their own (optional)"],
-  ];
-  const done = items.filter(([ok]) => ok).length;
-  return `<details class="more readiness" ${done < items.length ? "open" : ""}><summary>Ready to handle buyers without you · ${done} of ${items.length}</summary>
-    ${items.map(([ok, t]) => `<div class="small ${ok ? "" : "muted"}">${ok ? "✓" : "○"} ${esc(t)}</div>`).join("")}
-    <span class="small faint">Each one missing is a question your agent has to bring back to you.</span></details>`;
-}
 
 function offerCard(c, at) {
-  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Live. ${autonomyOf(c) === "close" ? `Your agent negotiates and agrees${c.floor ? ` down to ${money(c.floor)} (private)` : ""} for ${c.days ?? 7} days.` : autonomyOf(c) ? `Your agent negotiates${c.floor ? ` down to ${money(c.floor)} (private)` : ""}. You confirm each deal.` : "Your agent asks you before each move."}</p></div>`;
+  if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Live. ${autonomyOf(c) === "close" ? `Your agent negotiates and agrees${c.floor ? ` down to ${money(c.floor)} (private)` : ""} for ${c.days ?? 7} days.` : autonomyOf(c) ? `Your agent negotiates${c.floor ? ` down to ${money(c.floor)} (private)` : ""}. You confirm each deal.` : "Your agent asks you before each move."}</p><div class="row"><button class="btn quiet compact" data-act="screen" data-screen="context">Stock, hours and rules · About me</button></div></div>`;
   const o = c.offer;
   return `<div class="card" ${at}>
-    <div class="row">${label(!o && c.basics ? `Offering · ${c.basics.label}` : "Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
+    <div class="row">${label(!o && c.basics ? `Offering · ${c.basics.label}` : c.photo ? "Offering · read from your photo by Gemini" : "Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
+    ${c.photo ? `<img class="item-photo" src="${esc(c.photo.url)}" alt="Your photo">` : ""}
     ${o ? `<b>${esc(o.title)}</b><p class="small muted">${esc(o.place.name)} · ${esc(o.category.replace(/-/g, " "))}</p>
       ${Object.keys(o.attributes).length ? `<dl class="kv">${Object.entries(o.attributes).filter(([k]) => k !== "negotiable").map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}` : ""}
     ${!o && c.basics ? `<p class="small muted">Price and area are required. The rest is optional.</p>` : ""}
@@ -285,36 +268,67 @@ function offerCard(c, at) {
       <div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Your price</span><span>₹</span><input class="field compact" type="number" min="1" data-edit="basic-price" ${at} value="${esc(c.basicPrice ?? "")}" placeholder="e.g. 500" style="max-width:140px">${c.basics.unit ? `<span class="faint">per ${esc(c.basics.unit)}</span>` : ""}</div>
       <div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Where</span><input class="field" data-edit="basic-area" ${at} value="${esc(c.basicArea ?? c.basics.area ?? "")}" placeholder="Your area, or Online"></div>
       <span class="small faint">The lowest you'd accept comes next, and stays private.</span></div>` : ""}
-    ${c.missing?.length && (o || c.basics) ? `<div class="stack" style="gap:8px">${label("Common buyer questions · Public", "sq")}${c.missing.map(m => {
+    ${c.missing?.length && !o && c.basics ? `<div class="stack" style="gap:8px">${label("Common buyer questions · Public", "sq")}${c.missing.map(m => {
       const ans = c.missingAnswers?.[m.label] ?? "";
       return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
         ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
         <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
     }).join("")}</div>` : ""}
-    ${o ? `${label("Lowest you'll accept · private, never shown to anyone", "peri")}
-      <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-edit="floor" value="${c.floor ?? o.price.amount}"></div>
-      ${autonomyPick(c)}
-      <div class="stack" style="gap:6px">${label("Or tell your agent your rules in words", "peri")}
-        <div class="row"><input class="field" style="flex:1;min-width:220px" data-edit="rulesText" ${at} value="${esc(c.rulesText ?? "")}" placeholder="e.g. never below ₹400 each, max 10 per buyer, pickups weekdays after 5 pm, close yourself above ₹420">
-          <button class="btn secondary compact" data-act="offer-rules-read" ${at}>Read my rules</button></div>
-        ${c.rules ? `${rulesList(c.rules.lines)}<div class="row">${c.rulesOk ? `<span class="small" style="color:var(--fresh)">✓ Applied when you publish</span>` : `<button class="btn accent compact" data-act="offer-rules-ok" ${at}>Looks right</button>`}<button class="btn quiet compact" data-act="offer-rules-clear" ${at}>Clear</button></div>` : ""}</div>
-      ${c.insights?.length ? `<div class="card peri slim">${label("What similar listings agreed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}
-      <div class="privacy-split">
-        <div>${label("Public — buyers' agents see", "fresh")}<span class="small">The text above, your price (${money(o.price.amount, o.price.period)}), ${esc(o.place.name)}${c.missing?.length ? ", the details you answer" : ""}${c.hoursOn ? ", your free times" : ""} and your terms</span></div>
-        <div>${label("Private — never shared", "peri")}<span class="small">The lowest you'll accept, and anything you keep as a private note</span></div>
-      </div>
-      <div class="stack" style="gap:6px">${label("Your terms for buyers", "sq")}
-        <span class="small muted">Shown on your card and in every receipt. Edit or clear any before you publish.</span>
-        ${(c.terms ?? []).map((t, j) => `<div class="row small" style="flex-wrap:nowrap"><input class="field compact" data-term-label data-edit="term-label" data-j="${j}" ${at} value="${esc(t.label)}" style="max-width:130px" aria-label="Term"><input class="field" data-term-text data-edit="term-text" data-j="${j}" ${at} value="${esc(t.text)}" aria-label="${esc(t.label)}"></div>
-          ${t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""}`).join("")}
-        <div class="row"><button class="btn secondary compact" data-act="offer-suggest-terms" ${at}>${c.terms?.length ? "Suggest again" : "Suggest terms for this offering"}</button></div>
-        <label class="row small" style="gap:6px"><input type="checkbox" data-instant-new data-edit="instant" ${at} ${c.instant ? "checked" : ""}> ${passKind({ offer: { category: o.category } }) === "booking" ? "Accept bookings at my listed price automatically (instant booking)" : "Accept orders at my listed price automatically — no need to confirm each one"}</label></div>
-      ${passKind({ offer: { category: o.category } }) === "booking" ? hoursPick(c, at) : ""}
-      ${passKind({ offer: { category: o.category } }) === "pickup" ? `<div class="row small"><span>How many do you have?</span><input class="field compact" type="number" min="0" style="max-width:110px" data-edit="stock" ${at} value="${c.stock ?? ""}" placeholder="e.g. 5"><span class="faint">stock answers itself; sold units come off</span></div>` : ""}
-      ${readiness(c)}` : ""}
+    ${o ? offerEssentials(c, at) : ""}
     ${!o && c.basics ? `<div class="row"><button class="btn accent" data-act="offer-basics" ${at}>Make the listing</button><button class="btn quiet compact" data-act="offer-publish" ${at}>Publish as a plain note</button></div>`
-      : `<div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><span class="small faint">Public: discoverable by anyone's agent.</span></div>`}
+      : `<div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><span class="small faint">Public: discoverable by anyone's agent.</span></div>${o ? offerImprovements(c, at) : ""}`}
   </div>`;
+}
+
+/** What a listing needs to go live without you: the lowest you'd take (private), and how many you have or your hours. */
+function offerEssentials(c, at) {
+  const o = c.offer, kind = passKind({ offer: { category: o.category } });
+  return `<div class="card slim stack" style="gap:8px">
+    <div class="row small" style="flex-wrap:nowrap"><span style="min-width:150px">Lowest you'll accept</span><input class="field compact" style="max-width:140px" type="number" min="1" data-edit="floor" value="${c.floor ?? o.price.amount}"><span class="faint">private</span></div>
+    ${kind === "pickup" ? `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:150px">How many you have</span><input class="field compact" type="number" min="0" style="max-width:140px" data-edit="stock" ${at} value="${c.stock ?? ""}" placeholder="e.g. 5"><span class="faint">sold units come off</span></div>` : ""}
+    ${kind === "booking" ? hoursPick(c, at) : ""}</div>`;
+}
+
+/**
+ * Everything else that makes a listing better, after Publish and optional: each a chip (✓ once done) that opens its
+ * part right here — what buyers usually ask, your terms, how your agent bargains, instant orders, similar prices,
+ * and who sees what. Publishing never waits on any of them.
+ */
+function offerImprovements(c, at) {
+  const o = c.offer, kind = passKind({ offer: { category: o.category } });
+  const parts = [
+    ["questions", `Buyer questions${c.missing?.length ? ` · ${c.missing.length}` : ""}`, !(c.missing?.length) || !!c.answeredMissing, !!c.missing?.length],
+    ["terms", "Your terms", !!c.terms?.length, true],
+    ["agent", "How your agent bargains", !!autonomyOf(c) || !!c.rulesOk, true],
+    ["instant", kind === "booking" ? "Instant booking" : "Instant orders", !!c.instant, true],
+    ["prices", "Similar prices", false, !!c.insights?.length],
+    ["privacy", "Who sees what", false, true],
+  ].filter(p => p[3]);
+  const open = c.improve;
+  const body = {
+    questions: () => `<div class="stack" style="gap:8px">${c.missing.map(m => {
+      const ans = c.missingAnswers?.[m.label] ?? "";
+      return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
+        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
+        <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
+    }).join("")}<span class="small faint">Public — answered once, so buyers' agents don't ask you.</span></div>`,
+    terms: () => `<div class="stack" style="gap:6px"><span class="small muted">Shown on your card and in every receipt. Edit or clear any.</span>
+      ${(c.terms ?? []).map((t, j) => `<div class="row small" style="flex-wrap:nowrap"><input class="field compact" data-term-label data-edit="term-label" data-j="${j}" ${at} value="${esc(t.label)}" style="max-width:130px" aria-label="Term"><input class="field" data-term-text data-edit="term-text" data-j="${j}" ${at} value="${esc(t.text)}" aria-label="${esc(t.label)}"></div>
+        ${t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""}`).join("")}
+      <div class="row"><button class="btn secondary compact" data-act="offer-suggest-terms" ${at}>${c.terms?.length ? "Suggest again" : "Suggest terms for this offering"}</button></div></div>`,
+    agent: () => `<div class="stack" style="gap:6px">${autonomyPick(c)}
+      <div class="row"><input class="field" style="flex:1;min-width:220px" data-edit="rulesText" ${at} value="${esc(c.rulesText ?? "")}" placeholder="Or in your words: never below ₹400, max 10 per buyer, close yourself above ₹420">
+        <button class="btn secondary compact" data-act="offer-rules-read" ${at}>Read my rules</button></div>
+      ${c.rules ? `${rulesList(c.rules.lines)}<div class="row">${c.rulesOk ? `<span class="small" style="color:var(--fresh)">✓ Applied when you publish</span>` : `<button class="btn accent compact" data-act="offer-rules-ok" ${at}>Looks right</button>`}<button class="btn quiet compact" data-act="offer-rules-clear" ${at}>Clear</button></div>` : ""}</div>`,
+    instant: () => `<label class="row small" style="gap:6px"><input type="checkbox" data-instant-new data-edit="instant" ${at} ${c.instant ? "checked" : ""}> ${kind === "booking" ? "Accept bookings at my listed price automatically" : "Accept orders at my listed price automatically — no need to confirm each one"}</label>`,
+    prices: () => `<div class="stack" style="gap:4px">${(c.insights ?? []).map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>`,
+    privacy: () => `<div class="privacy-split">
+        <div>${label("Public — buyers' agents see", "fresh")}<span class="small">The text above, your price (${money(o.price.amount, o.price.period)}), ${esc(o.place.name)}${c.missing?.length ? ", the details you answer" : ""}${c.hoursOn ? ", your free times" : ""} and your terms</span></div>
+        <div>${label("Private — never shared", "peri")}<span class="small">The lowest you'll accept, and your private notes</span></div></div>`,
+  };
+  return `<div class="stack" style="gap:6px">${label("Improve your listing · optional", "sq")}
+    <div class="row" style="gap:6px;flex-wrap:wrap">${parts.map(([k, t, done]) => `<button class="chip ${open === k ? "on" : ""}" data-act="offer-improve" data-k="${k}" ${at}>${done ? "✓ " : ""}${esc(t)}</button>`).join("")}</div>
+    ${open && body[open] && parts.some(p => p[0] === open) ? `<div class="card slim">${body[open]()}</div>` : ""}</div>`;
 }
 
 // MARK: - Context
@@ -538,12 +552,33 @@ function quotaText(name) {
   return q?.limit ? `${q.remaining} of ${q.limit} left today` : "private";
 }
 
+/**
+ * Where a deal stands, as one tag — the same words on its card, in Your deals and anywhere else it's listed: what's
+ * happening, or what's next and for whom (the seller hands over, the buyer collects or confirms).
+ */
+export function dealStage(e, mine = e.requester.uid === session.uid ? "requester" : "provider", needsYou = false) {
+  if (needsYou && !["declined", "closed"].includes(e.phase)) return ["Needs you", "wait"];
+  if (e.phase === "declined") return ["Declined", "danger"];
+  if (e.phase === "closed") return ["Closed", ""];
+  if (e.phase === "asking") return ["Agents talking", "talk"];
+  if (e.phase === "negotiating") return ["Negotiating", "talk"];
+  if (e.phase === "deal") return ["To confirm", "wait"];
+  const seller = e.seller ?? "provider", f = e.fulfilment?.state, p = e.payment?.status, paid = p === "paid" || p === "outside";
+  if (f === "accepted") return ["Completed", "fresh"];
+  if (f === "disputed") return ["Problem", "danger"];
+  if (f === "cancelled") return ["Cancelled", ""];
+  if (!paid && Object.values(e.outcome ?? {}).includes("fell_through")) return ["Fell through", ""];
+  if (f === "delivered") return mine === seller ? ["Handed over", "peri"] : ["Confirm receipt", "wait"];
+  if (paid) return mine === seller ? ["Paid · hand over", "accent"] : ["Paid · collect", "accent"];
+  return mine === seller ? ["Awaiting payment", "stale"] : ["To pay", "stale"];
+}
+
 export function engagementCard(e, id) {
   if (!e) return `<div class="card slim"><span class="thinking"><span class="spinner"></span><span class="small faint">Connecting to their agent…</span></span></div>`;
   const mine = e.requester.uid === session.uid ? "requester" : "provider";
   const them = mine === "requester" ? e.provider : e.requester;
-  const [ph, tone] = PHASE[e.phase] ?? [e.phase, ""];
   const items = live.inbox.filter(i => i.engagementId === e.id && !(i.kind === "move" && !i.question && i.owner === session.uid && !needsLimit.has(i.id)));
+  const [ph, tone] = dealStage(e, mine, items.length > 0);
   const autoMove = live.inbox.some(i => i.engagementId === e.id && i.kind === "move" && !i.question && i.owner === session.uid && !needsLimit.has(i.id));
   // A conversation with nothing to negotiate (no price) rests once every question is answered: it's open for a
   // follow-up from either person, not "still talking".
@@ -645,7 +680,7 @@ function dealBlock(e, mine) {
     ${reservationLine(e, mine, buyer)}
     ${pay}
     ${fulfil}
-    ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
+    ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed", "cancelled"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
     ${dealTalk(e, mine, buyer, them, id)}
     ${mine === buyer && e.offer?.factId && (p?.status === "paid" || p?.status === "outside") ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ Buy again</button><span class="small faint">Same item${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>

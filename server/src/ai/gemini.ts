@@ -20,6 +20,8 @@ export interface CompleteRequest {
   /** Which task is asking (for metering); cheap tasks try the lite model first. */
   task?: string;
   tier?: "cheap" | "standard";
+  /** A photo to read with the prompt (base64, no data: prefix). */
+  image?: { mimeType: string; data: string } | null;
 }
 
 export interface Model {
@@ -78,7 +80,7 @@ export function geminiFromEnv(env = process.env): (Model & { status(): ModelStat
   async function once(model: string, req: CompleteRequest, level: string): Promise<{ text: string | null; usage: Usage }> {
     const res = await ai.models.generateContent({
       model,
-      contents: req.prompt,
+      contents: req.image ? [{ role: "user", parts: [{ inlineData: { mimeType: req.image.mimeType, data: req.image.data } }, { text: req.prompt }] }] : req.prompt,
       config: {
         systemInstruction: req.instructions,
         responseMimeType: "application/json",

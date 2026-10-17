@@ -31,6 +31,8 @@ export interface Resource {
   /** Where the numbers come from and when they were last confirmed: a ledger the owner keeps here, a manual
    *  count that goes stale, or a connected system. */
   source: "ledger" | "manual" | "connector"; observedAt: number; staleAfterSec: number;
+  /** The seller was told stock ran low; cleared when they set a new count. */
+  lowAlerted?: boolean;
   createdAt: number; updatedAt: number;
 }
 
@@ -110,9 +112,54 @@ export async function commit(db: Docs, id: string, holdId: string, now: number):
   });
 }
 
+/**
+ * A booking moves to another time: the new slot is taken and the old one freed in one update, so the booking is never
+ * without a time nor holding two. The hold keeps its state (held stays held; a paid, committed booking stays
+ * committed). Only time slots move; goods don't.
+ */
+export async function moveHold(db: Docs, id: string, holdId: string, slotId: string, now: number): Promise<Slot> {
+  let to: Slot | null = null;
+  await change(db, id, now, r => {
+    if (r.type !== "slots") throw new CapacityError("NOT_FOUND", "Only a booked time can be changed.");
+    const h = r.holds.find(x => x.id === holdId && (x.state === "held" || x.state === "committed"));
+    if (!h) throw new CapacityError("NOT_FOUND", "This booking isn't active any more.");
+    if (h.slotId === slotId) throw new CapacityError("VERSION_CONFLICT", "That's already the booked time.");
+    to = r.slots.find(s => s.id === slotId) ?? null;
+    if (!to || to.start <= now) throw new CapacityError("NOT_FOUND", "Pick an upcoming time.");
+    if (available(r, now, slotId) < h.qty) throw new CapacityError("CAPACITY_UNAVAILABLE", "That time was just taken — pick another.");
+    return { ...r, holds: r.holds.map(x => (x.id === holdId ? { ...x, slotId } : x)) };
+  });
+  return to!;
+}
+
+/** A cancelled booking frees its time even after it was paid for (a slot is capacity, not goods). Idempotent. */
+export async function cancelBooking(db: Docs, id: string, holdId: string, now: number): Promise<Resource> {
+  return change(db, id, now, r => {
+    if (r.type !== "slots") throw new CapacityError("NOT_FOUND", "Only a booked time can be cancelled here.");
+    return { ...r, holds: r.holds.map(x => (x.id === holdId && (x.state === "held" || x.state === "committed") ? { ...x, state: "released" as const } : x)) };
+  });
+}
+
 /** Releases a live hold (cancellation); committed obligations aren't released here. Idempotent. */
 export async function release(db: Docs, id: string, holdId: string, now: number): Promise<Resource> {
   return change(db, id, now, r => ({ ...r, holds: r.holds.map(x => (x.id === holdId && x.state === "held" ? { ...x, state: "released" as const } : x)) }));
+}
+
+/**
+ * After a sale: if this item's available stock is now at or below `lowAt`, mark it (atomically) and return the units
+ * left — once per dip, so the seller is told one time, not after every sale. Null when nothing to tell.
+ */
+export async function lowStock(db: Docs, id: string, lowAt: number, now: number): Promise<{ left: number; title: string; owner: string; factId: string | null } | null> {
+  let told: { left: number; title: string; owner: string; factId: string | null } | null = null;
+  await db.update(RESOURCES, id, (r: Resource | null) => {
+    told = null;
+    if (!r || r.type !== "quantity" || r.lowAlerted) return null;
+    const left = available(r, now);
+    if (left > lowAt) return null;
+    told = { left, title: r.title, owner: r.owner, factId: r.factId };
+    return { ...r, lowAlerted: true, updatedAt: now };
+  });
+  return told;
 }
 
 /** An owner's stock count: sets `onHand` (an adjustment), confirming the count now. */
@@ -120,7 +167,7 @@ export async function setStock(db: Docs, id: string, owner: string, onHand: numb
   if (!(Number.isInteger(onHand) && onHand >= 0)) throw new CapacityError("VERSION_CONFLICT", "Stock must be a whole number, zero or more.");
   return change(db, id, now, r => {
     if (r.owner !== owner) throw new CapacityError("NOT_FOUND", "No such resource.");
-    return { ...r, onHand, observedAt: now };
+    return { ...r, onHand, observedAt: now, lowAlerted: false };
   });
 }
 

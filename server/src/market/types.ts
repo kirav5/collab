@@ -20,6 +20,8 @@ export interface Offer {
   attributes: Record<string, string>;
   /** Questions the seller wants answered by interested buyers. */
   askBuyer: string[];
+  /** The seller's photo of it (served from /public/photos/<id>). */
+  photo?: string;
   minBudget?: number | null;
   publishedAt: number;
   expiresAt: number;

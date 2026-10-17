@@ -28,12 +28,14 @@ import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
 import { getSafe } from "./a2a/webhooks.ts";
-import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
+import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, lowStock, moveHold, cancelBooking, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { suggestTerms } from "./core/terms.ts";
 import { NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
+import { recordMiss, shopInsights } from "./core/shop-insights.ts";
+import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, loadPhoto, readPhoto, savePhoto } from "./core/photos.ts";
 import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
 import { type AgentRules, type RulesContext, RulesTask, checkRules, readRules, rulesLines } from "./core/rules.ts";
 import { orderText, storefront } from "./core/storefront.ts";
@@ -191,6 +193,7 @@ app.use((req, res, next) => {
 });
 app.use("/a2a", a2a.router);
 app.use("/api/chats", express.json({ limit: "700kb" })); // chat history uploads are larger than any other call
+app.use("/api/offers/photo", express.json({ limit: "1300kb" })); // one photo, downsized on the phone
 app.use("/api", express.json({ limit: "128kb" }));
 
 // App Check: calls to the API come from our own web app. "monitor" logs what would be refused; "enforce" refuses.
@@ -329,9 +332,22 @@ app.post("/api/goals/:id/cancel", route(async req => {
 
 // What the app may show about the policy it runs under: quotas with today's remaining use and reset time, currencies,
 // features and versions. Never private limits or anything per-owner beyond the caller's own quota use.
+/** A sale left an item low: the seller hears once (until they set a new count), with how many are left. */
+async function warnLowStock(resourceId: string) {
+  const low = await lowStock(db, resourceId, policy().stock.lowAt, now()).catch(() => null);
+  if (low) await pushTo(low.owner, `Low stock: ${low.title.split(" · ")[0]}`, low.left ? `${low.left} left. Update your count when you restock.` : "Sold out. Update your count when you restock.", "/?screen=context").catch(() => {});
+}
+
+/** What the seller can learn from their own conversations and from demand near them nobody met (see core/shop-insights). */
+app.get("/api/shop/insights", route(async req => {
+  const p = await me(req.uid);
+  await spend(req.uid, 1);
+  return shopInsights(db, model, req.uid, p.area ?? null, now(), num(req.query.days, 1, 90) ?? 30);
+}));
+
 app.get("/api/policy", route(async req => {
   const p = policy(), t = now();
-  return { version: POLICY_HASH, currencies: p.money.currencies, defaultCurrency: p.money.defaultCurrency, features: p.features,
+  return { version: POLICY_HASH, currencies: p.money.currencies, defaultCurrency: p.money.defaultCurrency, features: p.features, stock: { lowAt: p.stock.lowAt },
     negotiation: { maxRounds: p.negotiation.maxRounds }, checkoutValiditySec: p.timing.checkoutValiditySec,
     quotas: { priceCheck: await quotaStatus(db, "price-check", req.uid, p.quotas.priceChecksPerDay, t), nearby: await quotaStatus(db, "nearby", req.uid, p.quotas.nearbyPerDay, t) } };
 }));
@@ -450,8 +466,11 @@ app.post("/api/people/:handle/order", route(async req => {
   const inHand = r?.type === "quantity" && certainty(r, t) === "confirmed" ? availableIn(r, t) : null;
   if (f.offer.maxPerBuyer && quantity > f.offer.maxPerBuyer && (inHand === null || f.offer.maxPerBuyer <= inHand))
     throw new HttpError(409, `${p.name} sells at most ${f.offer.maxPerBuyer} per buyer.`, "CAPACITY_UNAVAILABLE", { available: f.offer.maxPerBuyer });
-  if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity)
+  if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity) {
+    // Kept for the seller's insights: someone wanted more than was in stock.
+    await recordMiss(db, { seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: availableIn(r, t), buyer: req.uid, at: t }).catch(() => {});
     throw new HttpError(409, availableIn(r, t) ? `Only ${availableIn(r, t)} left.` : "Out of stock right now.", "CAPACITY_UNAVAILABLE", { available: availableIn(r, t) });
+  }
   let slotLabel: string | null = null, slotId: string | null = null;
   if (req.body?.slotId) {
     slotId = text(req.body.slotId, 40);
@@ -475,7 +494,10 @@ app.post("/api/people/:handle/order", route(async req => {
   e.preferredSlotId = slotId;
   try { await offerDeal(db, e, "requester", each, said, said, quantity, false); }
   catch (err) {
-    if (err instanceof ShortStock) throw new HttpError(409, err.message, "CAPACITY_UNAVAILABLE", { available: err.available });
+    if (err instanceof ShortStock) {
+      await recordMiss(db, { seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: err.available, buyer: req.uid, at: now() }).catch(() => {});
+      throw new HttpError(409, err.message, "CAPACITY_UNAVAILABLE", { available: err.available });
+    }
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
   }
   // "Up to ₹X" with the offer: the buyer's agent negotiates against the seller's from here (never shown to them).
@@ -797,8 +819,33 @@ app.post("/api/facts", route(async req => {
   const fact = publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: body, tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true,
     // A chat memory is always Private: sharing it means rewriting it as a fact of its own.
     ...(b.source === "chat" ? { source: "chat" as const, tier: "private" as const } : {}) }));
-  return body === raw ? fact : { ...fact, floorKeptPrivate: true };
+  // A photo the owner took for this listing goes on it (only their own photo, only on a public offering).
+  const photoId = typeof b.photoId === "string" ? b.photoId.slice(0, 40) : null;
+  const ph = photoId && fact.offer && b.tier === "public" ? ((await db.get(PHOTOS, photoId)) as PhotoRecord | null) : null;
+  const withPhoto = ph && ph.owner === req.uid ? ((await db.update(FACTS, fact.id, (cur: Fact | null) => (cur?.offer ? { ...cur, offer: { ...cur.offer, photo: `/public/photos/${ph.id}` } } : null))) as Fact | null) : null;
+  const out = withPhoto ? publicFact(withPhoto) : fact;
+  return body === raw ? out : { ...out, floorKeptPrivate: true };
 }));
+/** A photo of something to sell → a listing sentence (Gemini reads it), and the photo kept for the listing. */
+app.post("/api/offers/photo", route(async req => {
+  const p = await me(req.uid);
+  await spend(req.uid, 3);
+  const mimeType = ["image/jpeg", "image/png", "image/webp"].includes(req.body?.mimeType) ? req.body.mimeType : null;
+  const data = typeof req.body?.image === "string" ? req.body.image.replace(/^data:[^,]*,/, "") : "";
+  if (!mimeType || !/^[A-Za-z0-9+/=]+$/.test(data.slice(0, 2000)) || data.length < 100) throw new HttpError(400, "Send a JPEG, PNG or WebP photo.", "INVALID_INPUT");
+  if ((data.length * 3) / 4 > MAX_PHOTO_BYTES) throw new HttpError(413, "That photo is too large — try again (it's made smaller on your phone).", "INVALID_INPUT");
+  const read = await readPhoto(model, { mimeType, data }, text(req.body?.caption, 200), p.area?.name ?? "");
+  if (!read) throw new HttpError(422, "Couldn't tell what's in the photo. Try a closer, brighter shot — or type what it is.", "UNREADABLE");
+  const photo = await savePhoto(db, req.uid, mimeType, data, env.PHOTO_BUCKET, now());
+  event("photo_listing", { stored: photo.where });
+  return { text: read.text, item: read.item, details: read.details, condition: read.condition, photo: { id: photo.id, url: `/public/photos/${photo.id}`, stored: photo.where } };
+}));
+/** A listing's photo, for anyone (listings are public). */
+app.get("/public/photos/:id", async (req, res) => {
+  const p = await loadPhoto(db, String(req.params.id).slice(0, 40), env.PHOTO_BUCKET).catch(() => null);
+  if (!p) { res.status(404).json({ error: "photo not found" }); return; }
+  res.set({ "content-type": p.mimeType, "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" }).send(p.body);
+});
 app.post("/api/facts/:id/delete", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
   if (!f || f.owner !== req.uid) throw new HttpError(404, "not found");
@@ -1148,6 +1195,7 @@ app.post("/api/pickup/:id/collect", route(async req => {
   const e = await participant(req.uid, id), check = checkPayment(e, verifySigned);
   if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark collected.");
   if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
   const result = await collect(db, e, req.uid, now());
   if (result.alreadyCollected) throw new HttpError(409, `Already collected at ${new Date(result.collectedAt * 1000).toISOString()}`);
   await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass."); await clearStats(db, e);
@@ -1233,6 +1281,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   if (e.reservation?.holdId && e.reservation.state === "held") {
     await commitResource(db, e.reservation.resourceId, e.reservation.holdId, now()).catch(err => log.error("reservation commit failed after payment", { id, error: String(err).slice(0, 160) }));
     await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.reservation ? { ...cur, reservation: { ...cur.reservation, state: "committed" } } : null));
+    void warnLowStock(e.reservation.resourceId);
   }
   const turn: Turn = { kind: TURN, from: side, engagementId: e.id, payment: mandate, ap2: { checkout_mandate: e.payment!.ap2!.checkout_mandate, payment_mandate: e.payment!.ap2!.payment_mandate, checkout_hash: e.payment!.ap2!.checkout_hash } };
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
@@ -1269,6 +1318,35 @@ app.post("/api/engagements/:id/slot", route(async req => {
     await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, reservation: { ...cur.reservation!, holdId: h.id, slotId, slot: { start: s.start, end: s.end }, state: "held", expiresAt: h.expiresAt },
       events: [...cur.events, { at: now(), who: buyerOf(cur), text: `Picked ${new Date(s.start * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC — held until paid.`, by: "owner" }], updatedAt: now() } : null));
   } catch (err) { if (err instanceof CapacityError) throw new HttpError(409, err.message, err.code); throw err; }
+  return load(db, e.id);
+}));
+/**
+ * After booking: either side changes the time (to a free upcoming slot) or cancels, until it has happened. Cancelling
+ * frees the time for others; the other side is told. A demo payment needs no refund; a payment made outside the app
+ * is settled between the two of them.
+ */
+app.post("/api/engagements/:id/booking", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const side = e.requester.uid === req.uid ? "requester" : "provider", r = e.reservation;
+  if (e.phase !== "agreed" || !r?.holdId || !r.slotId || !["held", "committed"].includes(r.state)) throw new HttpError(409, "There's no booked time to change.", "VERSION_CONFLICT");
+  if (["delivered", "accepted", "disputed", "cancelled"].includes(e.fulfilment?.state ?? "")) throw new HttpError(409, "This booking has already happened or ended.", "VERSION_CONFLICT");
+  const me_ = e[side], other = e[side === "requester" ? "provider" : "requester"], item = e.offer.title.split(" · ")[0];
+  const when = (s: { start: number }) => new Date(s.start * 1000).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  if (req.body?.action === "cancel") {
+    try { await cancelBooking(db, r.resourceId, r.holdId, now()); } catch (err) { if (err instanceof CapacityError) throw new HttpError(409, err.message, err.code); throw err; }
+    const settle = e.payment?.status === "paid" ? " The demo payment needs no refund." : e.payment?.status === "outside" ? " Settle any refund between you." : "";
+    await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, reservation: { ...cur.reservation!, state: "released" }, fulfilment: { ...(cur.fulfilment ?? { state: "not_started" }), state: "cancelled", note: `Cancelled by ${me_.name}` },
+      events: [...cur.events, { at: now(), who: side, text: `Cancelled the booking for ${r.slot ? when(r.slot) : "the booked time"}.${settle}`, by: "owner" }], updatedAt: now() } : null));
+    await clearStats(db, e);
+    if (other.uid) void pushTo(other.uid, `Booking cancelled: ${item}`, `${me_.name} cancelled ${r.slot ? when(r.slot) : "the booking"}. The time is free again.`, `/?engagement=${e.id}`).catch(() => {});
+    return load(db, e.id);
+  }
+  const slotId = text(req.body?.slotId, 40);
+  let to;
+  try { to = await moveHold(db, r.resourceId, r.holdId, slotId, now()); } catch (err) { if (err instanceof CapacityError) throw new HttpError(409, err.message, err.code); throw err; }
+  await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, preferredSlotId: slotId, reservation: { ...cur.reservation!, slotId, slot: { start: to.start, end: to.end } },
+    events: [...cur.events, { at: now(), who: side, text: `Moved the booking to ${when(to)}${r.slot ? ` (was ${when(r.slot)})` : ""}.`, by: "owner" }], updatedAt: now() } : null));
+  if (other.uid) void pushTo(other.uid, `New time: ${item}`, `${me_.name} moved the booking to ${when(to)}.`, `/?engagement=${e.id}`).catch(() => {});
   return load(db, e.id);
 }));
 app.post("/api/resources/:id/slots", route(async req => {
@@ -1383,6 +1461,7 @@ app.post("/api/engagements/:id/paid-outside", route(async req => {
       if (r.state !== "held" || !holdId || (r.expiresAt ?? 0) <= now()) holdId = (await holdResource(db, r.resourceId, { holder: e.requester.uid ?? "", engagementId: e.id, qty: r.qty, ttlSec: 300 }, now())).id;
       await commitResource(db, r.resourceId, holdId, now());
       e.reservation = { ...r, holdId, state: "committed" };
+      void warnLowStock(r.resourceId);
     } catch (err) {
       e.reservation = { ...r, state: "unavailable", reason: (err as Error).message };
       e.events.push({ at: now(), who: "system", text: "Paid, but the stock count couldn't be updated — the seller should check how many are left.", by: "rules" });
@@ -1481,7 +1560,11 @@ async function typedOffer(e: Engagement, side: "requester" | "provider", q: stri
   const n = count ?? unitsOf(e);
   try { await offerDeal(db, e, side, offered.amount, q, q, count, isTotal); }
   catch (err) {
-    if (err instanceof ShortStock) throw shortStock(err.message, err.available, offered.amount, n, isTotal);
+    if (err instanceof ShortStock) {
+      const seller = e[e.seller ?? "provider"];
+      if (seller.uid) await recordMiss(db, { seller: seller.uid, factId: e.offer.factId, item: e.offer.title.split(" · ")[0], wanted: n, available: err.available, buyer: uid, at: now() }).catch(() => {});
+      throw shortStock(err.message, err.available, offered.amount, n, isTotal);
+    }
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
   }
   // A buyer taking an instant-booking seller's listed price is booked at once, as from the seller's card.

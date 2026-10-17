@@ -316,6 +316,18 @@ test("ordering from a card: buy several (bounded by stock), offer a price, book 
   assert.equal(pass.kind, "booking"); assert.equal(pass.slot, lesson.slots[1].start);
   const taken = await raw("o-b", "/api/people/o-s/order", { offerFactId: lessons.id, quantity: 1, slotId: lesson.slots[1].id });
   assert.equal(taken.status, 409, "a taken time can't be ordered");
+  // After paying, the time can move to another free one (the old one is freed), and the booking can be cancelled.
+  assert.equal((await raw("o-b", `/api/engagements/${b.id}/booking`, { action: "move", slotId: lesson.slots[1].id })).status, 409, "already that time");
+  b = await as("o-b", `/api/engagements/${b.id}/booking`, { action: "move", slotId: lesson.slots[0].id });
+  assert.equal(b.reservation.slotId, lesson.slots[0].id);
+  assert.equal((await as("o-b", `/api/engagements/${b.id}/pickup`)).slot, lesson.slots[0].start, "the pass shows the new time");
+  const free = (await as("o-b", "/api/people/o-s")).shop.find((i: any) => i.factId === lessons.id).slots.map((x: any) => x.id);
+  assert.deepEqual(free, [lesson.slots[1].id], "the old time is offered again; the new one is taken");
+  b = await as("o-s", `/api/engagements/${b.id}/booking`, { action: "cancel" });
+  assert.equal(b.fulfilment.state, "cancelled"); assert.match(b.events.at(-1).text, /Cancelled the booking/);
+  assert.equal((await as("o-b", "/api/people/o-s")).shop.find((i: any) => i.factId === lessons.id).slots.length, 2, "cancelled: both times free again");
+  assert.equal((await as("o-b", `/api/engagements/${b.id}/pickup`)).cancelled, true, "the pass says cancelled");
+  assert.equal((await raw("o-b", `/api/engagements/${b.id}/booking`, { action: "cancel" })).status, 409, "cancelled once");
   await as("o-s", "/api/me/pause", { paused: true });
   const paused = await as("o-b", "/api/people/o-s");
   assert.equal(paused.paused, true);
@@ -686,4 +698,35 @@ test("booking a match from a request keeps one goal, and a second tap returns th
   const theirs = await as("og-c", "/api/people/og-seller/order", { offerFactId: f.id, quantity: 1, briefId: sent.brief.id });
   assert.notEqual(theirs.id, e.id);
   assert.equal(((await as("og-b", "/api/goals")) as any[])[0].tasks.length, 1, "the buyer's goal is untouched");
+});
+
+test("a photo becomes a listing: read into a sentence, kept, served publicly, and attached only by its owner", async () => {
+  await as("ph-s", "/api/me", { handle: "ph-shop", name: "Photo Shop", areaName: "Indiranagar" });
+  await as("ph-x", "/api/me", { handle: "ph-other", name: "Other", areaName: "Indiranagar" });
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".repeat(2);
+  assert.equal((await raw("ph-s", "/api/offers/photo", { image: png, mimeType: "image/gif" })).status, 400, "photos only");
+  const r = await as("ph-s", "/api/offers/photo", { image: png, mimeType: "image/png", caption: "Brass desk lamp, ₹450" });
+  assert.match(r.text, /Brass desk lamp/); assert.match(r.text, /₹450/, "the caption's own price is kept");
+  assert.equal(r.photo.stored, "doc", "no bucket configured: kept in the database");
+  const served = await fetch(B + r.photo.url);
+  assert.equal(served.status, 200); assert.equal(served.headers.get("content-type"), "image/png");
+  const f = await as("ph-s", "/api/facts", { tier: "public", text: "Brass desk lamp for sale in Indiranagar, ₹450 each", photoId: r.photo.id });
+  assert.equal(f.offer.photo, r.photo.url, "on the listing");
+  assert.equal((await as("ph-x", "/api/people/ph-shop")).shop.find((i: any) => i.factId === f.id).photo, r.photo.url, "buyers see it on the shop card");
+  const stolen = await as("ph-x", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Indiranagar, ₹400 each", photoId: r.photo.id });
+  assert.equal(stolen.offer?.photo, undefined, "someone else's photo can't be attached");
+});
+
+test("shop insights: demand you missed (beyond stock, turned away), prices agreed, buyers — other people only as counts", async () => {
+  await as("si-s", "/api/me", { handle: "si-shop", name: "Insight Shop", areaName: "Indiranagar" });
+  await as("si-b", "/api/me", { handle: "si-buyer", name: "Buyer One", areaName: "Indiranagar" });
+  const f = await as("si-s", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
+  await as("si-s", "/api/resources", { factId: f.id, type: "quantity", onHand: 3 });
+  assert.equal((await raw("si-b", "/api/people/si-shop/order", { offerFactId: f.id, quantity: 20 })).status, 409, "more than in stock");
+  const i = await as("si-s", "/api/shop/insights");
+  assert.deepEqual({ ...i.missed[0], item: undefined }, { item: undefined, wanted: 20, had: 3, people: 1 }); assert.match(i.missed[0].item, /steel water/i);
+  assert.ok(Array.isArray(i.summary) && i.summary.length >= 1, "a summary line to act on");
+  assert.ok(i.summary.every((l: string) => (l.match(/\d+/g) ?? []).every(n => ["20", "3", "500"].includes(n) || JSON.stringify(i).includes(n))), "no invented numbers");
+  assert.ok(!JSON.stringify(i).includes("si-b") && !JSON.stringify(i).includes("Buyer One"), "no buyer ids or names");
+  assert.equal(i.buyers.total, 0);
 });

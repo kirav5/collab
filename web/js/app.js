@@ -116,10 +116,11 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><label class="mic" for="photo-in" title="Sell from a photo" aria-label="Sell something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
   voiceInput();
+  $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
   document.addEventListener("click", e => {
     const el = e.target.closest?.('[data-act="eng-pay"][data-gpay]');
@@ -279,6 +280,25 @@ function emptyChat() {
     ${privacyCard()}`;
 }
 
+/**
+ * Sell from a photo: made small on the phone (longest side 1024 px, JPEG), read by Gemini into a listing sentence,
+ * then the usual listing card (with the photo on it) — the seller still sets the price and publishes. What's typed in
+ * the box goes with it as a caption ("₹450, two available").
+ */
+async function sellFromPhoto(file) {
+  const input = $("#input"), caption = input.value.trim();
+  toast("Reading your photo…");
+  try {
+    const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
+    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    const image = cv.toDataURL("image/jpeg", 0.82);
+    const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
+    input.value = "";
+    if (!(await publicIntake(r.text, null, r.photo))) toast("Couldn't make a listing from that — try typing what it is.");
+  } catch (err) { toast(err.message || "Couldn't read that photo."); }
+}
+
 /** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
  *  Hindi) fills the message box; nothing is sent until the owner taps send. Hidden where the browser can't. */
 function voiceInput() {
@@ -360,11 +380,31 @@ async function openPass(path) {
   const o = document.createElement("div");
   o.className = "overlay";
   o.setAttribute("role", "dialog"); o.setAttribute("aria-modal", "true");
-  const draw = () => { o.innerHTML = `<div class="sheet">${passHTML(d, { qr, seller, link })}<button class="btn secondary" data-act="overlay-close">Close</button></div>`; };
+  const draw = () => { o.innerHTML = `<div class="sheet">${passHTML(d, { qr, seller, link, manage: !!eng })}<button class="btn secondary" data-act="overlay-close">Close</button></div>`; };
+  // Changing or cancelling a booking, from the pass: the result is the same pass, redrawn.
+  const booking = async body => {
+    const x = await api(`/api/engagements/${encodeURIComponent(pid)}/booking`, body);
+    live.engagements.set(x.id, x); d = await load(); draw(); refresh(openScreen);
+  };
   draw();
   document.body.append(o);
   o.addEventListener("click", async e => {
     if (e.target === o || e.target.closest('[data-act="overlay-close"]')) return o.remove();
+    if (e.target.closest('[data-act="pass-move"]')) {
+      const box = o.querySelector(".pass-times");
+      box.innerHTML = `<span class="spinner"></span>`;
+      const r = await api(`/api/engagements/${encodeURIComponent(pid)}/slots`).catch(err => ({ slots: [], error: err.message }));
+      const label_ = sl => new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined });
+      box.innerHTML = r.slots?.length ? r.slots.slice(0, 8).map(sl => `<button class="chip" data-act="pass-move-to" data-slot="${esc(sl.id)}">${esc(label_(sl))}</button>`).join("") : `<span class="small muted">${esc(r.error ?? "No other free times right now.")}</span>`;
+      return;
+    }
+    const to = e.target.closest('[data-act="pass-move-to"]');
+    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message); } return; }
+    if (e.target.closest('[data-act="pass-cancel"]')) {
+      if (!confirm("Cancel this booking? The time is freed for others and they're told.")) return;
+      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message); }
+      return;
+    }
     const copy = e.target.closest('[data-act="pass-copy"]');
     if (copy) { await navigator.clipboard.writeText(copy.dataset.link).catch(() => {}); return toast("Link copied — keep it private."); }
     const b = e.target.closest('[data-act="pass-collect"]');
@@ -1023,7 +1063,7 @@ async function cardAction(a, el, { s, m, c }) {
     const instant = !!card.querySelector("[data-instant-new]")?.checked;
     if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
     // A note being made public is published in place (no private copy left behind).
-    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount) });
+    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount), ...(c.photo ? { photoId: c.photo.id } : {}) });
     factsCache = null;
     if (fact.floorKeptPrivate) toast("Your lowest price was left out of the public text — it stays private.");
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
@@ -1040,6 +1080,8 @@ async function cardAction(a, el, { s, m, c }) {
     if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
     c.step = "published"; c.publicText = fact.text;
   }
+  // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
+  if (a === "offer-improve") c.improve = c.improve === el.dataset.k ? null : el.dataset.k;
   // Making a note public goes through the offering card when it's something offered.
   if (a === "tier" && el.dataset.tier === "public" && c.fact && c.fact.tier !== "public") { busy(el, true, "Reading"); if (await publicIntake(c.fact.text, c.fact.id)) return; }
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
@@ -1052,12 +1094,12 @@ async function cardAction(a, el, { s, m, c }) {
  * as an offering card (price and where asked for if missing, buyers' usual questions with tap-to-answer options, a
  * written floor kept private) and publishes in place of the note. Anything else is published as it is (false).
  */
-async function publicIntake(text, noteId = null) {
+async function publicIntake(text, noteId = null, photo = null) {
   const d = await api("/api/offers/draft", { text, here: S.profile?.area, note: true }).catch(() => null);
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 Sell this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
   S.screen = "chat"; paint();
   return true;

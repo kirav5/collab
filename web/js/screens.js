@@ -5,7 +5,7 @@ import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
 import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
-import { dealAmount, defaultHours, engagementCard, hoursOk, hoursText, rulesList } from "./cards.js";
+import { dealAmount, dealStage, defaultHours, engagementCard, hoursOk, hoursText, rulesList } from "./cards.js";
 import { local } from "./local.js";
 import { privacyFacts } from "./processing.js";
 import { live, needsYou, needsYouCount } from "./live.js";
@@ -167,7 +167,8 @@ export const screens = {
           <button class="btn quiet compact" data-act="slots-track" data-id="${esc(f.id)}">Use time slots</button></div>`;
         if (r.type === "quantity") {
           const held = r.holds.filter(h => h.state === "held" && h.expiresAt > now_).reduce((n, h) => n + h.qty, 0);
-          return `<div class="row small stock"><b>Stock ${r.onHand}</b>${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+          const low = r.onHand - held <= (session.policy?.stock?.lowAt ?? 3);
+          return `<div class="row small stock"><b>Stock ${r.onHand}</b>${low ? tag(r.onHand - held > 0 ? "Low" : "Sold out", "danger") : ""}${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
             <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>
             ${connected(r) || `<div class="row small"><button class="btn quiet compact" data-act="conn-pos" data-id="${esc(r.id)}">Connect billing software</button><span class="faint">its sales update this count</span></div>`}<div data-conn="${esc(r.id)}"></div>`;
         }
@@ -643,8 +644,7 @@ export const screens = {
       const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
       const dealIn = (e, k) => k === "all" || (k === "todo" ? !finishedDeal(e) : k === "done" ? finishedDeal(e) : k === "sold" ? sold.includes(e) : bought.includes(e));
       const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "all";
-      const STAGE = e => { const f = e.fulfilment?.state, p = e.payment?.status;
-        return f === "accepted" ? ["Completed", "fresh"] : f === "disputed" ? ["Problem", "danger"] : off(e) ? ["Fell through", ""] : f === "delivered" ? (toConfirm(e) ? ["Confirm receipt", "wait"] : ["Handed over", "peri"]) : p === "paid" || p === "outside" ? ["Paid", "accent"] : ["To pay", "stale"]; };
+      const STAGE = e => dealStage(e, me(e));
       const dealRow = e => {
         const side = me(e), them = side === "provider" ? e.requester : e.provider, mineSold = sellerOf(e) === side;
         const d = e.negotiation.deal, n = d.items?.length ? d.items.reduce((t, l) => t + l.quantity, 0) : d.terms?.quantity > 1 ? d.terms.quantity : 1;

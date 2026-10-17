@@ -235,6 +235,8 @@ details.more[open] { display: grid; gap: 10px; }
 /* Someone's card: each offering with what can be done right there. */
 .shop-item { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); }
 .shop-item + .shop-item { margin-top: 8px; }
+.item-photo { width: 100%; max-height: 220px; object-fit: cover; border-radius: 6px; background: var(--hairline); display: block; }
+label.mic { cursor: pointer; }
 .shop-item .qs .chip { font-size: 12px; }
 .stepper { display: inline-flex; align-items: center; border: 1px solid var(--hairline); border-radius: 4px; }
 .stepper .btn { border: 0; min-width: 32px; font-size: 14px; }
