@@ -117,6 +117,7 @@ export async function chat(text, recent, area, open = null) {
   catch (e) { if (e instanceof TypeError) return offlineAnswer(text); throw e; }
   switch (route.intent) {
     case "remember": {
+      if (session.incognito) return { text: "Incognito is on, so I didn't save that. Turn it off in Settings to keep notes.", cards: [] };
       const fact = await saveNote(api, { text, tier: "private" });
       if (fact.queued) return { text: "Saved on this device — the connection dropped; it syncs to your account when you're back online.", cards: [] };
       await cacheNotes([...(await cachedNotes()), fact]); // at once on this device too, so the next matches can use it

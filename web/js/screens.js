@@ -42,26 +42,29 @@ async function insightsCard() {
   const i = await cached("/api/shop/insights", 60_000).catch(() => null);
   if (!i) return "";
   const n = x => Math.round(Number(x) || 0);
-  // One line per item: the name (cut short, whole on hover), its numbers on the right — or below, if the name is long.
-  const row = (name, value, q = false) => `<div class="ins-row"><span class="grow${q ? " q" : ""}" title="${esc(name)}">${esc(name)}</span><b>${value}</b></div>`;
-  const tile = (lbl, cls, rows, note = "") => (rows.length ? `<div class="ins-tile ${cls}">${label(lbl, cls.split(" ")[0])}${note ? `<span class="faint ins-note">${esc(note)}</span>` : ""}${rows.join("")}</div>` : "");
   const b = i.buyers ?? {}, f = i.forecast;
-  const tiles = [
-    tile("Demand you missed", "wait", (i.missed ?? []).slice(0, 3).map(m => row(m.item, `${n(m.wanted)}<span class="faint">/${n(m.had)}</span>`)), "wanted / had"),
-    tile("Asked near you", "accent", (i.unmet ?? []).slice(0, 3).map(u => row(u.item, n(u.requests))), "people, none filled"),
-    tile("People ask most", "talk wide", (i.asked ?? []).slice(0, 3).map(a => row(a.question, `×${n(a.times)}`, true))),
-    tile("Prices agreed", "fresh", (i.prices ?? []).slice(0, 3).map(p => row(p.item, `${esc(money(p.agreed))}${p.listed != null ? `<span class="faint">/${esc(money(p.listed))}</span>` : ""}`)), "agreed / listed"),
-    tile("Who deals with you", "fresh", b.total ? [row("New", n(b.total - b.repeat)), row("Repeat", n(b.repeat)), row("Bargained", n(b.bargained)), row("At your price", n(b.atListed))] : []),
-    tile("Often wanted together", "accent", (i.together ?? []).slice(0, 3).map(t => row(t.item, n(t.buyers))), "by people you dealt with"),
-    tile("Next 7 days", "talk", f?.available ? (f.items ?? []).slice(0, 3).map(x => row(x.label, n(x.next7))) : [], "requests expected near you"),
+  // Visual panels, each only when it has something to show: bars for demand, a dot line for price, big numbers.
+  const panel = (lbl, cls, body, sub = "") => `<div class="ins-panel ${cls}"><span class="label">${esc(lbl)}</span>${sub ? `<span class="ins-sub">${esc(sub)}</span>` : ""}${body}</div>`;
+  const missed = (i.missed ?? []).slice(0, 3), maxW = Math.max(1, ...missed.map(m => n(m.wanted)));
+  const prices = (i.prices ?? []).filter(p => p.listed != null).slice(0, 3);
+  const next7 = f?.available ? (f.items ?? []).reduce((t, x) => t + n(x.next7), 0) : null;
+  const panels = [
+    missed.length && panel("Demand you missed", "wait", missed.map(m => `<div class="ins-bar"><div class="ins-bar-top"><span>${esc(m.item)}</span><span>${n(m.had)} had · <b>${n(m.wanted)}</b> wanted</span></div>
+      <div class="ins-track"><i class="had" style="width:${(n(m.had) / maxW) * 100}%"></i><i style="width:${(n(m.wanted) / maxW) * 100}%"></i></div></div>`).join(""), "People wanted more than you had"),
+    prices.length && panel("Listed vs agreed", "fresh", prices.map(p => { const lo = Math.min(p.agreed, p.listed) * 0.9, hi = Math.max(p.agreed, p.listed) * 1.05, x = v => ((v - lo) / (hi - lo)) * 100;
+      return `<div class="ins-dot"><span>${esc(p.item)}</span><div class="ins-line"><i class="seg" style="left:${x(Math.min(p.agreed, p.listed))}%;width:${Math.abs(x(p.listed) - x(p.agreed))}%"></i><i class="pt listed" style="left:${x(p.listed)}%" title="Listed ${esc(money(p.listed))}"></i><i class="pt agreed" style="left:${x(p.agreed)}%" title="Agreed ${esc(money(p.agreed))}"></i></div><span class="ins-vals">${esc(money(p.agreed))} <span class="faint">/ ${esc(money(p.listed))}</span></span></div>`; }).join(""), "Median price agreed vs your listed price"),
+    b.total && panel("Who deals with you", "talk", `<div class="ins-nums"><div><b>${n(b.total)}</b><span>People</span></div><div><b>${n(b.repeat)}</b><span>Came back</span></div><div><b>${n(b.atListed)}</b><span>Paid your price</span></div><div><b>${n(b.bargained)}</b><span>Bargained</span></div></div>`),
+    (i.unmet ?? []).length && panel("Asked near you, not filled", "accent", `<div class="ins-pills">${i.unmet.slice(0, 4).map(u => `<span>${esc(u.item)}<b>${n(u.requests)}</b></span>`).join("")}</div>`),
+    (i.together ?? []).length && panel("Often wanted together", "accent", `<div class="ins-pills">${i.together.slice(0, 4).map(t => `<span>${esc(t.item)}<b>${n(t.buyers)}</b></span>`).join("")}</div>`),
+    (i.asked ?? []).length && panel("People ask most", "talk", `<ul class="ins-qs">${i.asked.slice(0, 4).map(a => `<li><span>${esc(a.question)}</span><span>×${n(a.times)}</span></li>`).join("")}</ul>`),
+    panel("Next 7 days", "talk", next7 ? `<div class="ins-big"><b>${next7}</b><span>requests expected near you · BigQuery forecast</span></div>` : `<span class="small faint">${f?.available ? "Not enough history yet — the forecast fills in as requests come in." : esc(f?.reason || "Forecast not set up")}</span>`),
   ].filter(Boolean);
   const lines = (i.summary ?? []).filter(Boolean);
-  const head = `<div class="row">${label("Insights", "sq ink")}<span class="small faint end">${n(i.days) || 30} days</span></div>`;
-  if (!lines.length && !tiles.length) return `<div class="card insights">${head}<span class="small faint">Insights appear after your first conversations.</span></div>`;
+  const head = `<div class="row">${label("Insights", "sq ink")}<span class="small faint end">last ${n(i.days) || 30} days</span></div>`;
+  if (!lines.length && panels.length <= 1) return `<div class="card insights">${head}<span class="small faint">Insights appear after your first conversations.</span></div>`;
   return `<div class="card insights">${head}
-    ${lines.length ? `<div class="ins-say">${i.byModel ? byTag("gemini") : ""}${lines.map(l => `<p>${esc(l)}</p>`).join("")}</div>` : ""}
-    ${tiles.length ? `<div class="ins-tiles">${tiles.join("")}</div>` : ""}
-    ${f && f.available === false ? `<span class="small faint">Next 7 days: ${esc(f.reason || "not enough sales yet")}</span>` : ""}</div>`;
+    ${lines.length ? `<div class="ins-say"><span class="label">What to do next${i.byModel ? " · Gemini" : ""}</span><ul>${lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul></div>` : ""}
+    <div class="ins-board">${panels.join("")}</div></div>`;
 }
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
@@ -767,20 +770,22 @@ export const screens = {
       const anon = session.user?.isAnonymous;
       let look = "auto"; try { look = localStorage.getItem("collab-theme") || "auto"; } catch { /* private window */ }
       return frame("Settings", "You and your agent", `
-        <div class="card">${label("Appearance", "sq")}<div class="row">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="chip ${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" data-act="theme" data-value="${k}">${v}</button>`).join("")}<span class="small faint">Auto follows your device.</span></div>
-          <div class="row"><span class="small">Animations</span>${[["on", "On"], ["off", "Off"]].map(([k, v]) => `<button class="chip ${(document.documentElement.dataset.motion ?? "on") === k ? "on" : ""}" data-act="motion" data-value="${k}">${v}</button>`).join("")}</div></div>
-        <form class="card" data-form="profile">${label("Profile", "sq")}
-          <input class="field" name="name" value="${esc(S.profile.name)}" placeholder="Name">
-          <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" value="${esc(S.profile.handle)}"></div>
-          <input class="field" name="bio" value="${esc(S.profile.bio)}" placeholder="One line about you (public)">
-          <input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="Your area">
+        <form class="card set-card" data-form="profile">
+          <div class="set-head"><span class="set-avatar" aria-hidden="true">${esc((S.profile.name || "?").slice(0, 1).toUpperCase())}</span><div><b>${esc(S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)}</span></div></div>
+          <label class="set-field"><span>Name</span><input class="field" name="name" value="${esc(S.profile.name)}"></label>
+          <label class="set-field"><span>Handle</span><div class="row" style="flex-wrap:nowrap;gap:6px"><span class="faint">@</span><input class="field" name="handle" value="${esc(S.profile.handle)}"></div></label>
+          <label class="set-field"><span>About you · public</span><input class="field" name="bio" value="${esc(S.profile.bio)}" placeholder="One line others see"></label>
+          <label class="set-field"><span>Area</span><input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="e.g. Koramangala"></label>
           <button class="btn" data-act="save-profile">Save</button></form>
-        <div class="card">${label("AI engine", "sq")}<dl class="kv small">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl><dl class="kv"><dt>Gemma on this device</dt><dd>${deviceAI()}</dd>
-          <dt>Answer my notes with</dt><dd class="stack" style="gap:4px">${[["device-only", "Only this device", "nothing sent"],
-            ["my-devices", "My devices", "never the cloud"], ["cloud", "My devices, then the cloud", "Gemini if none can"],
-            ["cloud-only", "Only the cloud", "always Gemini"]]
-            .map(([v, t, d]) => `<label class="row small" style="gap:6px"><input type="radio" name="processing" data-act="processing" value="${v}" ${engine.mode === v ? "checked" : ""}> <b>${t}</b> <span class="faint">${d}</span></label>`).join("")}</dd>
-          <dt>Your always-on agent</dt><dd>Gemini ${esc(session.config.model ?? "")} on Vertex AI, from your Public and Protected facts only</dd><dt>Between agents</dt><dd>A2A protocol v1.0 (JSON-RPC)</dd></dl></div>
+        <div class="card set-card">
+          <div class="set-row"><div><b>Theme</b><span class="small faint">Auto follows your device</span></div><div class="seg">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" data-act="theme" data-value="${k}">${v}</button>`).join("")}</div></div>
+          <div class="set-row"><div><b>Animations</b><span class="small faint">Motion when things change</span></div><div class="seg">${[["on", "On"], ["off", "Off"]].map(([k, v]) => `<button class="${(document.documentElement.dataset.motion ?? "on") === k ? "on" : ""}" data-act="motion" data-value="${k}">${v}</button>`).join("")}</div></div>
+          <div class="set-row"><div><b>Incognito</b><span class="small faint">${S.incognito ? "On — chats aren't kept or synced, and nothing you say is remembered" : "Chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
+        <div class="card set-card">${label("Privacy & AI", "sq")}<dl class="kv small">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+          <div class="set-row"><div><b>Answer my notes with</b><span class="small faint">${{ "device-only": "Gemma on this device — nothing sent", "my-devices": "Gemma on your devices — never the cloud", cloud: "Your devices, else Gemini", "cloud-only": "Always Gemini in the cloud" }[engine.mode] ?? ""}</span></div></div>
+          <div class="seg wide">${[["device-only", "This device"], ["my-devices", "My devices"], ["cloud", "Devices, then cloud"], ["cloud-only", "Cloud"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
+          <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
+          <details class="more"><summary>Technical details</summary><dl class="kv small"><dt>Model</dt><dd>${esc(session.config.model ?? "")} on Vertex AI</dd><dt>Between agents</dt><dd>A2A v1.0 (JSON-RPC)</dd></dl></details></div>
         ${myDevices()}
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Get told when your agent needs you, even with Collab closed. Never prices or notes.</span>
@@ -799,6 +804,14 @@ export const screens = {
           <div class="row"><button class="btn danger compact" data-act="clear-device">Delete chat history</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
     },
     async act(a, el, S, h) {
+      // Incognito: chats started while it's on are never kept or synced, and nothing said is remembered (see app.js).
+      if (a === "incognito") {
+        S.incognito = el.dataset.value === "on";
+        try { localStorage.setItem("collab-incognito", S.incognito ? "on" : "off"); } catch {}
+        session.incognito = S.incognito;
+        h.toast(S.incognito ? "Incognito on — new chats aren't kept, and nothing is remembered." : "Incognito off.");
+        h.paint(); return true;
+      }
       if (a === "motion") {
         try { localStorage.setItem("collab-motion", el.dataset.value); } catch { /* this session only */ }
         window.applyLook?.(); h.paint(); return true;
@@ -819,8 +832,8 @@ export const screens = {
       }
       if (a === "gemma-remove") { busy(el, true); await removeGemma(); await detectEngine(); refreshServing(); h.toast(`${MODEL.label} removed from this device.`); h.paint(); return true; }
       if (a === "processing") {
-        setProcessingMode(el.value);
-        h.toast(el.value === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : el.value === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : el.value === "cloud-only" ? "Your notes are answered by Gemini in the cloud." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
+        setProcessingMode((el.dataset.value ?? el.value));
+        h.toast((el.dataset.value ?? el.value) === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : (el.dataset.value ?? el.value) === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : (el.dataset.value ?? el.value) === "cloud-only" ? "Your notes are answered by Gemini in the cloud." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
         h.paint(); return true;
       }
       if (a === "device-rename") { await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }

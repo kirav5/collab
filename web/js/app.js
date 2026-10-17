@@ -18,6 +18,10 @@ import { notesReadBy, privacyFacts } from "./processing.js";
 import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
+// Incognito (Settings): remembered on this device only as the on/off choice itself.
+try { S.incognito = localStorage.getItem("collab-incognito") === "on"; } catch { S.incognito = false; }
+session.incognito = S.incognito;
+
 const root = $("#root");
 
 // MARK: - Boot
@@ -108,7 +112,7 @@ async function boot() {
   addEventListener("online", () => { toast("Back online — syncing what you did offline."); catchUp().then(() => paint()); });
   addEventListener("offline", () => { toast(engine.here ? "Offline — Gemma answers questions about your notes on this device. New notes are saved here and sync later." : "Offline — showing what's saved on this device. New notes sync when you're back."); paint(); });
   if (navigator.onLine) catchUp();
-  S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
+  S.sessions = (await local.all("sessions")).map(s => ({ ...s, persisted: true })).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
   syncChats();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) syncChats(); });
@@ -197,7 +201,7 @@ function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
   const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
-    <span class="end small faint">@${esc(S.profile.handle)}</span>`;
+    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="Chats aren't kept; nothing is remembered">◐ Incognito</span> ` : ""}@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
   $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
@@ -628,7 +632,13 @@ async function orderFromCard(a, el) {
 
 // MARK: - Sessions
 
-async function saveSession(s) { s.updatedAt = now(); await local.put("sessions", s); S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)]; upload(s); }
+async function saveSession(s) {
+  s.updatedAt = now();
+  // Incognito: a chat started while it's on lives only in memory — never on this device, never in the account.
+  if (S.incognito && !s.persisted) s.incognito = true;
+  if (!s.incognito) { s.persisted = true; await local.put("sessions", s); upload(s); }
+  S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)];
+}
 
 // Chat history also lives in the account (owner-only), so the installed app, other browsers and other devices show
 // the same chats. Uploads wait a moment so a burst of edits is one write.
