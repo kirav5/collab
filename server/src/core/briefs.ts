@@ -15,7 +15,9 @@ export const BRIEFS = "briefs";
 
 /** `clarify`: what Gemini suggests the owner adds before sending (tap-to-answer options). `profile`: for someone looking
  *  for work, what they share about themselves (experience, skills…) — in place of `clarify`. */
-export interface BriefDraft { need: Need; shared: SharedBrief; mandate: Mandate | null; clarify: Clarify[]; profile?: ProfileQuestion[]; byModel: Record<string, boolean> }
+export interface BriefDraft { need: Need; shared: SharedBrief; mandate: Mandate | null; clarify: Clarify[]; profile?: ProfileQuestion[]; byModel: Record<string, boolean>;
+  /** Who this goes to, in the request's own words ("electricians"), for the app's wording; null when unknown. */
+  who?: string | null }
 
 export async function draft(model: Model | null, text: string, here: Place | null, now: number, category?: string | null): Promise<{ draft: BriefDraft | null; problem?: string }> {
   const r = await read(text, "find", model, now, here, category, true);
@@ -30,7 +32,7 @@ export async function draft(model: Model | null, text: string, here: Place | nul
     asks ? null : decide(model, ClarifyTask, { text, category: need.category, known }),
     asks ? decide(model, ProfileTask, { text, category: need.category, asks }) : null,
   ]);
-  return { draft: { need, shared: share(need, s.output), mandate: need.mandate ?? null, clarify: c?.output ?? [], ...(pr ? { profile: pr.output } : {}),
+  return { draft: { need, shared: share(need, s.output), who: s.output.who ?? null, mandate: need.mandate ?? null, clarify: c?.output ?? [], ...(pr ? { profile: pr.output } : {}),
     byModel: { ...r.byModel, brief: s.byModel, ...(c ? { clarify: c.byModel } : {}), ...(pr ? { profile: pr.byModel } : {}) } } };
 }
 

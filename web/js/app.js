@@ -126,7 +126,8 @@ async function boot() {
         <div class="row" id="composer-note"></div></form></div></section>
       <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
   startPanel(paint);
-  $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
+  // Sending stops the microphone first, so nothing it still hears is written back into the cleared box.
+  $("#compose").onsubmit = e => { e.preventDefault(); const text = $("#input").value; stopVoice(); $("#input").value = ""; send(text); };
   voiceInput();
   $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
@@ -218,7 +219,7 @@ function paintTop() {
   $("#composer-note").innerHTML = label("Your agent answers from your context · never your limits or contacts");
 }
 
-let painting = false, lastHTML = "";
+let painting = false, lastHTML = "", lastChat = undefined, lastCount = 0;
 let again = null;
 // A live repaint while a finger or mouse is down would replace the button being pressed, and the tap would be lost.
 let pointerDown = false, afterPointer = false;
@@ -269,7 +270,11 @@ async function paintContent(soft = false) {
     if (chatChanged || !soft) el.innerHTML = chat;
     panel.innerHTML = side;
     animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen && !panelDetail()); lastScreen = S.screen;
-    if (chatChanged && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    // The chat follows a new message (or a newly opened chat) to the bottom; a card being filled in, answered or updated
+    // stays where the owner is looking.
+    const cur = S.sessions.find(x => x.id === S.current), count = cur?.messages?.length ?? 0, newChat = S.current !== lastChat;
+    if (chatChanged && (newChat || count > lastCount || (nearBottom && soft && count === lastCount && !el.contains(document.activeElement)))) el.scrollTop = el.scrollHeight;
+    lastChat = S.current; lastCount = count;
     if (!soft && (S.screen !== "chat" || panelDetail())) panel.scrollTop = 0;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
@@ -342,7 +347,8 @@ function emptyChat() {
  */
 async function sellFromPhoto(file) {
   const input = $("#input"), caption = input.value.trim();
-  if (!/^image\//.test(file.type)) return toast("That isn't a photo. Choose a JPEG, PNG or WebP.");
+  // Some phone galleries send no type at all: the name decides then, and decoding it is the real test.
+  if (file.type ? !/^image\//.test(file.type) : !/\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(file.name)) return toast("That isn't a photo. Choose a JPEG, PNG or WebP.", null, "error");
   // The photo shows at once, with what's happening to it, in the chat — not a toast that vanishes.
   let cur = S.sessions.find(s => s.id === S.current && !s.to);
   if (!cur) { cur = { id: id(), title: "From a photo", messages: [], updatedAt: now() }; S.current = cur.id; }
@@ -351,8 +357,8 @@ async function sellFromPhoto(file) {
   cur.messages.push(msg); toChat(); paint();
   const fail = async why => { msg.pending = null; msg.text = `${why} Type what it is instead, or try a closer, brighter photo.`; msg.cards = [{ type: "suggest", options: [{ label: "Try another photo", text: "" }], hint: "" }]; await saveSession(cur); paint(); };
   try {
-    const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
-    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+    const bmp = await decodePhoto(file), w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight, k = Math.min(1, 1024 / Math.max(w, h));
+    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(w * k), height: Math.round(h * k) });
     cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
     const image = cv.toDataURL("image/jpeg", 0.82);
     const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
@@ -364,6 +370,18 @@ async function sellFromPhoto(file) {
   } catch (err) { await fail(err.status === 422 ? "Couldn't tell what's in the photo." : err.status === 413 ? "That photo is too large." : (err.message || "Couldn't read that photo.")); }
 }
 
+/** A phone photo as something a canvas can draw: upright (as the camera held it), and through the browser's own image
+ *  decoder when the quick one can't read the format (some phones' HEIC). */
+async function decodePhoto(file) {
+  try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch { /* try the image decoder */ }
+  const url = URL.createObjectURL(file);
+  try { const img = new Image(); img.src = url; await img.decode(); return img; }
+  catch { throw Object.assign(new Error("This phone saved the photo in a format the browser can't open — try a screenshot of it, or a JPEG."), { status: 415 }); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 5000); }
+}
+
+/** Stops listening and drops whatever the recogniser still sends (set by voiceInput). */
+let stopVoice = () => {};
 /** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
  *  Hindi) fills the message box; nothing is sent until the owner taps send. Hidden where the browser can't. */
 function voiceInput() {
@@ -371,17 +389,24 @@ function voiceInput() {
   if (!Rec || !mic) return;
   mic.hidden = false;
   let rec = null;
+  stopVoice = () => { if (!rec) return; const r = rec; rec = null; r.onresult = null; mic.classList.remove("on"); try { r.abort(); } catch { /* already stopped */ } };
   mic.onclick = () => {
     if (rec) { rec.stop(); return; }
-    rec = new Rec();
-    rec.lang = /^hi\b/i.test(navigator.language) ? "hi-IN" : "en-IN";
-    rec.interimResults = true;
+    const r = rec = new Rec();
+    r.lang = /^hi\b/i.test(navigator.language) ? "hi-IN" : "en-IN";
+    r.interimResults = true;
     const before = input.value.trim();
-    rec.onresult = ev => { input.value = [before, [...ev.results].map(r => r[0].transcript).join(" ")].filter(Boolean).join(" "); };
-    rec.onerror = ev => { if (ev.error !== "aborted" && ev.error !== "no-speech") toast(ev.error === "not-allowed" ? "Allow the microphone to speak your message." : "Couldn't hear that — try again."); };
-    rec.onend = () => { rec = null; mic.classList.remove("on"); input.focus(); };
+    r.onresult = ev => { if (rec !== r) return; input.value = [before, [...ev.results].map(x => x[0].transcript).join(" ")].filter(Boolean).join(" "); };
+    r.onerror = ev => {
+      if (ev.error === "aborted" || ev.error === "no-speech") return;
+      toast(ev.error === "not-allowed" ? "Allow the microphone to speak your message."
+        : ev.error === "service-not-allowed" ? "Voice isn't available in this app here — tap the text box and use your keyboard's mic."
+        : ev.error === "network" ? "Voice needs a connection — try again, or type it."
+        : ev.error === "audio-capture" ? "No microphone found." : "Couldn't hear that — try again.", null, "error");
+    };
+    r.onend = () => { if (rec === r) { rec = null; mic.classList.remove("on"); input.focus(); } };
     mic.classList.add("on");
-    rec.start();
+    try { r.start(); } catch { rec = null; mic.classList.remove("on"); toast("Voice isn't available here — type it, or use your keyboard's mic.", null, "error"); }
   };
 }
 
@@ -1217,7 +1242,8 @@ async function cardAction(a, el, { s, m, c }) {
     }
   }
   if (a === "brief-send") {
-    if (c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Send as it is”.");
+    // Searching with questions still open is fine: the agents ask what they need.
+    if (c.gate && !c.gate.ok) c.gateOverride = true;
     // The answers tapped for this request are kept (Private), and filled in the next time they're asked.
     rememberAll(c.answered ?? [], d.shared?.title ?? null);
     busy(el, true, "Searching");
@@ -1234,14 +1260,14 @@ async function cardAction(a, el, { s, m, c }) {
       for (const x of es) live.engagements.set(x.id, x);
       m.cards.push({ type: "discovery", briefId: r.brief.id, engaged: c.engaged, found: c.found, title: d.shared?.title ?? "" });
       session.track("agents_contacted", { count: es.length, category: d.need?.category ?? "none", auto: true });
-      m.text = `Your agent is talking to ${es.length === 1 ? "1 agent" : `${es.length} agents`} — it comes to you only for a decision.`;
+      m.text = `I'm talking to ${es.length === 1 ? "1 agent" : `${es.length} agents`} now — I'll come to you only when there's a decision.`;
       await saveSession(s); paint();
       for (const x of es) run(x.id);
       return;
     }
     // Nothing fits exactly: the closest listings come with the reply, and Google Maps is asked at once (no extra tap).
     c.closest = r.closest ?? [];
-    m.text = c.closest.length ? "No exact match yet — here's what's closest, and what's nearby on Google Maps." : "No match on Collab yet — looking on Google Maps nearby.";
+    m.text = c.closest.length ? "No exact match yet — here's what's closest, and what I found nearby on Google Maps." : "No match on Collab yet — I'm checking Google Maps nearby.";
     c.nearby = { loading: true };
     await saveSession(s); paint();
     const near = await api("/api/nearby", { item: d.shared.title, area: d.shared.area ?? "" }).catch(() => null);

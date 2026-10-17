@@ -5,9 +5,9 @@
   --bg: #f7f7f5; --surface: #ffffff; --surface2: #efefec; --hairline: #deded9;
   --text: #0a0a0a; --text2: #55554f; --text3: #6b6b66;
   --accent: #ff3ea5; --accent-ink: #c4126e; --peri: #5b5fd6; --peri-fill: #e6e7fb;
-  --fresh: #0b8a4e; --stale: #b86e00; --danger: #c9302c; --inverse: #0a0a0a; --on-inverse: #f7f7f5; --on-accent: #0a0a0a;
+  --fresh: #0b8a4e; --stale: #a8507c; --danger: #c9302c; --inverse: #0a0a0a; --on-inverse: #f7f7f5; --on-accent: #0a0a0a;
   /* States of what your agents are doing (tiles): waiting on you, agents negotiating, agreed, ended. */
-  --wait: #b86e00; --wait-fill: #fdf1dc; --talk: #5b5fd6; --talk-fill: #e6e7fb; --done-fill: #e2f4ea; --hot: #c9302c;
+  --wait: #c4126e; --wait-fill: #ffe4f1; --talk: #5b5fd6; --talk-fill: #e6e7fb; --done-fill: #e2f4ea; --hot: #c9302c;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
   color-scheme: light;
@@ -17,16 +17,16 @@
 :root[data-look="dark"] {
   --bg: #0a0a0a; --surface: #121212; --surface2: #1a1a1a; --hairline: #262626;
   --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
-  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #f5a524; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
-  --wait: #f5a524; --wait-fill: #2a1e05; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
+  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #e58bbd; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
+  --wait: #ff6dbb; --wait-fill: #2b0f1e; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-look]) {
     --bg: #0a0a0a; --surface: #121212; --surface2: #1a1a1a; --hairline: #262626;
   --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
-  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #f5a524; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
-  --wait: #f5a524; --wait-fill: #2a1e05; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
+  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #e58bbd; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
+  --wait: #ff6dbb; --wait-fill: #2b0f1e; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
   color-scheme: dark;
   }
 }
@@ -125,7 +125,7 @@ textarea.field { resize: vertical; min-height: 64px; }
 .composer .bar:focus-within { border-color: var(--text3); }
 .composer input { flex: 1; border: 0; outline: none; background: transparent; padding: 6px; min-width: 0; }
 .mic { width: 34px; height: 34px; border-radius: 4px; border: 1px solid var(--hairline); background: transparent; color: var(--text2); display: inline-grid; place-items: center; cursor: pointer; flex: none; }
-.mic.on { color: var(--on-accent, #fff); background: var(--hot); border-color: var(--hot); animation: flash 1.2s ease-out infinite; }
+.mic.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); animation: flash 1.2s ease-out infinite; }
 .send { width: 34px; height: 34px; border-radius: 4px; border: 0; background: var(--accent); color: var(--on-accent, #fff); font-weight: 700; cursor: pointer; }
 .send:disabled { opacity: .35; }
 .thinking .label { display: inline-block; min-width: 9ch; }
@@ -214,6 +214,8 @@ dialog::backdrop { background: rgb(0 0 0 / 45%); }
 :root[data-motion="off"] .calib-line { animation: calib-in .5s ease forwards !important; animation-delay: calc(var(--i) * .9s) !important; opacity: 0; }
 :root[data-motion="off"] .thinking { animation: sweep 1.6s linear infinite !important; }
 :root[data-motion="off"] .live-dot { animation: blink 1.6s infinite !important; }
+:root[data-motion="off"] .work-line::after { animation: splash-run 1.3s ease-in-out infinite !important; }
+:root[data-motion="off"] .mic.on { animation: flash 1.2s ease-out infinite !important; }
 :root[data-motion="off"] .chip.skel { animation: skel 1.2s linear infinite !important; }
 @keyframes logo-a { 0%, 100% { transform: translate(-6%, -6%); } 50% { transform: translate(0, 0); } }
 @keyframes logo-b { 0%, 100% { transform: translate(6%, 6%); } 50% { transform: translate(0, 0); } }
@@ -623,7 +625,11 @@ details.improve.done .improve-title { color: var(--fresh); }
 .disc-list { display: grid; gap: 6px; }
 .disc-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .15s; }
 .disc-row:hover { border-color: var(--accent); }
-.disc-row.needs { border-color: var(--wait, #e0a100); box-shadow: inset 3px 0 0 var(--wait, #e0a100); }
+.disc-row.needs { border-color: var(--wait); box-shadow: inset 3px 0 0 var(--wait); background: color-mix(in srgb, var(--wait-fill) 55%, var(--surface)); }
+.disc-text .live-dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; vertical-align: 1px; box-shadow: none; }
+/* While any agent in the list is still working: a thin bar that runs (agent activity — it moves). */
+.work-line { height: 2px; background: var(--hairline); border-radius: 2px; overflow: hidden; position: relative; }
+.work-line::after { content: ""; position: absolute; inset: 0; width: 30%; background: var(--accent); border-radius: 2px; animation: splash-run 1.3s ease-in-out infinite; }
 .disc-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .disc-text .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .disc-side { display: grid; justify-items: end; gap: 4px; }

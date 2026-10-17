@@ -144,9 +144,9 @@ export async function chat(text, recent, area, open = null) {
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
       const card = await applyRecalled({ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" });
       const filled = (card.answered ?? []).filter(x => x.before).length;
-      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before others' agents can act on this — tap what fits, or send it as it is."
-          : d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send."
-          : filled ? `Here's your request, with ${filled === 1 ? "an answer" : `${filled} answers`} from what you said before. Adjust it, then send.` : "Here's your request. Adjust it, then send.",
+      return { text: d.gate && !d.gate.ok ? "I need a little more before I can search — tap what fits, or I'll go with what you said."
+          : d.draft.profile ? "Here's your application. Add a short profile so I can answer employers for you, then send."
+          : filled ? `Got it. I filled in ${filled === 1 ? "an answer" : `${filled} answers`} from what you told me before — change anything, then I'll search.` : "Got it. Here's what I'll look for — change anything, then I'll search.",
         cards: [card] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
