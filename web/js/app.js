@@ -262,7 +262,7 @@ async function chatHTML() {
   // A listing being made gets its terms suggested at once, in the background (see prefillTerms).
   cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => {
     if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i);
-    if (c.type === "offer" && c.step === "review" && c.missing?.length && !c.answersTried) prefillAnswers(cur.id, m.id, i);
+    if (c.type === "offer" && c.step === "review" && c.missing?.length && c.answersTried !== ANSWERS_V) prefillAnswers(cur.id, m.id, i);
   }));
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
@@ -396,11 +396,14 @@ async function prefillTerms(sid, mid, i, again = false) {
   await saveSession(now_.s); paintContent(true);
 }
 
+/** Bumped when suggestions change, so cards made earlier (whose first try came back empty) ask once more. */
+const ANSWERS_V = 2;
+
 /** Likely answers to the listing's common questions, suggested by Gemini from its words; the owner accepts them. */
 async function prefillAnswers(sid, mid, i) {
   const f = cardAt(sid, mid, i);
-  if (!f || f.c.answersTried) return;
-  f.c.answersTried = true; await saveSession(f.s);
+  if (!f || f.c.answersTried === ANSWERS_V) return;
+  f.c.answersTried = ANSWERS_V; await saveSession(f.s);
   const r = await api("/api/offers/answers", { text: f.c.publicText ?? f.c.text, questions: f.c.missing.map(m => ({ label: m.label, ask: m.ask, options: m.options ?? [] })) }).catch(() => null);
   const now_ = cardAt(sid, mid, i);
   if (!now_ || !r?.answers) return;
