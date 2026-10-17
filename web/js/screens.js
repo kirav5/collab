@@ -852,7 +852,7 @@ export const screens = {
           <div class="seg wide">${[["device-only", "This device"], ["my-devices", "My devices"], ["cloud", "Devices, then cloud"], ["cloud-only", "Cloud"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
           <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
 </div>
-        ${myDevices()}
+        
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Get told when your agent needs you, even with Collab closed. Never prices or notes.</span>
           <dl class="kv"><dt>Browser check</dt><dd>${session.appCheckOk ? `<span style="color:var(--fresh)">● Verified by Google reCAPTCHA</span>`

@@ -195,6 +195,8 @@ const navRow = (screen, ico, title, trail) => `<button class="${S.screen === scr
 function groupSessions(list) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const t = today.getTime() / 1000;
+  // A chat started with "Don't keep history" on is never listed: it lives only while it's open.
+  list = list.filter(s => !s.incognito || s.id === S.current);
   const g = [{ title: "Today", items: list.filter(s => s.updatedAt >= t) }, { title: "Earlier", items: list.filter(s => s.updatedAt < t) }];
   return g.filter(x => x.items.length);
 }
