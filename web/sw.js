@@ -1,6 +1,6 @@
 // Collab's service worker: the app shell works offline (pages and code are cached; the API and A2A never are), and
 // Firebase Cloud Messaging delivers "your agent needs you" while the app is closed.
-const SHELL = "collab-shell-v50";
+const SHELL = "collab-shell-v51";
 const FILES = ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/badge-96.png",
   "/js/app.js", "/js/api.js", "/js/agent.js", "/js/cards.js", "/js/live.js", "/js/local.js", "/js/screens.js", "/js/ui.js", "/js/version.js",
   "/js/processing.js", "/js/appcheck.js", "/js/gpay.js", "/icon-512.png",

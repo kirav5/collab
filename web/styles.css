@@ -195,8 +195,11 @@ dialog::backdrop { background: rgb(0 0 0 / 45%); }
   .msg-user { max-width: 92%; }
   .ev { grid-template-columns: 1fr; gap: 0; }
 }
-/* Motion is on unless the device asks for less or Settings › Appearance turns it off (data-motion on <html>). */
+/* No animations (data-motion="off" on <html>): screens, cards, notices and panels appear in place. The one exception is
+   the small loading spinner, which says something is still working. */
 :root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after { animation: none !important; transition: none !important; }
+:root[data-motion="off"] .spinner { animation: spin .7s linear infinite !important; }
+:root[data-motion="off"] .note-bar { display: none; }
 
 /* Cards, summary-first: who · progress · one status line · at most one action; evidence under Details. */
 .eng { gap: 10px; }

@@ -225,7 +225,7 @@ let pointerDown = false, afterPointer = false;
 document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
 for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { pointerDown = false; if (afterPointer) { afterPointer = false; setTimeout(() => paintContent(true), 0); } }, true);
 /** Motion that means something: a new message or card rises in, one that changed (a counter, a payment) flashes once,
- *  and a screen opens in a short stagger. Live refreshes never replay animations; a device set to reduce motion gets none. */
+ *  and a screen opens in a short stagger. Animations are off (index.html sets data-motion="off"), so this marks nothing today. */
 const seenAnim = new Map();
 let lastScreen = null;
 function animate(root, opened) {
