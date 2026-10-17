@@ -1,14 +1,20 @@
 // Collab's service worker: the app shell works offline (pages and code are cached; the API and A2A never are), and
 // Firebase Cloud Messaging delivers "your agent needs you" while the app is closed.
-const SHELL = "collab-shell-v52";
-const FILES = ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/badge-96.png",
+const SHELL = "collab-shell-v63";
+const FILES = ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/badge-96.png", "/apple-touch-icon.png", "/icon-any-192.png",
   "/js/app.js", "/js/api.js", "/js/agent.js", "/js/cards.js", "/js/live.js", "/js/local.js", "/js/screens.js", "/js/ui.js", "/js/version.js",
   "/js/processing.js", "/js/appcheck.js", "/js/gpay.js", "/icon-512.png",
   "/js/gemma.js", "/js/e2e.js", "/js/mydevices.js", "/js/outbox.js", "/js/pass.js", "/js/fits.js", "/js/panel.js", "/vendor/qrcode.js", "/js/roles.js"];
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  // A new deployment replacing an older one tells every open window, which reloads into it (unless someone's typing).
+  e.waitUntil(caches.keys().then(async ks => {
+    const older = ks.some(k => k.startsWith("collab-shell-") && k !== SHELL);
+    await Promise.all(ks.filter(k => k !== SHELL && k.startsWith("collab-shell-")).map(k => caches.delete(k)));
+    await self.clients.claim();
+    if (older) for (const c of await self.clients.matchAll({ type: "window" })) c.postMessage({ type: "collab-updated", shell: SHELL });
+  }));
 });
 
 // Network first, so every open gets the version just deployed (files revalidate with ETags, so it's quick); the

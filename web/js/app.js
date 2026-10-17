@@ -3,20 +3,20 @@
 // screens Collab has: what your agents are doing (Activity), your QR and public card (My card), what your agent knows (About me),
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
-import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
+import { api, cached, insightsLines, ios, onFreshRead, session, signIn, standalone } from "./api.js";
 import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { checkoutHTML, dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
+import { checkoutHTML, dealAmount, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
-import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast } from "./ui.js";
+import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -124,9 +124,11 @@ async function boot() {
       <div class="composer" id="composer"><form class="box" id="compose">
         <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section>
-      <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
+      <aside class="panel" id="panel" hidden><div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize" tabindex="0" title="Drag to resize · double-click to reset"></div><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
   startPanel(paint);
-  $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
+  startResizer();
+  // Sending stops the microphone first, so nothing it still hears is written back into the cleared box.
+  $("#compose").onsubmit = e => { e.preventDefault(); const text = $("#input").value; stopVoice(); $("#input").value = ""; send(text); };
   voiceInput();
   $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
@@ -175,20 +177,21 @@ function paintSidebar() {
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
-      ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
-        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}</div>` : ""}
-      ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
-      <div class="nav">${label("Your agent")}
-        ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
-        ${navRow("receipts", "✓", "Receipts", "")}
-        ${navRow("people", "▦", "My card", "")}
-        ${navRow("context", "▤", "About me", "")}
-        ${navRow("sharing", "◈", "Privacy", "")}
-        ${navRow("settings", "⚙", "Settings", "")}
+      <div class="nav">
+        ${navRow("requests", icon("activity"), "Activity", n ? String(n) : "")}
+        ${navRow("receipts", icon("receipt"), "Receipts", "")}
+        ${navRow("people", icon("card"), "My card", "")}
+        ${navRow("context", icon("user"), "About me", "")}
+        ${navRow("sharing", icon("shield"), "Privacy", "")}
+        ${navRow("settings", icon("settings"), "Settings", "")}
       </div>
-      <div class="stack" style="gap:4px">${label("Your agent")}<button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
-        ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
-    </div>`;
+      ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
+    </div>
+    <footer class="side-foot">
+      <button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
+      ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}
+      ${!standalone() ? `<button class="btn secondary compact" data-act="install">Install app</button>` : ""}
+    </footer>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
 }
 
@@ -218,7 +221,7 @@ function paintTop() {
   $("#composer-note").innerHTML = label("Your agent answers from your context · never your limits or contacts");
 }
 
-let painting = false, lastHTML = "";
+let painting = false, lastHTML = "", lastChat = undefined, lastCount = 0;
 let again = null;
 // A live repaint while a finger or mouse is down would replace the button being pressed, and the tap would be lost.
 let pointerDown = false, afterPointer = false;
@@ -251,7 +254,16 @@ async function paintContent(soft = false) {
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
     const detail = panelDetail();
-    const chat = `<div class="inner">${await chatHTML()}</div>`, side = detail ? `<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>` : S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
+    // The chat and the screen beside it are drawn together; a screen that's slow to load (it reads from the server)
+    // shows its frame at once when it was just opened, and fills in when its data arrives.
+    const chatP = chatHTML().then(h => `<div class="inner">${h}</div>`);
+    const sideP = detail ? Promise.resolve(`<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>`)
+      : S.screen === "chat" ? Promise.resolve("") : screens[S.screen].html(S).then(h => `<div class="inner">${h}</div>`);
+    if (!soft && !detail && S.screen !== "chat" && S.screen !== lastScreen
+      && !(await Promise.race([sideP.then(() => true, () => true), new Promise(r => setTimeout(() => r(false), 120))]))) {
+      panel.innerHTML = `<div class="inner">${screenLoading(S.screen)}</div>`; lastHTML = "";
+    }
+    const [chat, side] = await Promise.all([chatP, sideP]);
     const html = chat + "\u0000" + side;
     // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
     if (soft && html === lastHTML) return;
@@ -260,7 +272,11 @@ async function paintContent(soft = false) {
     if (chatChanged || !soft) el.innerHTML = chat;
     panel.innerHTML = side;
     animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen && !panelDetail()); lastScreen = S.screen;
-    if (chatChanged && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    // The chat follows a new message (or a newly opened chat) to the bottom; a card being filled in, answered or updated
+    // stays where the owner is looking.
+    const cur = S.sessions.find(x => x.id === S.current), count = cur?.messages?.length ?? 0, newChat = S.current !== lastChat;
+    if (chatChanged && (newChat || count > lastCount || (nearBottom && soft && count === lastCount && !el.contains(document.activeElement)))) el.scrollTop = el.scrollHeight;
+    lastChat = S.current; lastCount = count;
     if (!soft && (S.screen !== "chat" || panelDetail())) panel.scrollTop = 0;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
@@ -268,6 +284,11 @@ async function paintContent(soft = false) {
     if (again !== null) { const next = again; again = null; paintContent(next); }
   }
 }
+
+const SCREEN_TITLES = { receipts: "Receipts", context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+/** A screen's frame while its data loads: the same title and blocks where its cards will be. */
+const screenLoading = screen => `<div class="stack" style="gap:6px">${label(SCREEN_TITLES[screen] ?? "", "sq")}<div class="skel-line" style="width:62%;height:34px"></div></div>
+  <div class="stack">${[96, 160, 120].map(h => `<div class="card skel-card" style="height:${h}px"></div>`).join("")}</div>`;
 
 // Saved-note cards show the note as it is now (it may have moved tier on another screen); fetched at most every 20 s.
 let factsCache = null;
@@ -317,7 +338,7 @@ function emptyChat() {
     <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
     <h1 class="headline">What are you looking for right now?</h1>
     <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
-    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="prompt" data-text="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
+    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="send-text" data-text="${esc(i.text)}" title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
     ${privacyCard()}</div>`;
 }
 
@@ -328,17 +349,18 @@ function emptyChat() {
  */
 async function sellFromPhoto(file) {
   const input = $("#input"), caption = input.value.trim();
-  if (!/^image\//.test(file.type)) return toast("That isn't a photo. Choose a JPEG, PNG or WebP.");
+  // Some phone galleries send no type at all: the name decides then, and decoding it is the real test.
+  if (file.type ? !/^image\//.test(file.type) : !/\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(file.name)) return toast("That isn't a photo. Choose a JPEG, PNG or WebP.", null, "error");
   // The photo shows at once, with what's happening to it, in the chat — not a toast that vanishes.
   let cur = S.sessions.find(s => s.id === S.current && !s.to);
   if (!cur) { cur = { id: id(), title: "From a photo", messages: [], updatedAt: now() }; S.current = cur.id; }
   const preview = URL.createObjectURL(file);
   const msg = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", photo: preview, cards: [] };
-  cur.messages.push(msg); S.screen = "chat"; paint();
+  cur.messages.push(msg); toChat(); paint();
   const fail = async why => { msg.pending = null; msg.text = `${why} Type what it is instead, or try a closer, brighter photo.`; msg.cards = [{ type: "suggest", options: [{ label: "Try another photo", text: "" }], hint: "" }]; await saveSession(cur); paint(); };
   try {
-    const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
-    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+    const bmp = await decodePhoto(file), w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight, k = Math.min(1, 1024 / Math.max(w, h));
+    const cv = Object.assign(document.createElement("canvas"), { width: Math.round(w * k), height: Math.round(h * k) });
     cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
     const image = cv.toDataURL("image/jpeg", 0.82);
     const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
@@ -350,6 +372,18 @@ async function sellFromPhoto(file) {
   } catch (err) { await fail(err.status === 422 ? "Couldn't tell what's in the photo." : err.status === 413 ? "That photo is too large." : (err.message || "Couldn't read that photo.")); }
 }
 
+/** A phone photo as something a canvas can draw: upright (as the camera held it), and through the browser's own image
+ *  decoder when the quick one can't read the format (some phones' HEIC). */
+async function decodePhoto(file) {
+  try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch { /* try the image decoder */ }
+  const url = URL.createObjectURL(file);
+  try { const img = new Image(); img.src = url; await img.decode(); return img; }
+  catch { throw Object.assign(new Error("This phone saved the photo in a format the browser can't open — try a screenshot of it, or a JPEG."), { status: 415 }); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 5000); }
+}
+
+/** Stops listening and drops whatever the recogniser still sends (set by voiceInput). */
+let stopVoice = () => {};
 /** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
  *  Hindi) fills the message box; nothing is sent until the owner taps send. Hidden where the browser can't. */
 function voiceInput() {
@@ -357,17 +391,24 @@ function voiceInput() {
   if (!Rec || !mic) return;
   mic.hidden = false;
   let rec = null;
+  stopVoice = () => { if (!rec) return; const r = rec; rec = null; r.onresult = null; mic.classList.remove("on"); try { r.abort(); } catch { /* already stopped */ } };
   mic.onclick = () => {
     if (rec) { rec.stop(); return; }
-    rec = new Rec();
-    rec.lang = /^hi\b/i.test(navigator.language) ? "hi-IN" : "en-IN";
-    rec.interimResults = true;
+    const r = rec = new Rec();
+    r.lang = /^hi\b/i.test(navigator.language) ? "hi-IN" : "en-IN";
+    r.interimResults = true;
     const before = input.value.trim();
-    rec.onresult = ev => { input.value = [before, [...ev.results].map(r => r[0].transcript).join(" ")].filter(Boolean).join(" "); };
-    rec.onerror = ev => { if (ev.error !== "aborted" && ev.error !== "no-speech") toast(ev.error === "not-allowed" ? "Allow the microphone to speak your message." : "Couldn't hear that — try again."); };
-    rec.onend = () => { rec = null; mic.classList.remove("on"); input.focus(); };
+    r.onresult = ev => { if (rec !== r) return; input.value = [before, [...ev.results].map(x => x[0].transcript).join(" ")].filter(Boolean).join(" "); };
+    r.onerror = ev => {
+      if (ev.error === "aborted" || ev.error === "no-speech") return;
+      toast(ev.error === "not-allowed" ? "Allow the microphone to speak your message."
+        : ev.error === "service-not-allowed" ? "Voice isn't available in this app here — tap the text box and use your keyboard's mic."
+        : ev.error === "network" ? "Voice needs a connection — try again, or type it."
+        : ev.error === "audio-capture" ? "No microphone found." : "Couldn't hear that — try again.", null, "error");
+    };
+    r.onend = () => { if (rec === r) { rec = null; mic.classList.remove("on"); input.focus(); } };
     mic.classList.add("on");
-    rec.start();
+    try { r.start(); } catch { rec = null; mic.classList.remove("on"); toast("Voice isn't available here — type it, or use your keyboard's mic.", null, "error"); }
   };
 }
 
@@ -484,7 +525,7 @@ async function openPass(path) {
   openPanel({ title: passKind(d).name, render: body, handle: async e => {
     if (e.target.closest('[data-act="pass-move"]')) {
       const box = o.querySelector(".pass-times");
-      box.innerHTML = `<span class="spinner"></span>`;
+      box.innerHTML = `${logo("live spinner")}`;
       const r = await api(`/api/engagements/${encodeURIComponent(pid)}/slots`).catch(err => ({ slots: [], error: err.message }));
       const label_ = sl => new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined });
       box.innerHTML = r.slots?.length ? r.slots.slice(0, 8).map(sl => `<button class="chip" data-act="pass-move-to" data-slot="${esc(sl.id)}">${esc(label_(sl))}</button>`).join("") : `<span class="small muted">${esc(r.error ?? "No other free times right now.")}</span>`;
@@ -563,10 +604,26 @@ async function previewCard(el = null) {
 }
 
 /** Your A2A agent card — how any agent finds and talks to yours — shown readably, with the JSON one tap away. */
+/**
+ * Install Collab as an app: the browser's own prompt where there is one (Chrome, Edge, Android); otherwise the steps for
+ * this device, since an iPhone never offers a prompt — Safari's Share › Add to Home Screen is the only way.
+ */
+async function installApp() {
+  if (standalone()) return toast("Collab is already installed — you're in the app.", null, "success");
+  if (session.install) { if (await session.install()) toast("Installed — open Collab from your home screen or apps.", null, "success"); return paint(); }
+  const ua = navigator.userAgent, iphone = ios(), android = /android/i.test(ua), crios = /crios|fxios|edgios/i.test(ua);
+  const share = `<svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v13"/><path d="m7 8 5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>`;
+  const steps = iphone ? [crios ? `Tap ${share} <b>Share</b> (top right in Chrome, or open this page in Safari)` : `Tap ${share} <b>Share</b> — in Safari it's under <b>⋯</b> at the bottom`, "Scroll and choose <b>Add to Home Screen</b>", "Keep <b>Open as Web App</b> on, then tap <b>Add</b>", "Open Collab from your home screen — notifications on iPhone only work there"]
+    : android ? ["Tap <b>⋮</b> at the top right of Chrome", "Choose <b>Install app</b> (or <b>Add to Home screen</b>)", "Tap <b>Install</b>, then open Collab from your home screen"]
+    : ["Click the install icon at the right of the address bar — or <b>⋮</b> › <b>Cast, save and share</b> › <b>Install page as app</b>", "Click <b>Install</b>", "Collab opens in its own window and in your apps"];
+  openPanel({ title: "Install Collab", html: `<div class="card install-card"><div class="row" style="gap:12px">${logo()}<div class="stack" style="gap:2px"><b>Collab on your ${iphone ? "iPhone" : android ? "phone" : "computer"}</b><span class="small muted">Opens like an app, works offline, and tells you when your agent needs you.</span></div></div>
+    <ol class="install-steps">${steps.map(x => `<li>${x}</li>`).join("")}</ol></div>` });
+}
+
 async function showAgentCard() {
   const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`, link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
   const [c, rec, facts] = await Promise.all([fetch(url).then(r => r.json()).catch(() => null),
-    fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null), cached("/api/facts").catch(() => [])]);
+    cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null), cached("/api/facts").catch(() => [])]);
   if (!c) return toast("Couldn't load your agent card.");
   // What any agent reading the card learns, said plainly: who, its record, what it can do, what's on offer, what it never says.
   const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
@@ -722,7 +779,7 @@ async function orderFromCard(a, el) {
         : "Sent. Nothing is final until you both confirm.", at: now(), cards: [{ type: "engagement", id: e.id }] });
     await saveSession(cur);
     session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
-    S.screen = "chat"; paint();
+    toChat(); paint();
   } catch (err) {
     toast(err.message, null, "error");
     // Stock or a time may have changed: show the card as it is now.
@@ -784,7 +841,7 @@ async function send(text, offerFactId = null) {
   const reply = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", cards: [] };
   cur.messages.push(user, reply);
   await saveSession(cur);
-  S.screen = "chat";
+  toChat();
   paint();
   try {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
@@ -816,6 +873,39 @@ const findCard = el => {
 // MARK: - Actions
 
 /**
+ * The divider between the chat and what's open beside it: drag (or arrow keys) to give either more room; double-click
+ * puts it back. The width is kept on this device.
+ */
+function startResizer() {
+  const app = $("#app"), bar = $("#resizer");
+  if (!app || !bar) return;
+  const KEY = "collab.panelWidth", min = 320;
+  const max = () => app.getBoundingClientRect().width - ($("#sidebar")?.getBoundingClientRect().width ?? 0) - 320;
+  const set = w => { const v = Math.round(Math.max(min, Math.min(max(), w))); app.style.setProperty("--panel-w", `${v}px`); return v; };
+  const save = v => { try { localStorage.setItem(KEY, String(v)); } catch { /* this session only */ } };
+  try { const kept = Number(localStorage.getItem(KEY)); if (kept > 0) app.style.setProperty("--panel-w", `${kept}px`); } catch { /* none kept */ }
+  bar.addEventListener("pointerdown", e => {
+    e.preventDefault(); bar.setPointerCapture(e.pointerId); app.classList.add("resizing");
+    const right = app.getBoundingClientRect().right;
+    const move = ev => set(right - ev.clientX);
+    const up = ev => { bar.releasePointerCapture(ev.pointerId); app.classList.remove("resizing"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up); save(set(right - ev.clientX)); };
+    bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up);
+  });
+  bar.addEventListener("keydown", e => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const now = $("#panel").getBoundingClientRect().width;
+    save(set(now + (e.key === "ArrowLeft" ? 32 : -32)));
+  });
+  bar.addEventListener("dblclick", () => { app.style.removeProperty("--panel-w"); try { localStorage.removeItem(KEY); } catch { /* none kept */ } });
+}
+
+/** Wide enough for the chat and a screen side by side (styles.css: below 900 px what's open covers the chat). */
+const sideBySide = () => matchMedia("(min-width: 900px)").matches;
+/** Show the chat: on a wide screen the screen beside it (Activity…) stays open; on a phone the chat takes over. */
+function toChat() { if (!sideBySide() || !screens[S.screen]) S.screen = "chat"; }
+
+/**
  * Where a notification, a shortcut or a link points: a conversation opens itself (in the side panel; the whole screen
  * on a phone), waiting for it to load if it just arrived; a person's card, Activity or a screen open as they are.
  */
@@ -830,7 +920,7 @@ async function openLink(link) {
 async function openEngagement(id) {
   for (let i = 0; i < 12 && !live.engagements.has(id); i++) { await refresh(openScreen).catch(() => {}); if (!live.engagements.has(id)) await new Promise(r => setTimeout(r, 700)); }
   if (!live.engagements.has(id)) return openScreen("requests");
-  if (S.screen !== "chat") { S.screen = "chat"; paint(); }
+  toChat();
   showEngagement(id);
 }
 
@@ -898,11 +988,14 @@ async function onClick(e) {
   const a = el.dataset.act;
   try {
     if (a === "nav") return $("#app").classList.toggle("nav-open");
+    // Anything chosen in the menu closes it (on a phone it covers the page).
+    if (el.closest(".sidebar")) $("#app")?.classList.remove("nav-open");
     if (a === "screen") return openScreen(el.dataset.screen);
     if (a === "intro-done") { try { localStorage.setItem("collab.intro", "done"); } catch {} return paint(); }
-    if (a === "install") { if (session.install && await session.install()) toast("Installed — open Collab from your home screen or apps."); return paint(); }
-    if (a === "new-chat") { S.current = null; return openScreen("chat"); }
-    if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
+    if (a === "install" || a === "install-app") return installApp();
+    // A new or earlier chat replaces the chat only — Activity (or whatever is open beside it) stays on a wide screen.
+    if (a === "new-chat") { S.current = null; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
+    if (a === "open-session") { S.current = el.dataset.id; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
@@ -1035,21 +1128,19 @@ async function onClick(e) {
       return;
     }
     if (a === "price-check") {
-      busy(el, true, "Checking sources");
-      const box = el.parentElement.querySelector("[data-price-result]");
+      // Kept by what was asked, so a repaint (a live update, another tap) never loses it; a second tap while it's
+      // searching does nothing.
+      const key = priceKey(el.dataset.item, el.dataset.area, el.dataset.unit || null);
+      if (priceChecks.get(key)?.state === "loading") return;
+      priceChecks.set(key, { state: "loading" }); paintContent(true);
       try {
         // The request card's title as edited, if it was.
         const r = await api("/api/price-check", { item: el.closest(".brief")?.querySelector('[data-edit="title"]')?.value.trim() || el.dataset.item, area: el.dataset.area, unit: el.dataset.unit || undefined });
-        const left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
-        box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
-          <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(s => `<a class="small" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
-          <span class="small faint">${esc(r.note)}</span><span class="small faint">Only you see this${left} · ${new Date(r.checkedAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>`;
-        // Google's search suggestions (required with grounded answers): its links open in a new tab — google.com
-        // refuses to load inside a frame.
-        if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = `<base target="_blank">${r.searchEntryPoint}`; frame.style.cssText = "width:100%;border:0;height:64px"; box.append(frame); }
+        priceChecks.set(key, { state: "done", r });
       } catch (err) {
-        box.innerHTML = `<div class="card slim"><span class="small">Couldn't get prices from the web right now${err.status === 503 ? " — Google Search didn't answer in time" : ""}. Try again in a minute.</span></div>`;
-      } finally { busy(el, false); }
+        priceChecks.set(key, { state: "error", message: err.status === 429 ? err.message : `Couldn't get prices from the web right now${err.status === 503 ? " — Google Search didn't answer in time" : ""}. Try again in a minute.` });
+      }
+      paintContent(true);
       loadPolicy();
       return;
     }
@@ -1135,6 +1226,7 @@ async function onClick(e) {
 }
 
 async function cardAction(a, el, { s, m, c }) {
+  if (a === "saved-tiers") { c.showTiers = true; await saveSession(s); return paint(); }
   // The owner chose to have Gemini answer this one question from the notes shown (nothing else is sent).
   if (a === "notes-cloud") {
     busy(el, true, "Asking");
@@ -1199,7 +1291,8 @@ async function cardAction(a, el, { s, m, c }) {
     }
   }
   if (a === "brief-send") {
-    if (c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Send as it is”.");
+    // Searching with questions still open is fine: the agents ask what they need.
+    if (c.gate && !c.gate.ok) c.gateOverride = true;
     // The answers tapped for this request are kept (Private), and filled in the next time they're asked.
     rememberAll(c.answered ?? [], d.shared?.title ?? null);
     busy(el, true, "Searching");
@@ -1216,12 +1309,33 @@ async function cardAction(a, el, { s, m, c }) {
       for (const x of es) live.engagements.set(x.id, x);
       m.cards.push({ type: "discovery", briefId: r.brief.id, engaged: c.engaged, found: c.found, title: d.shared?.title ?? "" });
       session.track("agents_contacted", { count: es.length, category: d.need?.category ?? "none", auto: true });
-      m.text = `Your agent is talking to ${es.length === 1 ? "1 agent" : `${es.length} agents`} — it comes to you only for a decision.`;
+      m.text = `I'm talking to ${es.length === 1 ? "1 agent" : `${es.length} agents`} now — I'll come to you only when there's a decision.`;
       await saveSession(s); paint();
       for (const x of es) run(x.id);
       return;
     }
-    m.text = "";
+    // Nothing fits exactly: the closest listings come with the reply, and Google Maps is asked at once (no extra tap).
+    c.closest = r.closest ?? [];
+    m.text = c.closest.length ? "No exact match yet — here's what's closest, and what I found nearby on Google Maps." : "No match on Collab yet — I'm checking Google Maps nearby.";
+    c.nearby = { loading: true };
+    await saveSession(s); paint();
+    const near = await api("/api/nearby", { item: d.shared.title, area: d.shared.area ?? "" }).catch(() => null);
+    const now_ = findCard(el) ?? { c, s };
+    now_.c.nearby = near ? { places: near.places ?? [], note: near.note } : { places: [], note: "" };
+    await saveSession(now_.s); paint();
+    return;
+  }
+  if (a === "closest-ask") {
+    // The owner chose to have their agent ask one of the closest listings anyway.
+    const f = c.closest?.[Number(el.dataset.j)];
+    if (!f) return;
+    busy(el, true, "Contacting");
+    const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: [{ factId: f.fact.id }] });
+    (c.askedClosest ??= {})[Number(el.dataset.j)] = true;
+    for (const x of es) { live.engagements.set(x.id, x); m.cards.push({ type: "discovery", briefId: c.briefId, engaged: [x.id], found: [], title: f.fact.offer?.title?.split(" · ")[0] ?? "" }); }
+    await saveSession(s); paint();
+    for (const x of es) run(x.id);
+    return;
   }
   if (a === "disc-more") {
     // The other good matches, contacted too.
@@ -1394,9 +1508,9 @@ async function publicIntake(text, noteId = null, photo = null) {
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 List this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "List this from a photo" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
-  S.screen = "chat"; paint();
+  toChat(); paint();
   return true;
 }
 
@@ -1497,6 +1611,8 @@ let version = null;
 readVersion().then(v => { version = v; });
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden) return;
+  // Coming back to the app (an installed one is often resumed, not restarted): look for a new deployment first.
+  navigator.serviceWorker?.getRegistration?.().then(r => r?.update()).catch(() => {});
   const v = await readVersion();
   if (shouldReload(version, v, !!document.querySelector("input:focus, textarea:focus"))) location.reload();
 });
@@ -1510,7 +1626,11 @@ addEventListener("collab-push", e => {
 navigator.serviceWorker?.addEventListener("message", e => {
   // A notification tapped while Collab is open: go there, without a reload.
   if (e.data?.type === "collab-open") { openLink(e.data.link); return; }
-  if (e.data?.type === "collab-updated") notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
+  // A new deployment took over: reload into it now, unless the owner is in the middle of typing.
+  if (e.data?.type === "collab-updated") {
+    if (!document.querySelector("input:focus, textarea:focus")) location.reload();
+    else notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
+  }
 });
 
 // Started last, once everything above is defined.
@@ -1530,6 +1650,10 @@ if (!S.profile) await setup();
 setOwner(session.uid);
 await boot();
 timing("app");
+// A screen drawn from what was kept repaints when the server's answer differs.
+onFreshRead(() => paintContent(true));
+// On a wide screen, what your agents are doing (Activity) sits beside the chat from the start.
+if (sideBySide() && S.screen === "chat") { S.screen = "requests"; paint(); }
 // Links from notifications, the installed app's shortcuts and QR codes open the right place.
 {
   const qp = new URLSearchParams(location.search);
