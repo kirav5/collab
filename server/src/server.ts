@@ -48,7 +48,7 @@ import { expireDecisions } from "./core/decisions.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
-import { checkPrice, PriceCheckError, PRICE_CHECKS, quotaStatus } from "./core/price-check.ts";
+import { checkPrice, PriceCheckError, PRICE_CHECKS, priceEvidence, priceUnit, quotaStatus } from "./core/price-check.ts";
 import { appCheckDecision, appCheckMode, appCheckOutcome, appCheckRequired, freeUnverified, instanceBucket, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
@@ -967,11 +967,31 @@ app.post("/api/offers/draft", route(async req => {
   return { offer: { ...o, details: publicText }, floor, publicText, missing, gate };
 }));
 
+// What others charge for this kind of thing near here, for the price a seller is about to set: Google-grounded
+// asking prices (the same evidence as a fair-price check), cached a day per item and area so making a listing doesn't
+// spend a search each time. Without grounded search the card just asks for the price.
+const PRICE_HINTS = "price_hints";
+app.post("/api/offers/price-hints", route(async req => {
+  const item = text(req.body?.item, 200).trim(), area = text(req.body?.area, 120).trim(), per = priceUnit(req.body?.unit);
+  if (!item) throw new HttpError(400, "Describe the offering first.");
+  if (!policy().features.priceCheck || !model?.grounded) return { status: "unavailable" };
+  const key = `${item}|${area}|${per}`.toLowerCase().replace(/[^\p{L}\p{N}|]+/gu, "-").slice(0, 300);
+  const cached = (await db.get(PRICE_HINTS, key)) as any;
+  if (cached && cached.checkedAt > now() - 86_400) return cached;
+  await spend(req.uid, 2);
+  const g = await model.grounded(item, area, per);
+  if (!g) return { status: "unavailable" };
+  const e = priceEvidence(g, per);
+  const out = { status: e.status, low: e.low, typical: e.typical, high: e.high, unit: e.unit, sources: e.sources.slice(0, 4), note: e.note, checkedAt: now(), expireAt: new Date((now() + 2 * 86_400) * 1000) };
+  await db.set(PRICE_HINTS, key, out);
+  return out;
+}));
+
 // Terms a seller might state, suggested for their kind of offering — returned for them to edit; nothing is saved here.
 app.post("/api/terms/suggest", route(async req => {
   await spend(req.uid, 2);
   const out = await suggestTerms(model, text(req.body?.category, 40), text(req.body?.text, 600));
-  return { terms: out.terms, byModel: out.byModel, grounded: out.grounded };
+  return { terms: out.terms, starters: out.starters, byModel: out.byModel, grounded: out.grounded };
 }));
 
 /** Words that only ever mean a floor ("minimum" or "at least" can mean a quantity). */

@@ -205,6 +205,10 @@ function paintTop() {
 
 let painting = false, lastHTML = "";
 let again = null;
+// A live repaint while a finger or mouse is down would replace the button being pressed, and the tap would be lost.
+let pointerDown = false, afterPointer = false;
+document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
+for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { pointerDown = false; if (afterPointer) { afterPointer = false; setTimeout(() => paintContent(true), 0); } }, true);
 /** Motion that means something: a new message or card rises in, one that changed (a counter, a payment) flashes once,
  *  and a screen opens in a short stagger. Live refreshes never replay animations; Settings › Appearance turns it off. */
 const seenAnim = new Map();
@@ -225,8 +229,9 @@ async function paintContent(soft = false) {
   if (!el) return;
   // One paint at a time; a paint asked for meanwhile runs right after (a hard one wins over a soft one).
   if (painting) { again = again === false ? false : soft; return; }
-  // A live refresh never rewrites what the owner is typing.
+  // A live refresh never rewrites what the owner is typing, nor what's under a pressed pointer.
   if (soft && el.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (soft && pointerDown) { afterPointer = true; return; }
   painting = true;
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
@@ -261,6 +266,7 @@ async function chatHTML() {
   }
   // Matches: "Fits you" reasons come from the private notes kept on this device, read here and never sent anywhere.
   if (cur.messages.some(m => m.cards?.some(c => c.type === "brief" && c.step === "matches"))) setNotesHere(await cachedNotes());
+  for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "offer" && c.basics && !c.offer) priceHintsFor(c, cur);
   return cur.messages.map(messageHTML).join("");
 }
 
@@ -699,8 +705,9 @@ function onEdit(e) {
   }
   if (e.type === "change") {
     saveSession(f.s);
-    // A ticked box keeps focus, and a repaint never rewrites a focused field: let go of it so the card updates.
-    if (k === "autonomy" || f.c.type === "offer") { if (el.type === "checkbox") el.blur(); paintContent(true); }
+    // A ticked box or a picked option changes what the card shows: let go of it and repaint. A text field doesn't —
+    // its value is already on the card — and repainting as it loses focus would swallow the tap that moved focus.
+    if (k === "autonomy" || (f.c.type === "offer" && /checkbox|radio|select-one/.test(el.type))) { el.blur(); paintContent(true); }
   }
 }
 
@@ -1027,6 +1034,9 @@ async function cardAction(a, el, { s, m, c }) {
     if (a === "match-addons") for (const x of es) api(`/api/engagements/${x.id}/ask`, { text: "What add-ons or extras do you offer, and what does each cost?" }).then(e => { live.engagements.set(e.id, e); paint(); }).catch(() => {});
     return;
   }
+  if (a === "hours-preset") { const h = (c.hours ??= defaultHours(c.offer)); h.days = el.dataset.days.split(",").map(Number).sort((x, y) => x - y); h.from = el.dataset.from; h.to = el.dataset.to; }
+  if (a === "offer-price-pick") { c.basicPrice = el.dataset.val === "other" ? "" : el.dataset.val; c.priceOther = el.dataset.val === "other"; }
+  if (a === "offer-ask-other") { (c.missingOther ??= {})[el.dataset.key] = true; }
   if (a === "offer-ask-pick") {
     (c.missingAnswers ??= {})[el.dataset.key] = c.missingAnswers[el.dataset.key] === el.dataset.val ? "" : el.dataset.val;
     c.answeredMissing = (c.missing ?? []).every(x => (c.missingAnswers[x.label] ?? "").trim());
@@ -1049,11 +1059,12 @@ async function cardAction(a, el, { s, m, c }) {
     Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, floor: d.floor ?? c.floor ?? null, basics: null, gate: d.gate ?? null });
     c.insights = await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []);
   }
-  if (a === "offer-suggest-terms") {
-    busy(el, true, "Suggesting");
-    const r = await api("/api/terms/suggest", { category: c.offer?.category ?? "", text: c.publicText ?? c.text }).catch(err => { toast(err.message); return null; });
-    if (r?.terms.length) c.terms = r.terms;
-    else if (r) toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own.");
+  if (a === "offer-suggest-terms") { busy(el, true, "Suggesting"); await suggestTermsFor(c); }
+  // A common term for this kind of offering, tapped in; "Add all" takes the rest.
+  if (a === "offer-term-add") {
+    const picks = el.dataset.j === "all" ? c.starters ?? [] : [c.starters?.[Number(el.dataset.j)]].filter(Boolean);
+    c.terms = [...(c.terms ?? []), ...picks.map(t => ({ ...t, sources: [] }))];
+    c.starters = (c.starters ?? []).filter(t => !picks.includes(t));
   }
   if (a === "offer-publish") {
     if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
@@ -1085,12 +1096,40 @@ async function cardAction(a, el, { s, m, c }) {
     c.step = "published"; c.publicText = fact.text;
   }
   // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
-  if (a === "offer-improve") c.improve = c.improve === el.dataset.k ? null : el.dataset.k;
+  if (a === "offer-improve") {
+    c.improve = c.improve === el.dataset.k ? null : el.dataset.k;
+    // Terms open with suggestions already there, so there's something to tap rather than a blank form.
+    if (c.improve === "terms" && !c.terms?.length && !c.starters?.length && !c.termsAsked) { c.termsAsked = true; busy(el, true, "Suggesting"); await suggestTermsFor(c); }
+  }
   // Making a note public goes through the offering card when it's something offered.
   if (a === "tier" && el.dataset.tier === "public" && c.fact && c.fact.tier !== "public") { busy(el, true, "Reading"); if (await publicIntake(c.fact.text, c.fact.id)) return; }
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
   await saveSession(s);
   paint();
+}
+
+/** Terms for this listing: Gemini's (web-grounded when it can), plus the common ones for this kind of offering to tap in. */
+async function suggestTermsFor(c) {
+  const r = await api("/api/terms/suggest", { category: c.offer?.category ?? c.basics?.category ?? "", text: c.publicText ?? c.text }).catch(err => { toast(err.message); return null; });
+  if (!r) return;
+  if (r.terms.length) c.terms = [...(c.terms ?? []).filter(t => t.label.trim() || t.text.trim()), ...r.terms];
+  const have = new Set((c.terms ?? []).map(t => t.label.trim().toLowerCase()));
+  c.starters = (r.starters ?? []).filter(t => !have.has(t.label.toLowerCase()));
+  if (!r.terms.length && !c.starters.length) toast("Couldn't suggest terms just now — write your own.");
+}
+
+/**
+ * What others charge for this kind of thing near here, asked once per card as soon as the card asks for a price;
+ * the typical figure is filled in and low / typical / high become buttons. Nothing stops the seller typing their own.
+ */
+const hintsAsked = new WeakSet();
+function priceHintsFor(c, s) {
+  if (!c.basics || c.priceHints !== undefined || hintsAsked.has(c)) return;
+  hintsAsked.add(c); c.priceHints = null;
+  api("/api/offers/price-hints", { item: c.publicText ?? c.text, area: c.basicArea ?? c.basics.area ?? "", unit: c.basics.unit ?? undefined })
+    .then(h => { c.priceHints = h?.status === "evidence" ? h : { status: h?.status ?? "unavailable" }; if (c.priceHints.typical && !c.basicPrice) c.basicPrice = String(c.priceHints.typical); })
+    .catch(() => { c.priceHints = { status: "unavailable" }; })
+    .then(() => { saveSession(s); paintContent(true); });
 }
 
 /**

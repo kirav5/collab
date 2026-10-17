@@ -250,12 +250,17 @@ export function hoursText(h) {
   return `Open ${h.days.length === 7 ? "every day" : runs.join(", ")}, ${h.from}–${h.to}`;
 }
 
+/** One-tap weekly hours; the days and times below can still be changed one by one. */
+const HOUR_PRESETS = [["Weekdays 10–7", [1, 2, 3, 4, 5], "10:00", "19:00"], ["Mon–Sat 10–7", [1, 2, 3, 4, 5, 6], "10:00", "19:00"], ["Evenings 5–9", [1, 2, 3, 4, 5], "17:00", "21:00"], ["Weekends 9–6", [6, 0], "09:00", "18:00"], ["Every day 9–9", [0, 1, 2, 3, 4, 5, 6], "09:00", "21:00"]];
+const sameHours = (h, days, from, to) => h.from === from && h.to === to && h.days.length === days.length && days.every(d => h.days.includes(d));
+
 /** Weekly hours on the offering card: stated once, bookable times are made from them and refill as days pass. */
 function hoursPick(c, at) {
   const h = c.hours ?? defaultHours(c.offer);
   return `<div class="stack" style="gap:6px">${label("When buyers can book", "sq")}
     <label class="row small" style="gap:6px"><input type="checkbox" data-edit="hours-on" ${at} ${c.hoursOn ? "checked" : ""}> Let buyers pick a free time in my weekly hours</label>
-    ${c.hoursOn ? `<div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip ${h.days.includes(d) ? "on" : ""}"><input type="checkbox" data-edit="hours-day" data-day="${d}" ${at} ${h.days.includes(d) ? "checked" : ""} style="display:none">${DAY[d]}</label>`).join("")}</div>
+    ${c.hoursOn ? `<div class="row" style="gap:6px">${HOUR_PRESETS.map(([name, days, from, to]) => `<button class="chip ${sameHours(h, days, from, to) ? "on" : ""}" data-act="hours-preset" data-days="${days.join(",")}" data-from="${from}" data-to="${to}" ${at}>${name}</button>`).join("")}</div>
+      <div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip ${h.days.includes(d) ? "on" : ""}"><input type="checkbox" data-edit="hours-day" data-day="${d}" ${at} ${h.days.includes(d) ? "checked" : ""} style="display:none">${DAY[d]}</label>`).join("")}</div>
       <div class="row small"><input class="field compact" type="time" data-edit="hours-from" ${at} value="${esc(h.from)}" style="max-width:120px" aria-label="Opens"><span>to</span><input class="field compact" type="time" data-edit="hours-to" ${at} value="${esc(h.to)}" style="max-width:120px" aria-label="Closes">
         <input class="field compact" type="number" min="10" max="480" step="5" data-edit="hours-minutes" ${at} value="${h.minutes}" style="max-width:80px" aria-label="Minutes per booking"><span>minutes each</span></div>
       <span class="small ${hoursOk(h) ? "faint" : ""}" ${hoursOk(h) ? "" : 'style="color:var(--danger)"'}>${hoursOk(h) ? `${esc(hoursText(h))}. Free times are made two weeks ahead and refill as days pass; booked times hold. Change them anytime in About me.` : "Pick at least one day, and leave room for one booking between opening and closing."}</span>` : ""}
@@ -276,19 +281,42 @@ function offerCard(c, at) {
     ${label("What the directory shows (public)")}
     <textarea class="field" data-edit="publicText" ${at} rows="3">${esc(c.publicText ?? c.text)}</textarea>
     ${!o && c.basics ? `<div class="card peri slim">${label("To list it", "peri")}
-      <div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Your price</span><span>₹</span><input class="field compact" type="number" min="1" data-edit="basic-price" ${at} value="${esc(c.basicPrice ?? "")}" placeholder="e.g. 500" style="max-width:140px">${c.basics.unit ? `<span class="faint">per ${esc(c.basics.unit)}</span>` : ""}</div>
+      ${pricePick(c, at)}
       <div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Where</span><input class="field" data-edit="basic-area" ${at} value="${esc(c.basicArea ?? c.basics.area ?? "")}" placeholder="Your area, or Online"></div>
       <span class="small faint">The lowest you'd accept comes next, and stays private.</span></div>` : ""}
-    ${c.missing?.length && !o && c.basics ? `<div class="stack" style="gap:8px">${label("Common buyer questions · Public", "sq")}${c.missing.map(m => {
-      const ans = c.missingAnswers?.[m.label] ?? "";
-      return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
-        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
-        <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
-    }).join("")}</div>` : ""}
+    ${c.missing?.length && !o && c.basics ? `<div class="stack" style="gap:8px">${label("Common buyer questions · Public", "sq")}${c.missing.map(m => askRow(c, m, at)).join("")}</div>` : ""}
     ${o ? offerEssentials(c, at) : ""}
     ${!o && c.basics ? `<div class="row"><button class="btn accent" data-act="offer-basics" ${at}>Make the listing</button><button class="btn quiet compact" data-act="offer-publish" ${at}>Publish as a plain note</button></div>`
       : `<div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><span class="small faint">Public: discoverable by anyone's agent.</span></div>${o ? offerImprovements(c, at) : ""}`}
   </div>`;
+}
+
+/**
+ * The price: what others charge for this near here (Google-grounded asking prices, the same evidence as a fair-price
+ * check) as low / typical / high buttons, the typical one filled in; "Other" opens a number field. While that's being
+ * looked up, or when it can't be, the field is there on its own.
+ */
+function pricePick(c, at) {
+  const h = c.priceHints, per = c.basics.unit ? `<span class="faint">per ${esc(c.basics.unit)}</span>` : "";
+  const picked = String(c.basicPrice ?? "");
+  const field = `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Your price</span><span>₹</span><input class="field compact" type="number" min="1" data-edit="basic-price" ${at} value="${esc(picked)}" placeholder="e.g. 500" style="max-width:140px">${per}</div>`;
+  if (h === null) return `${field}<span class="small faint"><span class="spinner"></span> Checking what others charge near you…</span>`;
+  if (!h?.typical) return field;
+  const opts = [...new Set([h.low, h.typical, h.high].filter(Boolean))].map(v => [v, v === h.low && v !== h.typical ? "low" : v === h.high && v !== h.typical ? "high" : "typical"]);
+  const other = c.priceOther || (picked && !opts.some(([v]) => String(v) === picked));
+  return `<div class="stack" style="gap:6px"><div class="row small" style="flex-wrap:nowrap;align-items:flex-start"><span style="min-width:110px;padding-top:6px">Your price</span>
+      <div class="row" style="gap:6px">${opts.map(([v, k]) => `<button class="chip ${!other && picked === String(v) ? "on" : ""}" data-act="offer-price-pick" data-val="${v}" ${at}><b>${money(v)}</b> <span class="faint">${k}${c.basics.unit ? ` / ${esc(c.basics.unit)}` : ""}</span></button>`).join("")}<button class="chip ${other ? "on" : ""}" data-act="offer-price-pick" data-val="other" ${at}>Other…</button></div></div>
+    ${other ? field : ""}
+    <span class="small faint">What others near you ask, from the web${h.sources?.length ? `: ${h.sources.slice(0, 2).map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}` : ""}. Asking prices, not a fair-price promise.</span></div>`;
+}
+
+/** A common question's answer: tap an option; "Other…" opens a field for your own words. */
+function askRow(c, m, at) {
+  const ans = c.missingAnswers?.[m.label] ?? "";
+  const own = !!c.missingOther?.[m.label] || (ans && !(m.options ?? []).includes(ans));
+  return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
+    ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}<button class="chip ${own ? "on" : ""}" data-act="offer-ask-other" data-key="${esc(m.label)}" ${at}>Other…</button></div>` : ""}
+    ${own || !m.options?.length ? `<input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(own ? ans : "")}" placeholder="${m.options?.length ? "In your own words" : esc(m.ask)}">` : ""}</div>`;
 }
 
 /** What a listing needs to go live without you: the lowest you'd take (private), and how many you have or your hours. */
@@ -317,16 +345,12 @@ function offerImprovements(c, at) {
   ].filter(p => p[3]);
   const open = c.improve;
   const body = {
-    questions: () => `<div class="stack" style="gap:8px">${c.missing.map(m => {
-      const ans = c.missingAnswers?.[m.label] ?? "";
-      return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
-        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
-        <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
-    }).join("")}<span class="small faint">Public — answered once, so buyers' agents don't ask you.</span></div>`,
+    questions: () => `<div class="stack" style="gap:8px">${c.missing.map(m => askRow(c, m, at)).join("")}<span class="small faint">Public — answered once, so buyers' agents don't ask you.</span></div>`,
     terms: () => `<div class="stack" style="gap:6px"><span class="small muted">Shown on your card and in every receipt. Edit or clear any.</span>
       ${(c.terms ?? []).map((t, j) => `<div class="row small" style="flex-wrap:nowrap"><input class="field compact" data-term-label data-edit="term-label" data-j="${j}" ${at} value="${esc(t.label)}" style="max-width:130px" aria-label="Term"><input class="field" data-term-text data-edit="term-text" data-j="${j}" ${at} value="${esc(t.text)}" aria-label="${esc(t.label)}"></div>
         ${t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""}`).join("")}
-      <div class="row"><button class="btn secondary compact" data-act="offer-suggest-terms" ${at}>${c.terms?.length ? "Suggest again" : "Suggest terms for this offering"}</button></div></div>`,
+      ${c.starters?.length ? `<span class="small faint">Common for ${esc(o.category.replace(/-/g, " "))} — tap to add:</span><div class="row" style="gap:6px">${c.starters.map((t, j) => `<button class="chip" data-act="offer-term-add" data-j="${j}" ${at} title="${esc(t.text)}">+ ${esc(t.label)}</button>`).join("")}${c.starters.length > 1 ? `<button class="chip" data-act="offer-term-add" data-j="all" ${at}>Add all</button>` : ""}</div>` : ""}
+      <div class="row"><button class="btn secondary compact" data-act="offer-suggest-terms" ${at}>${c.terms?.length || c.starters?.length ? "Suggest again" : "Suggest terms for this offering"}</button></div></div>`,
     agent: () => `<div class="stack" style="gap:6px">${autonomyPick(c)}
       <div class="row"><input class="field" style="flex:1;min-width:220px" data-edit="rulesText" ${at} value="${esc(c.rulesText ?? "")}" placeholder="Or in your words: never below ₹400, max 10 per buyer, close yourself above ₹420">
         <button class="btn secondary compact" data-act="offer-rules-read" ${at}>Read my rules</button></div>

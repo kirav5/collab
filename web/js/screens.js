@@ -221,8 +221,17 @@ export const screens = {
           <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div></details>`;
         return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${hoursForm}${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
           <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div>
-          ${connected(r) || `<div class="row small"><input class="field" type="url" placeholder="Calendar iCal URL (https)" data-ical="${esc(r.id)}"><button class="btn quiet compact" data-act="conn-ical" data-id="${esc(r.id)}">Connect calendar</button></div><span class="faint small">Only busy times are read — event titles stay with your calendar.</span>`}</div>`;
+          ${connected(r) || calendarLink(r.id)}</div>`;
       };
+      // Linking a calendar so its busy times block bookings. Google, Apple and Outlook calendars all give a private
+      // iCal address; Google's is the "Secret address in iCal format" under the calendar's settings.
+      const calendarLink = rid => `<details class="more" data-cal-link="${esc(rid)}"><summary><b>Link Google Calendar</b> <span class="faint">or any calendar — busy times then block bookings</span></summary>
+          <ol class="small stack" style="gap:4px;margin:6px 0 0;padding-left:18px">
+            <li>Open <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener noreferrer">Google Calendar settings</a> and pick the calendar you use for work.</li>
+            <li>Under <b>Integrate calendar</b>, copy the <b>Secret address in iCal format</b>.</li>
+            <li>Paste it here.</li></ol>
+          <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link calendar</button></div>
+          <span class="faint small">Only busy times are read — event titles and guests stay with your calendar. Unlink any time.</span></details>`;
       // The seller's own terms for an offering, and instant booking: their words, a row to add one, and Gemini's
       // suggestions for this listing on request. No headings or examples are put in front of them.
       // The seller's rules for their agent, in their words: what's in force, and a box to change them.
@@ -348,9 +357,11 @@ export const screens = {
       if (a === "copy") { try { await navigator.clipboard.writeText(el.dataset.value); h.toast("Copied."); } catch { h.toast("Couldn't copy — select it under “For your developer”."); } return true; }
       if (a === "conn-ical") {
         const url = document.querySelector(`[data-ical="${CSS.escape(el.dataset.id)}"]`)?.value.trim();
-        if (!url) { h.toast("Paste your calendar's iCal (https) address."); return true; }
+        if (!url) { h.toast("Paste your calendar's secret iCal address first (step 2 above)."); return true; }
+        // Google's public address only works for calendars made public; the secret one carries "/private-".
+        if (/calendar\.google\.com/.test(url) && !/\/private-/.test(url)) { h.toast("That's the public address. Copy the “Secret address in iCal format” instead — it's a bit lower on the same settings page."); return true; }
         busy(el, true);
-        try { const r = await api("/api/connectors", { provider: "ical", resourceId: el.dataset.id, url }); h.toast(r.grant.status === "degraded" ? `Connected, but the feed couldn't be read: ${r.grant.lastError}` : "Calendar connected — busy times now block slots."); }
+        try { const r = await api("/api/connectors", { provider: "ical", resourceId: el.dataset.id, url }); h.toast(r.grant.status === "degraded" ? `Connected, but the feed couldn't be read: ${r.grant.lastError}` : "Calendar linked — your busy times now block bookings."); }
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
