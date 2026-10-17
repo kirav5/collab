@@ -14,6 +14,7 @@ import { ClientFactory, JsonRpcTransportFactory, type Client } from "@a2a-js/sdk
 import type { Model } from "../ai/gemini.ts";
 import type { Docs } from "../docs.ts";
 import { moneyText } from "../market/types.ts";
+import { rolesFor } from "../market/roles.ts";
 import type { Engagement, Fact, Profile } from "../core/model.ts";
 import { FACTS, PROFILES } from "../core/policy.ts";
 import { byHandle, chooseOffering } from "../core/directory.ts";
@@ -193,14 +194,20 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
 
 // MARK: - Messages
 
+const cap = (w: string) => w[0].toUpperCase() + w.slice(1);
 const textOf = (t: Turn): string => {
   const parts: string[] = [];
-  if (t.brief) parts.push(`Request: ${t.brief.title}. ${t.brief.summary}${t.brief.budget ? ` Budget ${t.brief.budget}.` : ""}`);
+  if (t.intro) parts.push(t.intro);
+  // The intro already carries the summary. A band "from ₹X" is the least a paid requester takes (a salary), not a budget.
+  const band = t.brief?.budget ? ` ${/^from /.test(t.brief.budget) ? cap(rolesFor(t.brief.category).price) : "Budget"} ${t.brief.budget}.` : "";
+  if (t.brief) parts.push(`Request: ${t.brief.title}.${t.intro ? "" : ` ${t.brief.summary}`}${band}`);
   for (const q of t.questions ?? []) parts.push(`Question: ${q.question}`);
   for (const a of t.answers ?? []) parts.push(`${a.question} — ${a.answer}`);
   for (const p of t.pending ?? []) parts.push(`(checking with the owner: ${p})`);
   if (t.proposal) parts.push(`Offer: ${moneyText({ amount: t.proposal.price, currency: "INR" })}${t.note ? ` — ${t.note}` : ""}`);
   if (t.accept) parts.push(t.note ?? "Accepted.");
+  if (t.offerLetter) { const l = t.offerLetter;
+    parts.push(`Offer letter (${l.status}): ${l.role} · ${moneyText({ amount: l.salary, currency: l.currency ?? "INR", period: l.unit })} · starts ${l.start} · open until ${l.validUntil}${l.mode ? ` · ${l.mode}` : ""}${l.probation ? ` · probation: ${l.probation}` : ""}${l.notice ? ` · notice: ${l.notice}` : ""}.`); }
   if (t.confirm) parts.push("Confirmed by the owner.");
   if (t.decline) parts.push(t.decline);
   return parts.join("\n") || "…";
@@ -266,7 +273,8 @@ function executorFor(cfg: A2AConfig, provider: Profile): AgentExecutor {
           provider: { uid: provider.uid, handle: provider.handle, name: provider.name },
           offer: offerFact?.owner === provider.uid && offerFact.offer
             ? { factId: offerFact.id, title: offerFact.offer.title, price: offerFact.offer.price.amount, unit: offerFact.offer.price.period ?? null, category: offerFact.offer.category }
-            : { factId: offerFact?.owner === provider.uid ? offerFact.id : null, title: t.brief.title, price: null, unit: null, category: t.brief.category || null } });
+            : { factId: offerFact?.owner === provider.uid ? offerFact.id : null, title: t.brief.title, price: null, unit: null, category: t.brief.category || null },
+          ownerPays: offerFact?.owner === provider.uid && !!offerFact.offer?.ownerPays });
         e.events.push({ at: Math.floor(Date.now() / 1000), who: "system", text: `${e.requester.name}'s agent sent a request over A2A.` });
         void pushTo(provider.uid, `New request: ${(e.offer.title || e.title).split(" · ")[0].slice(0, 50)}`, `${e.requester.name}'s agent is asking. Yours is replying.`, `/?engagement=${e.id}`);
       }

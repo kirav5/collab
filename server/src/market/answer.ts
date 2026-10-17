@@ -31,7 +31,8 @@ export function offerFacts(o: Offer, saved: Record<string, { question: string; a
 
 const normal = (s: string) => s.toLowerCase().replace(/,/g, "").split(/\s+/).filter(Boolean).join(" ");
 
-interface AnswerInput { question: string; facts: Fact[]; side: "seller" | "buyer" }
+/** `side`: what the owner is called in this conversation (the seller, the employer, the candidate…). */
+interface AnswerInput { question: string; facts: Fact[]; side: string }
 export type AnswerDecision = { action: "answer"; text: string; evidence: string[] } | { action: "ask_owner" };
 
 export const AnswerTask: Task<AnswerInput, AnswerDecision> = {

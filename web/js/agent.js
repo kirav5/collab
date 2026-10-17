@@ -12,6 +12,7 @@ import { live, onChange, poke } from "./live.js";
 import { MODEL, detectGemma, downloadGemma, gemma, generate } from "./gemma.js";
 import { askMyDevices, hosts, refreshServing, setAnswerer } from "./mydevices.js";
 import { saveNote } from "./outbox.js";
+import { limitPast, listingRoles } from "./roles.js";
 
 // The on-device engine's state, shown in Settings › AI engine. `here` = Gemma is downloaded on this device.
 // `mode` is where private-note questions may be answered (processing.js): "device-only", "my-devices" (default), "cloud".
@@ -138,8 +139,11 @@ export async function chat(text, recent, area, open = null) {
       // No place in this line: what was said just before ("I'm going to Delhi…") usually has it.
       if (!d.draft && recent.length) d = await api("/api/briefs/draft", { text: `${recent.slice(-2).join(". ")}. ${text}`, here: area }).catch(() => d);
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [], askArea: /area/i.test(d.problem ?? "") ? text : null };
+      // A profile shared on an earlier request starts filled in (the owner can change any of it before sending).
+      if (d.draft.profile) d.draft.shared.about = d.draft.profile.filter(q => q.answer).map(q => ({ label: q.label, value: q.answer }));
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
-      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before others' agents can act on this — tap what fits, or send it as it is." : "Here's what your agent will ask for. Adjust it, then send.",
+      return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before others' agents can act on this — tap what fits, or send it as it is."
+          : d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send." : "Here's what your agent will ask for. Adjust it, then send.",
         cards: [{ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" }] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
@@ -177,14 +181,14 @@ export async function chat(text, recent, area, open = null) {
  */
 export function autonomyOf(c) {
   if (c.autonomy !== undefined && c.autonomy !== null) return c.autonomy;
-  const limited = c.type === "offer" ? c.offer && c.floor != null && c.floor < c.offer.price.amount : !!c.draft?.mandate;
+  const limited = c.type === "offer" ? limitPast(c) : !!c.draft?.mandate;
   return limited ? "negotiate" : "";
 }
 
 export async function offerReply(text, d, extra = {}) {
   const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []) : [];
   const said = d.offer ? "Here's your listing. Answer what you can — your agent handles those questions for you."
-    : d.basics ? `Looks like ${d.basics.label.toLowerCase()}. Add a price and area to list it.`
+    : d.basics ? (L => `Looks like ${d.basics.label.toLowerCase()}. Add your ${L.price} and area to list it — the questions below are what ${L.responders} usually ask.`)(listingRoles({ category: d.basics.category, ownerPays: d.ownerPays }))
     : "This will be a public note others' agents can find.";
   // A count stated in the words ("4 available") starts the stock, so it doesn't have to be typed again.
   const stated = Number(d.offer?.attributes?.quantity);
@@ -199,7 +203,7 @@ export async function offerReply(text, d, extra = {}) {
     const last = x => x.split(" ").at(-1), l = norm(m.label), hit = known.find(([k]) => k && (l === k || last(l) === last(k)));
     if (hit) missingAnswers[m.label] = m.options?.find(o => norm(o) === norm(hit[1])) ?? hit[1];
   }
-  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review",
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review",
     ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}),
     ...(Object.keys(missingAnswers).length ? { missingAnswers, answeredMissing: (d.missing ?? []).every(m => missingAnswers[m.label]) } : {}), ...extra }] };
 }

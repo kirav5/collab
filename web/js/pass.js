@@ -30,7 +30,7 @@ export function passHTML(d, { qr = "", seller = false, link = "", manage = false
     <div class="pass-top"><span class="label sq ink">${k.name}</span>${state}</div>
     ${qr && !d.collectedAt && !d.cancelled ? `<div class="pass-qr" aria-label="${esc(k.name)} QR code">${qr}</div>` : ""}
     <div class="pass-item"><b>${esc(item)}</b><span class="pass-amount">${rupees(d.amount)}</span></div>
-    <dl class="pass-kv"><dt>Payment</dt><dd>${esc(paid)}${demo}</dd>${d.slot ? `<dt>Time</dt><dd>${esc(at(d.slot))}</dd>` : ""}<dt>For</dt><dd>${esc(d.buyer)}</dd><dt>From</dt><dd>@${esc(d.sellerHandle)}</dd></dl>
+    <dl class="pass-kv"><dt>Payment</dt><dd>${esc(paid)}${demo}</dd>${d.slot ? `<dt>Time</dt><dd>${esc(at(d.slot))}</dd>` : ""}<dt>${esc(d.payer ? d.payer[0].toUpperCase() + d.payer.slice(1) : "For")}</dt><dd>${esc(d.buyer)}</dd><dt>${esc(d.payee ? d.payee[0].toUpperCase() + d.payee.slice(1) : "From")}</dt><dd>@${esc(d.sellerHandle)}</dd></dl>
     ${changeable ? `<div class="row"><button class="btn secondary compact" data-act="pass-move">Change time</button><button class="btn quiet compact" data-act="pass-cancel">Cancel booking</button></div><div class="row pass-times" style="flex-wrap:wrap;gap:6px"></div>` : ""}
     ${d.collectedAt || d.cancelled ? "" : seller ? `<button class="btn accent" data-act="pass-collect">Mark ${k.done.toLowerCase()}</button><span class="small faint">Check their name first.</span>`
       : link ? `<span class="small faint">${qr ? `Show this to @${esc(d.sellerHandle)} — they scan it once.` : `Send @${esc(d.sellerHandle)} this pass's link — keep it private.`}</span><button class="btn quiet compact" data-act="pass-copy" data-link="${esc(link)}">Copy link</button>` : ""}

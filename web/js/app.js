@@ -16,7 +16,8 @@ import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { notesReadBy, privacyFacts } from "./processing.js";
-import { avatarHTML, $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
+import { ask, avatarHTML, $, busy, esc, id, label, money, now, shortName, tag, toast } from "./ui.js";
+import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
 // Incognito (Settings): remembered on this device only as the on/off choice itself.
@@ -418,7 +419,7 @@ async function prefillTerms(sid, mid, i, again = false) {
   if (!f || termsBusy(f.c) || (!again && (f.c.termsTried || f.c.terms?.length))) return;
   Object.assign(f.c, { termsTried: true, termsLoading: Date.now() });
   await saveSession(f.s); paintContent(true);
-  const r = await api("/api/terms/suggest", { category: f.c.offer?.category ?? "", text: f.c.publicText ?? f.c.text }).catch(() => null);
+  const r = await api("/api/terms/suggest", { category: f.c.offer?.category ?? "", text: f.c.publicText ?? f.c.text, ownerPays: ownerPays(f.c) }).catch(() => null);
   const now_ = cardAt(sid, mid, i);
   if (!now_) return;
   now_.c.termsLoading = false;
@@ -485,7 +486,7 @@ async function openPass(path) {
     const to = e.target.closest('[data-act="pass-move-to"]');
     if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message); } return; }
     if (e.target.closest('[data-act="pass-cancel"]')) {
-      if (!confirm("Cancel this booking? The time is freed for others and they're told.")) return;
+      if ((await ask({ title: "Cancel this booking?", detail: "The time is freed for others, and they're told.", ok: "Cancel booking", cancel: "Keep it", danger: true })) === null) return;
       try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message); }
       return;
     }
@@ -814,10 +815,12 @@ function onEdit(e) {
   if (f.c.type === "brief") {
     if (k === "title" || k === "summary") f.c.draft.shared[k] = v;
     if (k === "rulesText") { f.c.rulesText = v; if (f.c.rulesOk) f.c.rulesOk = false; }
+    if (k === "about") setAbout(f.c.draft.shared, el.dataset.key, String(v).trim());
     if (k === "limit") {
       const n = Number(v);
-      f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * 0.9), limit: n }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 } : null;
-      f.c.draft.need.maxPrice = n > 0 ? n : null;
+      const paid = !!f.c.draft.need.requesterPaid;
+      f.c.draft.mandate = n > 0 ? { price: { opening: Math.round(n * (paid ? 1.1 : 0.9)), limit: n }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 } : null;
+      if (paid) f.c.draft.need.minPrice = n > 0 ? n : null; else f.c.draft.need.maxPrice = n > 0 ? n : null;
       if (e.type === "change") insightsLines({ side: "requester", category: f.c.draft.need.category, area: f.c.draft.need.place.name, limit: n > 0 ? n : null, unit: f.c.draft.need.unit, item: itemOf(f.c.draft) })
         .then(ls => { f.c.insights = ls; saveSession(f.s); paintContent(true); });
     }
@@ -871,10 +874,11 @@ async function onClick(e) {
       const price = a === "seller-quote" ? Number(el.dataset.price) : Number(document.querySelector(`[data-counter-price="${CSS.escape(el.dataset.id)}"]`)?.value);
       if (!(price > 0)) return toast("Type your price.");
       busy(el, true, "Sending");
-      // Said as the side they're on, so the wording never makes a buyer the seller ("I'll pay …" / "I'll sell it for …").
-      const eng = live.engagements.get(el.dataset.id), buying = eng && (eng.seller ?? "provider") !== (eng.requester.uid === session.uid ? "requester" : "provider");
+      // Said as the side they're on, so the wording never makes the one paying the one paid ("I'll pay …" / "I'll sell
+      // it for …" / "I'd accept …").
+      const eng = live.engagements.get(el.dataset.id), side = eng?.requester.uid === session.uid ? "requester" : "provider";
       const each = (eng?.negotiation?.deal?.terms?.quantity ?? eng?.quantity ?? 1) > 1 ? " each" : "";
-      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text: buying ? `I'll pay ₹${price}${each}` : `I'll sell it for ₹${price}${each}` }); live.engagements.set(e.id, e); toast("Offer sent — their agent answers it, or they do."); }
+      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text: `${offerWords(eng, side, `₹${price}`)}${each}` }); live.engagements.set(e.id, e); toast("Offer sent — their agent answers it, or they do."); }
       catch (err) { toast(err.message); }
       return refresh(openScreen);
     }
@@ -940,6 +944,30 @@ async function onClick(e) {
       return refresh(openScreen);
     }
     if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
+    // Joining an accepted offer: each step is the person's own, and a withdrawal says why.
+    if (a.startsWith("join-")) {
+      const id = el.dataset.id, body = { action: { "join-mark": "joined", "join-confirm": "confirm", "join-noshow": "no_show", "join-withdraw": "withdraw" }[a], ...(el.dataset.as ? { as: el.dataset.as } : {}) };
+      if (a === "join-mark") body.date = el.parentElement?.querySelector("[data-join-date]")?.value || "";
+      // Marking it for a demo person in this conversation says so at the top of the box.
+      const e = live.engagements.get(id), mine = e?.requester.uid === session.uid ? "requester" : "provider";
+      const as = el.dataset.as && e ? shortName(e[mine === "requester" ? "provider" : "requester"].name) : null;
+      if (a === "join-noshow") { const r = await ask({ title: "Mark that they didn't join?", detail: "They see this, with anything you add, and it's part of the deal record.", ok: "They didn't join", danger: true, as, input: { label: "Anything to add (optional)", placeholder: "e.g. Didn't turn up on the start date" } }); if (r === null) return; body.reason = r; }
+      if (a === "join-withdraw") { const r = await ask({ title: "Withdraw before joining?", detail: "They see your reason. This can't be undone.", ok: "Withdraw", danger: true, as, input: { label: "Why (they'll see it)", required: true, min: 3, placeholder: "e.g. I've accepted another offer" } }); if (r === null) return; body.reason = r; }
+      busy(el, true);
+      try { live.engagements.set(id, await api(`/api/engagements/${id}/joining`, body)); }
+      catch (err) { toast(err.message); }
+      finally { busy(el, false); }
+      return refresh(openScreen);
+    }
+    if (a === "demo-applicants") {
+      busy(el, true, "Applying");
+      try { const r = await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/demo-applicants`, {}); toast(r.added ? `${r.added} demo candidates applied — their agents are talking to yours.` : "The demo candidates have already applied."); }
+      catch (err) { toast(err.message); }
+      finally { busy(el, false); }
+      await refresh(openScreen);
+      for (const e of live.engagements.values()) if (e.outbox && e.requester.uid?.startsWith("demo-")) run(e.id);
+      return;
+    }
     if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
     if (a === "eng-pay" || a === "eng-paid-outside") {
       // Google Pay (TEST) first, inside the tap; then the AP2 step. One idempotency key per tap: a retry of the same
@@ -1016,12 +1044,14 @@ async function onClick(e) {
     }
     if (a === "eng-delivered" || a === "eng-received") {
       const ok = el.dataset.ok !== "0";
-      const note = a === "eng-received" && !ok ? (prompt("What went wrong? (optional)") ?? "") : "";
+      const note = a === "eng-received" && !ok ? await ask({ title: "Report a problem?", detail: "They see it, and it's part of the deal record.", ok: "Report problem", danger: true, input: { label: "What went wrong (optional)" } }) : "";
+      if (note === null) return;
       busy(el, true);
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
       live.engagements.set(e.id, e);
       session.track(a === "eng-delivered" ? "delivered" : ok ? "received" : "disputed");
-      toast(a === "eng-delivered" ? "Marked delivered — they'll confirm." : ok ? "Thanks — they'll see it arrived as agreed." : "Problem reported to them.");
+      const them = (e.requester.uid === session.uid ? e.provider : e.requester).name, close = partyRoles(e, "provider").close;
+      toast(a === "eng-delivered" ? `${close.marked} ${them} will confirm.` : ok ? `Thanks — ${them} will see it: ${close.confirmed}` : `Problem reported to ${them}.`);
       return refresh(openScreen);
     }
     if (a === "eng-receipt") {
@@ -1068,6 +1098,11 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "brief-strength") { const r = d.shared.requirements[Number(el.dataset.j)]; r.strength = r.strength === "required" ? "preferred" : "required"; const nf = d.need.filters.find(x => x.label === r.label); if (nf) nf.strength = r.strength; }
   if (a === "brief-drop") { const [r] = d.shared.requirements.splice(Number(el.dataset.j), 1); d.need.filters = d.need.filters.filter(x => x.label !== r.label); }
   if (a === "brief-dropq") { const [q] = d.shared.questions.splice(Number(el.dataset.j), 1); d.need.mustAsk = d.need.mustAsk.filter(x => x !== q); }
+  if (a === "brief-about") {
+    // A profile answer is only shared, never searched on: no re-read, nothing sent yet. Tapping it again clears it.
+    const cur = d.shared.about?.find(x => x.label === el.dataset.key)?.value;
+    setAbout(d.shared, el.dataset.key, cur === el.dataset.val ? "" : el.dataset.val);
+  }
   if (a === "brief-clarify") {
     // The owner's answer becomes part of the request, and Gemini reads it again (filters, brief, next questions).
     const q = d.clarify[Number(el.dataset.j)], opt = q.options[Number(el.dataset.k)];
@@ -1075,7 +1110,7 @@ async function cardAction(a, el, { s, m, c }) {
     c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
     (c.answered ??= []).push({ question: q.question, answer: opt });
     const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
-    if (r.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; if (r.gate) c.gate = r.gate;
+    if (r.draft) { const keep = d.mandate, about = d.shared.about; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; if (about?.length) c.draft.shared.about = about; if (r.gate) c.gate = r.gate;
       // Every answer tapped here stays in what sellers see, even if the re-read leaves it out ("When: Tomorrow").
       const reqs = c.draft.shared.requirements;
       for (const x of c.answered) if (!reqs.some(rq => rq.value.toLowerCase().includes(x.answer.toLowerCase()))) {
@@ -1089,7 +1124,7 @@ async function cardAction(a, el, { s, m, c }) {
     if (words.length < 4) return toast("Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
     busy(el, true, "Reading");
     const o = a === "offer-rules-read" ? c.offer : null;
-    const r = await api("/api/rules/read", { text: words, side: o ? "seller" : "buyer", offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message); return null; });
+    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message); return null; });
     if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; }
   }
   if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; c.rulesText = ""; }
@@ -1205,8 +1240,16 @@ async function cardAction(a, el, { s, m, c }) {
     const answered = (c.missing ?? []).filter(x => (c.missingAnswers?.[x.label] ?? "").trim());
     c.missing = [...answered, ...(d.missing ?? []).filter(x => !answered.some(y => y.label.toLowerCase() === x.label.toLowerCase()))].slice(0, 6);
     c.answeredMissing = c.missing.every(x => (c.missingAnswers?.[x.label] ?? "").trim());
-    Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, floor: d.floor ?? c.floor ?? null, basics: null, gate: d.gate ?? null });
+    Object.assign(c, { text: full, publicText: said && d.publicText.endsWith(said) ? d.publicText.slice(0, -said.length).trim() : d.publicText, offer: d.offer, ownerPays: !!d.ownerPays, floor: d.floor ?? c.floor ?? null, basics: null, gate: d.gate ?? null });
     c.insights = await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []);
+  }
+  // A job post's requirements (from the JD), edited before publishing.
+  if (a === "req-strength") { const r = c.offer.requirements[Number(el.dataset.j)]; r.strength = r.strength === "must" ? "nice" : "must"; }
+  if (a === "req-drop") c.offer.requirements.splice(Number(el.dataset.j), 1);
+  if (a === "req-add") {
+    const m = (el.closest(".card")?.querySelector("[data-req-new]")?.value ?? "").match(/^\s*([^:]{2,30}):\s*(.{1,80}?)\s*$/);
+    if (!m) return toast("Write it as “Label: what's needed” — e.g. “Skills: React”.");
+    (c.offer.requirements ??= []).push({ label: m[1].trim(), value: m[2].trim(), strength: "must" });
   }
   if (a === "offer-suggest-terms") { const f = findCard(el); if (f) prefillTerms(f.s.id, f.m.id, Number(el.dataset.card), true); return; }
   // A common term for this kind of offering, tapped in; "Add all" takes the rest.
@@ -1227,17 +1270,20 @@ async function cardAction(a, el, { s, m, c }) {
     const instant = !!c.instant;
     if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
     // A note being made public is published in place (no private copy left behind).
-    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: !!(c.offer && c.floor && c.floor < c.offer.price.amount), ...(c.photo ? { photoId: c.photo.id } : {}) });
+    const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: limitPast(c), category: c.offer?.category ?? c.basics?.category ?? null, ...(c.photo ? { photoId: c.photo.id } : {}) });
     factsCache = null;
-    if (fact.floorKeptPrivate) toast("Your lowest price was left out of the public text — it stays private.");
+    if (fact.floorKeptPrivate) toast(`${ownerPays(c) ? "The most you'd pay" : "Your lowest price"} was left out of the public text — it stays private.`);
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
+    // A job post: the requirements its applicants are screened against, as the employer left them.
+    if (fact.offer && ownerPays(c) && c.offer?.requirements) await api(`/api/facts/${fact.id}/requirements`, { requirements: c.offer.requirements }).catch(err => toast(err.message));
     // How many they have: tracked from the start, so "is it in stock?" never needs them.
     const stock = c.stock;
     if (fact.offer && Number.isInteger(stock) && stock >= 0) await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
     // Weekly hours: bookable times two weeks ahead, in the seller's own time zone, refilled by the server.
     if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message));
     if (c.offer && c.floor) {
-      const mandate = { price: { opening: c.offer.price.amount, limit: Math.min(c.floor, c.offer.price.amount) }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
+      const listed = c.offer.price.amount, limit = ownerPays(c) ? Math.max(c.floor, listed) : Math.min(c.floor, listed);
+      const mandate = { price: { opening: listed, limit }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 });
     }
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
@@ -1257,6 +1303,12 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
   await saveSession(s);
   paint();
+}
+
+/** One profile answer on a request ("Experience: 1–2 years"); empty clears it. */
+function setAbout(shared, label, value) {
+  const rest = (shared.about ?? []).filter(x => x.label !== label);
+  shared.about = value ? [...rest, { label, value: value.slice(0, 120) }] : rest;
 }
 
 /**
@@ -1310,6 +1362,21 @@ async function inboxAction(a, el) {
   if (a === "inbox-decline") { body.decline = true; body.share = false; }
   if (a === "inbox-confirm") body.confirm = true;
   if (a === "inbox-walk") body.decline = true;
+  // An offer letter: the employer sends (or revises) it; the candidate decides on it — always the person, never an agent.
+  if (a === "inbox-letter-send") {
+    const f = k => document.querySelector(`[data-letter="${CSS.escape(itemId)}"][data-k="${k}"]`)?.value?.trim() ?? "";
+    body.letter = { role: f("role"), start: f("start"), validUntil: f("validUntil"), mode: f("mode"), probation: f("probation"), notice: f("notice"), note: f("note"), ...(f("salary") ? { salary: Number(f("salary")) } : {}) };
+    if (!body.letter.start || !body.letter.validUntil) return toast("Pick a start date and the last day the offer is open.");
+  }
+  // A decision made for a demo person (their phone is simulated) says whose it is.
+  const as = item.owner !== session.uid ? shortName(live.engagements.get(item.engagementId)?.[item.side]?.name ?? "") || null : null;
+  if (a === "inbox-letter-withdraw") { if ((await ask({ title: "Don't make an offer?", detail: "Their agent is told politely, and the application ends.", ok: "Don't make an offer", cancel: "Keep it open", danger: true, as })) === null) return; body.decline = true; }
+  if (a === "inbox-offer-accept") { if ((await ask({ title: "Accept this offer?", detail: "It's sealed into the signed deal record. Joining comes next.", ok: "Accept offer", as })) === null) return; body.confirm = true; }
+  if (a === "inbox-offer-decline") { const why = await ask({ title: "Decline this offer?", detail: "The conversation ends politely.", ok: "Decline offer", danger: true, as, input: { label: "Why (optional — they'll see it)", placeholder: "e.g. I've accepted another offer" } }); if (why === null) return; body.decline = true; body.text = why; }
+  if (a === "inbox-offer-changes") {
+    body.changes = document.querySelector(`[data-changes="${CSS.escape(itemId)}"]`)?.value.trim() ?? "";
+    if (body.changes.length < 3) return toast("Say what you'd like changed.");
+  }
   if (a === "inbox-move") {
     const limit = Number(document.querySelector(`[data-limit="${CSS.escape(itemId)}"]`)?.value);
     if (!(limit > 0)) return toast("Set an amount.");
@@ -1322,7 +1389,9 @@ async function inboxAction(a, el) {
   }
   busy(el, true);
   live.inbox = live.inbox.filter(i => i.id !== itemId);
-  await api(`/api/inbox/${itemId}`, body);
+  // A decision the server can't take as it is (a past start date…) comes back to fix, not lost until the next refresh.
+  try { await api(`/api/inbox/${itemId}`, body); }
+  catch (err) { toast(err.message); }
   await refresh(openScreen);
 }
 
@@ -1356,7 +1425,8 @@ function toPay() {
 
 /** A run that stopped mid-way (time limit) left its next turn in the outbox: carry on. */
 function driveRequester() {
-  for (const e of live.engagements.values()) if (e.outbox && e.requester.uid === session.uid) run(e.id);
+  // A demo requester's phone is simulated: the person talking to them runs their agent's turns.
+  for (const e of live.engagements.values()) if (e.outbox && (e.requester.uid === session.uid || e.requester.uid?.startsWith("demo-"))) run(e.id);
 }
 
 // An installed app can stay open for days: coming back to it checks the deployed version, and reloads into a new one

@@ -16,8 +16,12 @@ export async function expireDecisions(db: Docs, now: number, remind: (i: InboxIt
       if (!closed) continue;
       await db.update(ENGAGEMENTS, i.engagementId, (e: Engagement | null) => {
         if (!e || e.phase !== "deal" || (i.proposalId && e.negotiation.deal?.id !== i.proposalId)) return null;
-        const chat = e.offer.price == null;
         const w = e.waiting[i.side];
+        // An offer letter not accepted by the day it said: the offer has lapsed, and the application ends there.
+        if (i.kind === "offer" && e.offerLetter) return { ...e, phase: "closed", offerLetter: { ...e.offerLetter, status: "lapsed", decidedAt: now },
+          waiting: { requester: null, provider: null },
+          events: [...e.events, { at: now, who: "system", text: `The offer lapsed — it wasn't accepted by ${e.offerLetter.validUntil}. Nothing was agreed.` }], updatedAt: now };
+        const chat = e.offer.price == null;
         return { ...e, phase: chat ? "asking" : "negotiating", negotiation: { ...e.negotiation, deal: null, dealBy: null, confirmed: { requester: false, provider: false } },
           waiting: { ...e.waiting, [i.side]: w && w.inbox.filter(x => x !== i.id).length ? { ...w, inbox: w.inbox.filter(x => x !== i.id) } : null },
           events: [...e.events, { at: now, who: "system", text: "The deal lapsed — it wasn't confirmed in time. Nothing was agreed." }], updatedAt: now };

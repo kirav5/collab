@@ -91,7 +91,53 @@ const DEAL_SEED: [string, string, string | null, number, number, number][] = [
   ["vehicles", "Bengaluru", null, 650_000, 620_000, 8], ["vehicles", "Bengaluru", null, 700_000, 670_000, 21], ["vehicles", "Bengaluru", null, 750_000, 720_000, 34],
 ];
 
-const SEEDED = "demo-v5";
+// Hiring: a demo employer whose job post anyone can apply to (its decisions come to the applicant to make as them,
+// marked demo), and demo candidates an employer can invite to their own job post from the applicants board.
+export const DEMO_EMPLOYER = "demo-brightpath";
+export const DEMO_JOB = `${DEMO_EMPLOYER}-offer`;
+const JOB = {
+  handle: "brightpath", name: "Brightpath Tech", bio: "Product studio in Indiranagar, hiring developers.", area: "Indiranagar",
+  title: "Junior Developer · Indiranagar", price: 30_000, ceiling: 36_000,
+  text: "We're hiring a junior developer in Indiranagar, ₹30,000 a month. 2+ years with React and Node.js, hybrid (3 days in the office), join within 30 days. Good communication.",
+  requirements: [
+    { label: "Experience", value: "2+ years", strength: "must" }, { label: "Skills", value: "React, Node.js", strength: "must" },
+    { label: "Work mode", value: "Hybrid", strength: "must" }, { label: "Notice period", value: "Within 30 days", strength: "must" },
+    { label: "Communication", value: "Good communication", strength: "nice" }] as const,
+  policies: [
+    { label: "Probation", text: "3 months, with a review at the end." }, { label: "Notice period", text: "30 days after probation; 15 days during it." },
+    { label: "Hours", text: "Monday to Friday, 10 am to 6 pm; office Tuesday to Thursday." },
+    { label: "Contact", text: "Message us through Collab; we share the office address and the interview link in the chat." }],
+};
+/** Demo candidates: what each shares about themselves, and the least they'd take (private, their agent's limit). */
+export const DEMO_CANDIDATES: { uid: string; handle: string; name: string; text: string; floor: number; about: [string, string][] }[] = [
+  { uid: "demo-anya", handle: "anya-r", name: "Anya Rao", floor: 32_000, text: "Looking for a job as a junior developer in Indiranagar, ₹32,000 a month",
+    about: [["Experience", "3–5 years"], ["Skills", "React, Node.js, SQL"], ["Notice period", "Within 15 days"], ["Work mode", "Hybrid"]] },
+  { uid: "demo-meghna", handle: "meghna-s", name: "Meghna Shetty", floor: 35_000, text: "Looking for a job as a junior developer in Indiranagar, ₹35,000 a month",
+    about: [["Experience", "2–3 years"], ["Skills", "React, Node.js, TypeScript"], ["Notice period", "Within 30 days"], ["Work mode", "Hybrid"]] },
+  { uid: "demo-ravi", handle: "ravi-k", name: "Ravi Kumar", floor: 28_000, text: "Looking for a job as a junior developer in Indiranagar, ₹28,000 a month",
+    about: [["Experience", "1–2 years"], ["Skills", "React"], ["Notice period", "Within 30 days"], ["Work mode", "Any"]] },
+  { uid: "demo-bilal", handle: "bilal-k", name: "Bilal Khan", floor: 25_000, text: "Looking for a job as a junior developer in Indiranagar, ₹25,000 a month",
+    about: [["Experience", "Fresher"], ["Skills", "Java"], ["Notice period", "In 60+ days"], ["Work mode", "Remote"]] },
+];
+
+async function seedHiring(db: Docs, model: Model | null, now: number) {
+  const city = resolve("Bengaluru"), area = resolve(JOB.area, city) ?? city;
+  await db.set(PROFILES, DEMO_EMPLOYER, { uid: DEMO_EMPLOYER, handle: JOB.handle, name: JOB.name, bio: JOB.bio, area, createdAt: now, demo: true } satisfies Profile);
+  await db.set(HANDLES, JOB.handle, { uid: DEMO_EMPLOYER });
+  const offer: Offer = { id: DEMO_JOB, category: "jobs", title: JOB.title, details: JOB.text, price: { amount: JOB.price, currency: "INR", period: "month" }, place: area!,
+    attributes: { negotiable: "yes", mode: "hybrid" }, askBuyer: [], publishedAt: now, expiresAt: now + 365 * 86_400, status: "active", ownerPays: true,
+    requirements: JOB.requirements.map(r => ({ ...r })), policies: JOB.policies };
+  const embedding = (await model?.embed?.([`${offer.title}. ${JOB.text}`], "document"))?.[0];
+  await db.set(FACTS, DEMO_JOB, { id: DEMO_JOB, owner: DEMO_EMPLOYER, text: JOB.text, tier: "public", topics: [], offer, ...(embedding ? { embedding } : {}), createdAt: now, updatedAt: now } satisfies Fact);
+  // The employer's private ceiling: its agent opens at the listed salary and goes no higher than this.
+  await db.set(LIMITS, `fact:${DEMO_JOB}`, { key: `fact:${DEMO_JOB}`, owner: DEMO_EMPLOYER, mandate: { price: { opening: JOB.price, limit: JOB.ceiling }, terms: {}, maxRounds: 5 } } satisfies DelegatedLimit);
+  for (const c of DEMO_CANDIDATES) {
+    await db.set(PROFILES, c.uid, { uid: c.uid, handle: c.handle, name: c.name, bio: "Developer looking for a job (demo).", area, createdAt: now, demo: true } satisfies Profile);
+    await db.set(HANDLES, c.handle, { uid: c.uid });
+  }
+}
+
+const SEEDED = "demo-v6";
 
 /** Demo sellers with a schedule always have bookable times for the coming week (checked at every start). */
 async function refreshDemoSlots(db: Docs, now: number) {
@@ -139,9 +185,10 @@ export async function seedDemo(db: Docs, model: Model | null, now: number) {
       questions: 2 + (i % 4), at: now - days * 86_400, demo: true };
     await db.set(DEALS, d.id, d);
   }
+  await seedHiring(db, model, now);
   await refreshDemoSlots(db, now);
   await db.set("meta", "demo", { version: embeddingOk(model) ? SEEDED : "partial" });
-  log.info("demo people seeded", { count: PEOPLE.length });
+  log.info("demo people seeded", { count: PEOPLE.length + 1 + DEMO_CANDIDATES.length });
 }
 
 const embeddingOk = (model: Model | null) => !!model?.embed;

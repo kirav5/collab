@@ -115,7 +115,7 @@ test("a salon or barber's deals get a booking pass; titles keep brand capitals a
 
 test("buyer questions from Gemini are kept only when they're questions without contact details", async () => {
   const { BuyerQuestionsTask } = await import("../src/core/intake.ts");
-  const i = { item: "haircuts", title: "Haircuts", text: "Haircuts at my studio", attributes: {}, price: "₹450", action: "book a time" };
+  const i = { item: "haircuts", title: "Haircuts", text: "Haircuts at my studio", attributes: {}, price: "₹450", action: "book a time", owner: "stylist", responder: "client", priceWord: "price" };
   assert.equal(BuyerQuestionsTask.validate([{ label: "Free", text: "Any free time today?" }, { label: "Phone", text: "What's your phone number?" }], i), null, "one real question isn't enough");
   assert.equal(BuyerQuestionsTask.validate([{ label: "Free", text: "Any free time today?" }, { label: "Price", text: "Is ₹450 your best price?" }, { label: "Fade", text: "Do you do fades" }], i)?.length, 2, "not a question: dropped");
   assert.deepEqual(BuyerQuestionsTask.fallback(i), [], "no canned questions");
@@ -123,7 +123,7 @@ test("buyer questions from Gemini are kept only when they're questions without c
 
 test("suggested terms are short, carry no contact details or invented amounts, and fall back by kind of offering", async () => {
   const { TermsTask } = await import("../src/core/terms.ts");
-  const input = { category: "beauty", offering: "Men's haircut at our studio, ₹450 a session, home visits ₹200 extra." };
+  const input = { category: "beauty", offering: "Men's haircut at our studio, ₹450 a session, home visits ₹200 extra.", owner: "stylist", audience: "clients" };
   const ok = TermsTask.validate({ terms: [{ label: "Late arrival", text: "Your slot is held for 10 minutes." }, { label: "Home visits", text: "Home visits cost ₹200 extra within 5 km." }] }, input);
   assert.equal(ok?.terms.length, 2, "an amount the offering states is fine");
   assert.equal(TermsTask.validate({ terms: [{ label: "Cancellation", text: "Cancel late and pay ₹999 as a fee." }, { label: "Contact", text: "Call 98765 43210 to reschedule." }] }, input), null, "invented amounts and phone numbers are dropped");

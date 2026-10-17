@@ -14,6 +14,7 @@ import { decide } from "./ai/decide.ts";
 import { AnswerTask } from "./market/answer.ts";
 import { budgetBand } from "./market/match.ts";
 import { read } from "./market/read.ts";
+import { aboutFrom, introFor, listingRoles, orientMandate, payerCue, roleTable, rolesFor } from "./market/roles.ts";
 import { hasContact, numbers } from "./market/text.ts";
 import { domain as domainOf } from "./market/domains.ts";
 import { savedKey } from "./market/answer.ts";
@@ -22,7 +23,8 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms } from "./core/engage.ts";
+import { JDTask, JoinError, hiringStatus, isApplication, joiningEffects, joiningMove, joinsOnLetter, requirementsFrom, screen } from "./core/hiring.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -62,7 +64,7 @@ import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
-import { seedDemo } from "./demo.ts";
+import { DEMO_CANDIDATES, seedDemo } from "./demo.ts";
 import { log } from "./log.ts";
 import { PUSH, initPush, pushTo, saveToken } from "./core/push.ts";
 import { clean as cleanText } from "./core/wall.ts";
@@ -166,14 +168,17 @@ function needFrom(n: any): Need {
   return { id: text(n.id, 40), category: text(n.category, 40), text: "", place, radiusKm: num(n.radiusKm, 0.5, 100) ?? 8, maxPrice: num(n.maxPrice, 1, 1e12),
     attributes: Object.fromEntries(Object.entries(n.attributes ?? {}).slice(0, 12).map(([k, v]) => [text(k, 40), text(v, 80)])),
     mustAsk: (Array.isArray(n.mustAsk) ? n.mustAsk : []).slice(0, 5).map((q: unknown) => text(q, 160)).filter(Boolean),
-    unit: n.unit ? text(n.unit, 20) : null, mode: ["online", "in_person", "either"].includes(n.mode) ? n.mode : null, filters, mandate: n.mandate ? mandateFrom(n.mandate) : null };
+    unit: n.unit ? text(n.unit, 20) : null, mode: ["online", "in_person", "either"].includes(n.mode) ? n.mode : null, filters, mandate: n.mandate ? mandateFrom(n.mandate) : null,
+    ...(n.requesterPaid === true ? { requesterPaid: true, maxPrice: null, minPrice: num(n.minPrice, 1, 1e12) } : {}) };
 }
 
 function sharedFrom(b: any, need: Need): SharedBrief {
   return { title: text(b?.title, 80) || "Request", summary: text(b?.summary, 320), category: need.category, mode: need.mode ?? null,
     area: typeof b?.area === "string" ? text(b.area, 120) : null,
     requirements: (Array.isArray(b?.requirements) ? b.requirements : []).slice(0, 10).map((r: any) => ({ label: text(r?.label, 60), value: text(r?.value, 80), strength: r?.strength === "required" ? "required" : "preferred" })),
-    budget: typeof b?.budget === "string" ? text(b.budget, 60) : null, questions: (Array.isArray(b?.questions) ? b.questions : []).slice(0, 4).map((q: unknown) => text(q, 160)).filter(Boolean) };
+    budget: typeof b?.budget === "string" ? text(b.budget, 60) : null, questions: (Array.isArray(b?.questions) ? b.questions : []).slice(0, 4).map((q: unknown) => text(q, 160)).filter(Boolean),
+    // A profile only for someone who'd be paid, only the role's own questions, and never an amount or contact detail.
+    ...(() => { const labels = need.requesterPaid ? (rolesFor(need.category).profile ?? []).map(x => x.label) : [], about = aboutFrom(b?.about, labels); return about.length ? { about } : {}; })() };
 }
 
 const me = async (uid: string) => {
@@ -258,7 +263,7 @@ app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local"
   modelArmor: armor ? { on: true, ...armor.stats } : { on: false },
   security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" && APPCHECK !== "strict" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on", verification: appCheckStats } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
-  a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null }), false));
+  a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null, roles: roleTable() }), false));
 
 // Goals: what the owner wants done, with each conversation as a task and a state that follows from them.
 app.get("/api/goals", route(async req => {
@@ -480,7 +485,7 @@ async function directConversation(me_: Profile, p: Profile, f: Fact | null, t: s
   const questions = via === "order" ? [] : (t.match(/[^.?!\n]*\?/g) ?? []).map(q => q.trim()).filter(q => q.length >= 3).slice(0, 4);
   const brief: SharedBrief = { title: t.slice(0, 80), summary: t, category: f?.offer?.category ?? "", mode: null, area: null, requirements: [], budget: null, questions: questions.length || via === "order" ? questions : [t.slice(0, 160)] };
   const e = fresh({ briefId: null, brief, requester: { uid: me_.uid, handle: me_.handle, name: me_.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
-    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null } });
+    offer: f?.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: null, title: t.slice(0, 80), price: null, unit: null, category: null }, ownerPays: !!f?.offer?.ownerPays });
   e.briefId = `direct-${e.id}`; // the requester's private limit for this conversation is keyed by it
   e.events.push({ at: now(), who: "system", text: via === "order" ? `You ordered from ${p.name}'s card.` : `You asked ${p.name}'s agent directly.` });
   // A direct question is its own goal (information until a price is involved); from a request, it's that request's.
@@ -545,8 +550,9 @@ app.post("/api/people/:handle/order", route(async req => {
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
   }
   // "Up to ₹X" with the offer: the buyer's agent negotiates against the seller's from here (never shown to them).
-  const max = num(req.body?.max, 1, 1e9);
-  if (max !== null && max >= each) await db.set(LIMITS, `brief:${e.briefId}`, { key: `brief:${e.briefId}`, owner: req.uid, mandate: { price: { opening: each, limit: max }, terms: {}, maxRounds: 5 }, autonomy: "close", expires: now() + 7 * 86_400, createdAt: now() });
+  // For a requester who is paid (answering a job post) the number is the least they'd take.
+  const max = num(req.body?.max, 1, 1e9), paid = sellerOf(e) === "requester";
+  if (max !== null && (paid ? max <= each : max >= each)) await db.set(LIMITS, `brief:${e.briefId}`, { key: `brief:${e.briefId}`, owner: req.uid, mandate: { price: { opening: each, limit: max }, terms: {}, maxRounds: 5 }, autonomy: "close", expires: now() + 7 * 86_400, createdAt: now() });
   // Instant booking: at the listed price, on an offering whose seller turned it on, their agent confirms at once.
   if (f.offer.instant && each === listed) await autoConfirm(db, await load(db, e.id), "provider");
   // An offer below the listed price goes to the seller's agent first: inside their limit it's confirmed or put to
@@ -856,11 +862,15 @@ app.post("/api/facts", route(async req => {
   const b = req.body ?? {};
   if (!["private", "protected", "public"].includes(b.tier)) throw new HttpError(400, "Tier must be private, protected or public.");
   await spend(req.uid, 2);
-  // A written floor ("lowest 29,000") never reaches public text, however it's published — the offering card keeps it
-  // as the private limit; here it's simply left out. Small numbers ("minimum 2 hours") aren't floors.
-  const raw = text(b.text, 1000), floor = b.tier === "public" && b.source !== "chat" ? statedFloor(raw) : null;
-  const body = floor !== null && floor >= 50 && (numbers(raw).some(n => n > floor) || STRONG_FLOOR.test(raw)) ? withoutAmount(raw, floor) : raw;
+  // A written floor ("lowest 29,000") — or, for an owner who pays, a ceiling ("can stretch to 40,000") — never reaches
+  // public text, however it's published — the offering card keeps it as the private limit; here it's simply left out.
+  // Small numbers ("minimum 2 hours") aren't limits.
+  const raw = text(b.text, 1000), pays = payerCue(raw) === "writer";
+  const floor = b.tier === "public" && b.source !== "chat" ? statedLimit(raw, pays) : null;
+  const beyond = (n: number) => (pays ? n < floor! : n > floor!);
+  const body = floor !== null && floor >= 50 && (numbers(raw).some(beyond) || (pays ? STRONG_CEILING : STRONG_FLOOR).test(raw)) ? withoutAmount(raw, floor) : raw;
   const fact = publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: body, tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true,
+    ...(b.tier === "public" && domainOf(text(b.category, 40)) ? { category: text(b.category, 40) } : {}),
     // A chat memory is always Private: sharing it means rewriting it as a fact of its own.
     ...(b.source === "chat" ? { source: "chat" as const, tier: "private" as const } : {}) }));
   // A photo the owner took for this listing goes on it (only their own photo, only on a public offering).
@@ -916,11 +926,14 @@ app.post("/api/facts/:id/limit", route(async req => {
   if (!f || f.owner !== req.uid || !f.offer) throw new HttpError(404, "not found");
   const m = mandateFrom(req.body?.mandate);
   if (m) {
-    const days = num(req.body?.days, 1, 365);
-    await db.set(LIMITS, `fact:${f.id}`, { key: `fact:${f.id}`, owner: req.uid, mandate: { ...m, price: { opening: f.offer.price.amount, limit: Math.min(m.price.limit, f.offer.price.amount) } },
+    const days = num(req.body?.days, 1, 365), listed = f.offer.price.amount, pays = !!f.offer.ownerPays;
+    // The listed price opens; the limit can't be on the wrong side of it (above it for an owner who is paid, below it
+    // for one who pays).
+    const limit = pays ? Math.max(m.price.limit, listed) : Math.min(m.price.limit, listed);
+    await db.set(LIMITS, `fact:${f.id}`, { key: `fact:${f.id}`, owner: req.uid, mandate: { ...m, price: { opening: listed, limit } },
       autonomy: ["close", "ask"].includes(req.body?.autonomy) ? req.body.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now() });
-    // A floor below the ask means the price can move: the matcher may show it to near-budget requests.
-    if (m.price.limit < f.offer.price.amount && f.offer.attributes.negotiable !== "yes")
+    // A limit past the listed price means the price can move: the matcher may show it to near-budget requests.
+    if (limit !== listed && f.offer.attributes.negotiable !== "yes")
       await db.set(FACTS, f.id, { ...f, offer: { ...f.offer, attributes: { ...f.offer.attributes, negotiable: "yes" } } });
   } else await db.delete(LIMITS, `fact:${f.id}`);
   return { delegated: !!m };
@@ -969,7 +982,8 @@ app.post("/api/think", route(async req => {
   await spend(req.uid);
   const notes = (Array.isArray(req.body?.notes) ? req.body.notes : []).slice(0, 12).map((n: any) => ({ label: "Note", value: text(n?.text, 600) })).filter((n: any) => n.value);
   if (!notes.length) return { action: "ask_owner" };
-  const d = await decide(model, AnswerTask, { question: text(req.body?.question, 300), facts: notes, side: req.body?.side === "provider" ? "seller" : "buyer" });
+  const role = typeof req.body?.role === "string" && /^[a-z ]{3,24}$/i.test(req.body.role) ? req.body.role.toLowerCase() : null;
+  const d = await decide(model, AnswerTask, { question: text(req.body?.question, 300), facts: notes, side: role ?? (req.body?.side === "provider" ? "seller" : "buyer") });
   return { ...d.output, byModel: d.byModel };
 }));
 
@@ -984,30 +998,36 @@ app.post("/api/offers/draft", route(async req => {
   // owner said they're selling is read as an offering even when it's vague.
   const r = await read(t, "sell", model, now(), here, null, req.body?.note !== true);
   const dom = domainOf(r.draft?.kind === "offer" ? r.draft.offer.category : r.category ?? "");
-  // What buyers of this kind would otherwise ask, picked by Gemini for this offering, with tap-to-answer options.
+  const roles = listingRoles(dom?.id, r.draft?.kind === "offer" ? !!r.draft.offer.ownerPays : payerCue(t) === "writer");
+  // What the people answering this kind of listing would otherwise ask, picked by Gemini, with tap-to-answer options.
   const asks = async (attrs: Record<string, unknown>) => {
     const hints = (dom?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).map(x => ({ label: x.label, ask: x.ask! }));
-    return (await decide(model, SellerAsksTask, { text: t, category: dom?.label ?? "", known: Object.entries(attrs).map(([k, v]) => `${k}: ${v}`), hints })).output;
+    return (await decide(model, SellerAsksTask, { text: t, category: dom?.label ?? "", known: Object.entries(attrs).map(([k, v]) => `${k}: ${v}`), hints,
+      owner: roles.owner, responders: roles.responders })).output;
   };
   if (r.draft?.kind !== "offer") {
     if (!dom) return { offer: null, floor: null, publicText: t, problem: r.problem ?? null };
     // An offering too vague to list (no price, or no place): the card asks for the basics, then reads it again. A
     // written floor is kept for the card, never in the text.
-    const written = statedFloor(t);
+    const pays = payerCue(t) === "writer", written = statedLimit(t, pays);
     const [missing, gate] = await Promise.all([asks({}), qualityOf(model, t, "sell", dom.label, [])]);
-    return { offer: null, floor: written, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, gate,
+    return { offer: null, floor: written, ownerPays: pays, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, gate,
       basics: { category: dom.id, label: dom.label, unit: dom.priceUnit ?? null, area: here?.name ?? null } };
   }
-  // The model reads a stated floor; a written one ("lowest 600", "won't go below 600") is caught either way, so the
-  // directory never shows it whatever the model does.
-  const written = statedFloor(t);
-  const read_ = r.draft.mandate.price.limit < r.draft.mandate.price.opening ? r.draft.mandate.price.limit : null;
-  const floor = read_ ?? (written !== null && written < r.draft.offer.price.amount ? written : null);
+  // The model reads a stated limit; a written one ("lowest 600", "won't go below 600"; for an owner who pays, "can
+  // stretch to 40,000") is caught either way, so the directory never shows it whatever the model does. `floor` is
+  // the private limit either way: below the listed price for an owner who is paid, above it for one who pays.
+  const ownerPays = !!r.draft.offer.ownerPays, { opening, limit } = r.draft.mandate.price, listed = r.draft.offer.price.amount;
+  const written = statedLimit(t, ownerPays);
+  const read_ = (ownerPays ? limit > opening : limit < opening) ? limit : null;
+  const floor = read_ ?? (written !== null && (ownerPays ? written > listed : written < listed) ? written : null);
   const publicText = floor ? withoutAmount(t, floor) : t;
-  // What buyers of this kind usually ask that the offering doesn't say yet — the seller can answer now, publicly.
+  // A job post: what it asks of applicants, read from the JD (each quoted from it) for the employer to edit.
   const o = r.draft.offer;
+  const requirements = ownerPays && rolesFor(o.category).flow === "hire" ? (await decide(model, JDTask, { text: publicText })).output : undefined;
+  // What the people answering this listing usually ask that it doesn't say yet — the owner can answer now, publicly.
   const [missing, gate] = await Promise.all([asks(o.attributes), qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
-  return { offer: { ...o, details: publicText }, floor, publicText, missing, gate };
+  return { offer: { ...o, details: publicText, ...(requirements ? { requirements } : {}) }, floor, ownerPays, publicText, missing, gate };
 }));
 
 // What others charge for this kind of thing near here, for the price a seller is about to set: Google-grounded
@@ -1033,22 +1053,29 @@ app.post("/api/offers/price-hints", route(async req => {
 // Terms a seller might state, suggested for their kind of offering — returned for them to edit; nothing is saved here.
 app.post("/api/terms/suggest", route(async req => {
   await spend(req.uid, 2);
-  const out = await suggestTerms(model, text(req.body?.category, 40), text(req.body?.text, 600));
+  const ownerPays = typeof req.body?.ownerPays === "boolean" ? req.body.ownerPays : undefined;
+  const out = await suggestTerms(model, text(req.body?.category, 40), text(req.body?.text, 600), ownerPays);
   return { terms: out.terms, starters: out.starters, byModel: out.byModel, grounded: out.grounded };
 }));
 
 /** Words that only ever mean a floor ("minimum" or "at least" can mean a quantity). */
 const STRONG_FLOOR = /\b(lowest|won'?t go below|not (?:go )?below|can go (?:down )?to|floor|bottom line)\b/i;
-function statedFloor(t: string): number | null {
-  const m = t.replace(/(\d),(?=\d)/g, "$1").match(/\b(?:lowest|minimum|min\.?|at least|won'?t go below|not (?:go )?below|can go (?:down )?to|floor(?: is)?|bottom line)\s*(?:is\s*)?(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(k|thousand|lakh|l)?\b/i);
+/** …and a ceiling, for an owner who pays ("up to ₹40,000" is left alone: a salary range is usually meant to be public). */
+const STRONG_CEILING = /\b(can stretch|stretch (?:up )?to|won'?t go above|not (?:go )?above|ceiling)\b/i;
+const FLOOR_WORDS = "lowest|minimum|min\\.?|at least|won'?t go below|not (?:go )?below|can go (?:down )?to|floor(?: is)?|bottom line";
+const CEILING_WORDS = "can stretch (?:up )?to|stretch (?:up )?to|at most|max(?:imum)?\\.?|no more than|not more than|won'?t go above|not (?:go )?above|ceiling(?: is)?";
+function statedAmount(t: string, words: string): number | null {
+  const m = t.replace(/(\d),(?=\d)/g, "$1").match(new RegExp(`\\b(?:${words})\\s*(?:is\\s*)?(?:₹|rs\\.?\\s*|inr\\s*)?(\\d+(?:\\.\\d+)?)\\s*(k|thousand|lakh|l)?\\b`, "i"));
   if (!m) return null;
   const scale = /^(k|thousand)$/i.test(m[2] ?? "") ? 1_000 : /^(lakh|l)$/i.test(m[2] ?? "") ? 100_000 : 1;
   return Math.round(Number(m[1]) * scale);
 }
+/** The private limit written in a listing: a floor for an owner who is paid, a ceiling for one who pays. */
+const statedLimit = (t: string, ownerPays: boolean) => statedAmount(t, ownerPays ? CEILING_WORDS : FLOOR_WORDS);
 
 /** The text without the clauses that state this amount (in any written scale: 600, 6,000, 1.2 lakh). */
 function withoutAmount(t: string, amount: number): string {
-  const clauses = t.split(/(?<=[,.;])\s+|\s+(?=but\b|and lowest\b|lowest\b|minimum\b|won't go below\b|wont go below\b|can go down\b)/i);
+  const clauses = t.split(/(?<=[,.;])\s+|\s+(?=but\b|and lowest\b|lowest\b|minimum\b|won't go below\b|wont go below\b|can go down\b|can stretch\b|max\b|maximum\b|at most\b|no more than\b)/i);
   const kept = clauses.filter(c => !numbers(c).some(n => [1, 1_000, 100_000, 10_000_000].some(k => Math.round(n * k) === Math.round(amount))));
   return kept.join(" ").replace(/\s+([,.;])/g, "$1").replace(/[,;]\s*$/, ".").trim();
 }
@@ -1060,8 +1087,14 @@ app.post("/api/briefs/draft", route(async req => {
   const t = text(req.body?.text, 600).trim();
   if (t.length < 4) throw new HttpError(400, "Say a bit more.");
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
-  // Read and judged at the same time: the gate says whether it's specific enough for sellers' agents to act on.
+  // Read and judged at the same time: the gate says whether it's specific enough for other people's agents to act on.
   const [out, gate] = await Promise.all([draft(model, t, here, now(), hint), qualityOf(model, t, "buy", hint ?? "", [])]);
+  // A profile they shared on an earlier request of the same kind is offered again, so it's answered once.
+  if (out.draft?.profile) {
+    const last = ((await db.find(BRIEFS, [["owner", "==", req.uid]], 50)) as Brief[])
+      .filter(b => b.shared.category === out.draft!.need.category && b.shared.about?.length).sort((a, b) => b.createdAt - a.createdAt)[0];
+    for (const q of out.draft.profile) { const a = last?.shared.about?.find(x => x.label === q.label); if (a) q.answer = a.value; }
+  }
   return { ...out, gate };
 }));
 /** The owner changes their open request ("try a wider area", "up to 600", "in Koramangala instead"): Gemini reads the
@@ -1084,7 +1117,7 @@ app.post("/api/briefs/refine", route(async req => {
     need.filters = need.filters.filter(f => !gone.has(f.label.toLowerCase()));
     changes.push(`dropped ${r.drop.join(", ")}`);
   }
-  if (r.limit) { shared.budget = budgetBand({ ...need, maxPrice: r.limit, mandate: null }); changes.push("new limit (private)"); }
+  if (r.limit) { shared.budget = budgetBand(need.requesterPaid ? { ...need, minPrice: r.limit, mandate: null } : { ...need, maxPrice: r.limit, mandate: null }); changes.push("new limit (private)"); }
   return { need, shared, limit: r.limit ?? limit, changes };
 }));
 
@@ -1097,7 +1130,8 @@ app.post("/api/briefs", route(async req => {
   const goal = await createGoal(db, req.uid, b.shared.title, /service|lesson|task|repair|clean/i.test(need.category ?? "") ? "service" : "purchase", null, now());
   await db.merge(BRIEFS, b.id, { goalId: goal.id }); b.goalId = goal.id;
   const del = req.body?.delegate;
-  const m = mandateFrom(del?.mandate ?? del);
+  // The limit points the way this requester wants: up for one who is paid (the least they'd take), down otherwise.
+  const sent = mandateFrom(del?.mandate ?? del), m = sent ? orientMandate(sent, !!need.requesterPaid) : null;
   if (m) { const days = num(del?.days, 1, 365);
     const closeAt = num(del?.closeAt, 1, 1e12);
     await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now(),
@@ -1123,8 +1157,14 @@ app.post("/api/briefs/:id/engage", route(async req => {
     const f = (await db.get(FACTS, text(pick?.factId, 60))) as Fact | null;
     const p = f ? ((await db.get(PROFILES, f.owner)) as Profile | null) : null;
     if (!f || !p || f.tier !== "public" || p.uid === req.uid) continue;
+    out.push(await startConversation(owner, brief, f, p));
+  }
+  return out;
+}));
+/** A request's conversation with one provider: the requester's agent opens it (the first turn waits in the outbox). */
+async function startConversation(owner: Profile, brief: Brief, f: Fact, p: Profile): Promise<Engagement> {
     const e = fresh({ briefId: brief.id, brief: brief.shared, requester: { uid: owner.uid, handle: owner.handle, name: owner.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
-      offer: f.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: f.id, title: f.text.slice(0, 80), price: null, unit: null, category: null } });
+      offer: f.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: f.id, title: f.text.slice(0, 80), price: null, unit: null, category: null }, ownerPays: !!f.offer?.ownerPays });
     e.events.push({ at: now(), who: "system", text: `Your agent is contacting ${p.name}'s agent over A2A.` });
     // How many the request is for: every offer in this conversation is for that many. A seller with fewer in stock
     // can sell what they have — the buyer is told, and decides (their agent never closes a smaller deal for them).
@@ -1136,15 +1176,17 @@ app.post("/api/briefs/:id/engage", route(async req => {
       if (free > 0) { e.quantity = free; e.wanted = want; e.wantedLimit = cap === free && (await inStock(db, e) ?? Infinity) > free ? "rule" : "stock"; e.events.push({ at: now(), who: "system", text: `${p.name} ${cap === free ? `offers at most ${free} per person` : `has ${free} in stock`} — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
       else e.events.push({ at: now(), who: "system", text: `${p.name} is out of stock right now — you can still ask when more come in.` });
     }
-    if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
+    if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, owner.uid, e.id, now()); }
+    // The requester's agent opens with an application, an enquiry or a booking request — from the shared brief,
+    // which never holds the budget or the limit.
+    const intro = introFor(e.offer.category, sellerOf(e) === "requester", owner.name, f.offer ? e.offer.title.split(" · ")[0] : null, brief.shared.summary, brief.shared.about);
+    e.events.push({ at: now(), who: "requester_agent", text: intro, by: "rules" });
     // The first turn waits in the outbox; the device starts it with /run (each run is one bounded request).
-    e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief: brief.shared, offerFactId: f.id };
+    e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief: brief.shared, offerFactId: f.id, intro };
     await saveEngagement(db, e);
     event("agents_contacted", { category: e.offer.category ?? "none", via: "search" });
-    out.push(e);
-  }
-  return out;
-}));
+    return e;
+}
 
 app.post("/api/push/token", route(async req => { const t = text(req.body?.token, 4096); if (t.length > 20) await saveToken(req.uid, t); return { ok: true }; }));
 // A test notification to every device this person turned notifications on for.
@@ -1193,6 +1235,15 @@ app.post("/api/facts/:id/policies", route(async req => {
   await db.set(FACTS, f.id, { ...f, offer, updatedAt: now() });
   return publicFact({ ...f, offer });
 }));
+/** A job post's requirements, as the employer edited them from the JD: what each applicant is screened against. */
+app.post("/api/facts/:id/requirements", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || !f.offer) throw new HttpError(404, "offering not found");
+  if (!f.offer.ownerPays || rolesFor(f.offer.category).flow !== "hire") throw new HttpError(400, "Only a job post has requirements.");
+  const offer = { ...f.offer, requirements: requirementsFrom(req.body?.requirements) };
+  await db.set(FACTS, f.id, { ...f, offer, updatedAt: now() });
+  return publicFact({ ...f, offer });
+}));
 app.post("/api/nearby", route(async req => {
   try { return await nearby(db, model, req.uid, text(req.body?.item, 200), text(req.body?.area, 120), now()); }
   catch (err) { if (err instanceof NearbyError) throw new HttpError(err.status, err.message); throw err; }
@@ -1205,9 +1256,95 @@ async function participant(uid: string, id: string): Promise<Engagement> {
   return e;
 }
 app.get("/api/engagements/:id", route(async req => participant(req.uid, String(req.params.id))));
+
+// MARK: - Applications to a job post (the employer's board)
+
+/** A job post's applicants, each screened against its requirements (cached until either changes), best fit first. */
+app.get("/api/facts/:id/applicants", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || !f.offer?.ownerPays || rolesFor(f.offer.category).flow !== "hire") throw new HttpError(404, "job post not found");
+  const reqs = f.offer.requirements ?? [];
+  const es = ((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 300)) as Engagement[])
+    .filter(e => e.offer.factId === f.id && e.provider.uid === req.uid && isApplication(e, "hire")).slice(0, 40);
+  const ORDER = ["says joined", "offer to send", "changes asked", "offer sent", "in talks", "interview", "shortlisted", "new", "offer accepted", "joined", "disputed", "didn't join",
+    "offer withdrawn", "offer declined", "withdrawn", "rejected"];
+  const applicants = [];
+  for (const e of es) {
+    const screening = await screen(model, e, reqs, now());
+    if (screening.basis !== e.screening?.basis) await db.merge(ENGAGEMENTS, e.id, { screening });
+    applicants.push({ id: e.id, name: e.requester.name, handle: e.requester.handle, about: e.brief.about ?? [], band: e.brief.budget, status: hiringStatus(e),
+      phase: e.phase, screening, updatedAt: e.updatedAt, ...(e.requester.uid?.startsWith("demo-") ? { demo: true } : {}) });
+  }
+  applicants.sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status) || b.screening.score - a.screening.score || b.updatedAt - a.updatedAt);
+  // The hire record: everyone who accepted an offer for this post, with what was agreed and whether they joined.
+  const hires = es.filter(joinsOnLetter).map(e => ({ id: e.id, name: e.requester.name, handle: e.requester.handle, status: hiringStatus(e),
+    role: e.offerLetter!.role, salary: e.offerLetter!.salary, unit: e.offerLetter!.unit, currency: currencyOf(e), start: e.offerLetter!.start, acceptedAt: e.offerLetter!.decidedAt ?? null,
+    joining: e.joining ?? { state: "awaiting", start: e.offerLetter!.start, at: e.offerLetter!.decidedAt ?? e.updatedAt } }))
+    .sort((a, b) => (b.acceptedAt ?? 0) - (a.acceptedAt ?? 0));
+  return { job: { id: f.id, title: f.offer.title, requirements: reqs }, applicants, hires };
+}));
+
+/**
+ * Demo candidates apply to the employer's own job post, through the same flow as anyone: their own request (with the
+ * profile they share and a private minimum), their agent's application, the employer's screening. Their phones are
+ * simulated, so what would go to them comes to the employer, marked demo.
+ */
+app.post("/api/facts/:id/demo-applicants", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || f.tier !== "public" || !f.offer?.ownerPays || rolesFor(f.offer.category).flow !== "hire") throw new HttpError(404, "job post not found");
+  const employer = await me(req.uid);
+  await spend(req.uid, 4);
+  const applied = new Set(((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 300)) as Engagement[]).filter(e => e.offer.factId === f.id).map(e => e.requester.uid));
+  const added: string[] = [];
+  for (const c of DEMO_CANDIDATES) {
+    const profile = (await db.get(PROFILES, c.uid)) as Profile | null;
+    if (!profile || applied.has(c.uid)) continue;
+    const d = (await draft(model, c.text, profile.area, now(), "jobs")).draft;
+    if (!d?.need.requesterPaid) continue;
+    const b = await saveBrief(db, c.uid, d.need, sharedFrom({ ...d.shared, about: c.about.map(([label, value]) => ({ label, value })) }, d.need), now());
+    const m = orientMandate({ price: { opening: Math.round((c.floor * 1.15) / 500) * 500, limit: c.floor }, terms: {}, maxRounds: 5 }, true);
+    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: c.uid, mandate: m, autonomy: "close", expires: null, createdAt: now() });
+    const e = await startConversation(profile, b, f, employer);
+    await sendTurn(cfg, e.id, null).catch(err => log.warn("demo application didn't start", { id: e.id, error: String(err).slice(0, 160) }));
+    added.push(e.id);
+  }
+  if (!added.length && !DEMO_CANDIDATES.some(c => applied.has(c.uid))) throw new HttpError(400, "The demo candidates aren't set up on this server.");
+  return { added: added.length };
+}));
+
+/** May this person act for the other side of their own conversation? Only when that side is a demo account, whose
+ *  phone is simulated — never for a real person. */
+const actsForDemo = (e: Engagement, uid: string, side: "requester" | "provider") => !!e[side].uid?.startsWith("demo-") && e.participants.includes(uid) && e[side].uid !== uid;
+
+/** The employer's moves on one application. The agent never takes them on its own. */
+async function application(uid: string, id: string): Promise<Engagement> {
+  const e = await participant(uid, id);
+  if ((e.provider.uid !== uid && !actsForDemo(e, uid, "provider")) || !isApplication(e, rolesFor(e.offer.category).flow)) throw new HttpError(404, "application not found");
+  if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This application has ended.");
+  return e;
+}
+const deliver = async (e: Engagement, turn: Turn) => {
+  if (turn.proposal || turn.accept || turn.confirm || turn.decline || turn.questions?.length) await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
+};
+app.post("/api/engagements/:id/shortlist", route(async req => {
+  const e = await application(req.uid, String(req.params.id));
+  await deliver(e, await shortlist(db, model, e));
+  return load(db, e.id);
+}));
+app.post("/api/engagements/:id/interview", route(async req => {
+  const e = await application(req.uid, String(req.params.id));
+  const note = text(req.body?.note, 120).trim() || null;
+  await deliver(e, await inviteToInterview(db, e, note && !hasContact(note) ? note : null));
+  return load(db, e.id);
+}));
+app.post("/api/engagements/:id/reject", route(async req => {
+  const e = await application(req.uid, String(req.params.id));
+  await deliver(e, await rejectApplication(db, e));
+  return load(db, e.id);
+}));
 app.post("/api/engagements/:id/run", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  if (e.requester.uid === req.uid && e.outbox) { await spend(req.uid, 2); await sendTurn(cfg, e.id, null); }
+  if ((e.requester.uid === req.uid || actsForDemo(e, req.uid, "requester")) && e.outbox) { await spend(req.uid, 2); await sendTurn(cfg, e.id, null); }
   return load(db, e.id);
 }));
 app.get("/api/engagements/:id/receipt", route(async req => {
@@ -1222,7 +1359,9 @@ async function receiptBundle(e: Engagement) {
   const r = registered.receipt ?? receipt(e, signing.sign);
   const ap2Check = e.payment?.ap2 ? await verifyAp2(e.payment.ap2, signing.publicKey as any, e.payment.cart.dealHash) : null;
   const payment = e.payment ? { ...e.payment, buyer: buyerOf(e), seller: sellerOf(e), check: { ...checkPayment(e, verifySigned), ap2: ap2Check } } : null;
-  return { ...r, ...check, payment, publicKey: signing.publicKey,
+  // How to name each side on the page (not part of what's signed): who was paid, and what each is called.
+  const roles = rolesFor(e.offer.category), sides = { seller: sellerOf(e), payee: roles.payee, payer: roles.payer, price: roles.price, item: roles.item ?? null, noPayment: !!e.noPayment };
+  return { ...r, ...check, payment, sides, publicKey: signing.publicKey,
     subjects: { requester: e.requester.uid ? signing.subject(e.requester.uid) : null, provider: signing.subject(e.provider.uid) },
     legacyAttestation: !registered.receipt, signatureAuthority: "Collab server, on behalf of its agents",
     verifyPath: `/verify.html#${e.id}.${passCode(cfg.secret, e.id, "receipt")}` };
@@ -1518,18 +1657,21 @@ async function markDelivered(id: string, seller: "requester" | "provider", at: n
 }
 app.post("/api/engagements/:id/delivered", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the person handing it over can mark it delivered.", "AUTHORITY_REQUIRED");
+  if (joinsOnLetter(e)) throw new HttpError(409, "This closes on joining — use the offer card.", "VERSION_CONFLICT");
+  const roles = rolesFor(e.offer.category), close = roles.close;
+  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, `Only the ${roles.payee} can mark this done.`, "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
   if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
-  await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered."); await clearStats(db, e);
+  await markDelivered(e.id, sellerOf(e), now(), close.marked); await clearStats(db, e);
   const buyer = e[buyerOf(e)];
-  if (buyer.uid) void pushTo(buyer.uid, `Handed over: ${e.offer.title.split(" · ")[0]}`, "Confirm it's as agreed, or report a problem.", `/?engagement=${e.id}`);
+  if (buyer.uid) void pushTo(buyer.uid, `${close.marked.replace(/\.$/, "")} · ${e.offer.title.split(" · ")[0]}`, `${e[sellerOf(e)].name} ${close.markedBy}. ${close.confirmTodo}`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 app.post("/api/engagements/:id/received", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  const buyer = buyerOf(e);
-  if (e[buyer].uid !== req.uid) throw new HttpError(403, "Only the person receiving it can confirm it or report a problem.", "AUTHORITY_REQUIRED");
+  if (joinsOnLetter(e)) throw new HttpError(409, "This closes on joining — use the offer card.", "VERSION_CONFLICT");
+  const buyer = buyerOf(e), roles = rolesFor(e.offer.category);
+  if (e[buyer].uid !== req.uid) throw new HttpError(403, `Only the ${roles.payer} can accept or dispute.`, "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal.", "VERSION_CONFLICT");
   const ok = req.body?.ok !== false, note = text(req.body?.note, 300);
   const t = now();
@@ -1537,13 +1679,13 @@ app.post("/api/engagements/:id/received", route(async req => {
     if (!cur || ["accepted", "disputed", "cancelled"].includes(cur.fulfilment?.state ?? "")) return null;
     return { ...cur, fulfilment: { ...(cur.fulfilment ?? { state: "not_started" }), state: ok ? "accepted" : "disputed", acceptedAt: t, ...(note ? { note } : {}) },
       outcome: { ...(cur.outcome ?? {}), [buyer]: ok ? "happened" : "fell_through" },
-      events: [...cur.events, { at: t, who: buyer, text: ok ? "Received it — all good." : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t,
+      events: [...cur.events, { at: t, who: buyer, text: ok ? roles.close.confirmed : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t,
       ...(ok ? { inboxClosed: true } : {}) };
   });
   if (ok) await closeInbox(db, e.id); // done: nothing more to ask either side
   await clearStats(db, e);
   const seller = e[sellerOf(e)];
-  if (seller.uid) void pushTo(seller.uid, ok ? `Deal complete: ${e.offer.title.split(" · ")[0]}` : `Problem reported: ${e.offer.title.split(" · ")[0]}`, ok ? `${e[buyerOfSide(e)].name} confirmed it's as agreed.` : "They reported a problem. Tap to reply.", `/?engagement=${e.id}`);
+  if (seller.uid) void pushTo(seller.uid, ok ? `Deal complete: ${e.offer.title.split(" · ")[0]}` : `Problem reported: ${e.offer.title.split(" · ")[0]}`, ok ? `${e[buyer].name}: ${roles.close.confirmed}` : `${e[buyer].name} reported a problem. Tap to reply.`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Paid some other way (cash, UPI outside the app): either side can say so; it counts as the deal having gone ahead.
@@ -1577,6 +1719,7 @@ app.post("/api/engagements/:id/paid-outside", route(async req => {
 }));
 app.post("/api/engagements/:id/outcome", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
+  if (joinsOnLetter(e)) throw new HttpError(409, "This closes on joining — use the offer card.", "VERSION_CONFLICT");
   if (e.phase !== "agreed") throw new HttpError(400, "no deal yet");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   (e.outcome ??= {})[side] = req.body?.happened ? "happened" : "fell_through";
@@ -1590,6 +1733,51 @@ app.post("/api/engagements/:id/outcome", route(async req => {
   }
   await saveEngagement(db, e);
   return e;
+}));
+// Joining, for an accepted offer letter: the candidate marks they joined, the employer confirms or says they didn't,
+// either withdraws before joining. Each step is the person's own — never their agent's — and the other side is told.
+const JOIN_LINE: Record<string, (j: Engagement["joining"] & {}, name: string) => string> = {
+  joined: j => `Joined on ${j.joinedOn}.`,
+  confirmed: j => `Confirmed they joined on ${j.joinedOn}.`,
+  no_show: j => `Said they didn't join${j.reason ? `: “${j.reason}”` : "."}`,
+  withdrawn: (j, name) => `${name} withdrew${j.reason ? `: “${j.reason}”` : "."}`,
+};
+/** Two different accounts: each side's own words stay on record. */
+const disputeLine = (j: Engagement["joining"] & {}, action: string) => action === "joined"
+  ? `Says they joined on ${j.joinedOn} — the employer had said they didn't. Both accounts are on record.`
+  : `Says they didn't join${j.reason ? `: “${j.reason}”` : ""} — they had said they joined on ${j.joinedOn}. Both accounts are on record.`;
+app.post("/api/engagements/:id/joining", route(async req => {
+  const e0 = await participant(req.uid, String(req.params.id));
+  let side: "requester" | "provider" = e0.requester.uid === req.uid ? "requester" : "provider";
+  // For a demo person in this conversation, the person talking to them marks it for them.
+  if (req.body?.as === "them") { side = side === "requester" ? "provider" : "requester"; if (!actsForDemo(e0, req.uid, side)) throw new HttpError(403, "Only they can mark this.", "AUTHORITY_REQUIRED"); }
+  const action = String(req.body?.action ?? "");
+  if (!["joined", "confirm", "no_show", "withdraw"].includes(action)) throw new HttpError(400, "Say joined, confirm, no_show or withdraw.", "INVALID_INPUT");
+  const t = now();
+  let next: Engagement | null = null, refused: string | null = null;
+  await db.update(ENGAGEMENTS, e0.id, (cur: Engagement | null) => {
+    if (!cur) return null;
+    try {
+      const j = joiningMove(cur, side, action as any, { date: req.body?.date, reason: req.body?.reason }, t);
+      const who = side === "requester" ? cur.requester.name : cur.provider.name;
+      const text = j.state === "disputed" ? disputeLine(j, action) : (JOIN_LINE[j.state] ?? (() => "Updated joining."))(j, who);
+      next = { ...cur, joining: j, ...joiningEffects(cur, j), events: [...cur.events, { at: t, who: j.state === "withdrawn" ? "system" : side, text, by: "owner" }], updatedAt: t,
+        ...(["confirmed", "withdrawn", "disputed", "no_show"].includes(j.state) ? { inboxClosed: true, waiting: { requester: null, provider: null } } : {}) };
+      return next;
+    } catch (err) { if (err instanceof JoinError) { refused = err.message; return null; } throw err; }
+  });
+  if (refused) throw new HttpError(400, refused, "INVALID_INPUT");
+  const e = next as Engagement | null;
+  if (!e) throw new HttpError(404, "not found");
+  const j = e.joining!;
+  if (["confirmed", "withdrawn", "disputed", "no_show"].includes(j.state)) await closeInbox(db, e.id);
+  if (j.state === "withdrawn" || j.state === "no_show") await releaseBudget(db, e);
+  await clearStats(db, e);
+  const me = e[side], other = e[side === "requester" ? "provider" : "requester"];
+  const title = { joined: "Says they joined", confirmed: "Joining confirmed", no_show: "Marked as not joined", withdrawn: "Withdrawn", disputed: "Joining disputed" }[j.state as string] ?? "Joining";
+  if (other.uid) void pushTo(other.uid, `${title} · ${e.offerLetter?.role ?? e.title}`, `${me.name}: ${e.events.at(-1)!.text}`, `/?engagement=${e.id}`);
+  event("joining", { state: j.state });
+  return load(db, e.id);
 }));
 app.post("/api/engagements/:id/close", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
@@ -1611,8 +1799,8 @@ async function inboxFor(uid: string): Promise<InboxItem[]> {
   // Demo people's devices are simulated: their items show up for the person talking to them.
   const demo: InboxItem[] = [];
   for (const e of es) {
-    if (e.requester.uid === uid && e.provider.uid.startsWith("demo-") && e.waiting.provider) {
-      demo.push(...((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === "provider"));
+    for (const side of ["provider", "requester"] as const) {
+      if (actsForDemo(e, uid, side) && e.waiting[side]) demo.push(...((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === side));
     }
   }
   const all = [...mine, ...demo];
@@ -1624,7 +1812,7 @@ app.post("/api/inbox/:id", route(async req => {
   const found = (await db.get(INBOX, String(req.params.id))) as InboxItem | null;
   if (!found || found.status !== "open") throw new HttpError(404, "already handled");
   const e = await load(db, found.engagementId);
-  const asDemo = found.owner.startsWith("demo-") && e.requester.uid === req.uid;
+  const asDemo = found.owner.startsWith("demo-") && actsForDemo(e, req.uid, found.side);
   if (found.owner !== req.uid && !asDemo) throw new HttpError(403, "not yours");
   // A deal decision is yes or no, said explicitly — a missing or false "confirm" is never taken as yes.
   if (found.kind === "confirm" && (req.body?.confirm === true) === (req.body?.decline === true))
@@ -1641,7 +1829,9 @@ app.post("/api/inbox/:id", route(async req => {
   // stale position.
   await offerFromAnswer(item, typeof b.text === "string" ? b.text : "");
   const r = await resolveItem(db, model, item, { text: typeof b.text === "string" ? b.text : undefined, share: b.share, decline: !!b.decline, confirm: !!b.confirm,
-    mandate: item.kind === "move" ? mandateFrom(b.mandate) ?? undefined : undefined }).catch(async err => { await reopen(); throw err; });
+    mandate: item.kind === "move" ? mandateFrom(b.mandate) ?? undefined : undefined,
+    ...(item.kind === "offer_letter" && b.letter && typeof b.letter === "object" ? { letter: b.letter } : {}),
+    ...(item.kind === "offer" && typeof b.changes === "string" ? { changes: text(b.changes, 300) } : {}) }).catch(async err => { await reopen(); throw err; });
   if (r.turn) {
     if (item.side === "requester") await sendTurn(cfg, e.id, r.turn);
     else await deliverProviderTurn(cfg, a2a.store, e.id, r.turn);
@@ -1808,6 +1998,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code, ...(err.extra ?? {}) });
   if (err instanceof Problem) return res.status(400).json({ error: err.message, code: "INVALID_INPUT" });
   if (err instanceof Refused) return res.status(403).json({ error: err.message, code: "AUTHORITY_REQUIRED" });
+  if (err instanceof Invalid) return res.status(400).json({ error: err.message, code: "INVALID_INPUT" });
   if (err instanceof Stale) return res.status(409).json({ error: err.message, code: "VERSION_CONFLICT" });
   log.error("unhandled", err, { path: _req.path });
   res.status(500).json({ error: "something went wrong" });

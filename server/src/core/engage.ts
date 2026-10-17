@@ -13,9 +13,12 @@ import { type Docs, docId } from "../docs.ts";
 import { AnswerTask, type Fact as AnswerFact, JudgeTask, offerFacts, savedKey } from "../market/answer.ts";
 import { catalog, domain as domainOf } from "../market/domains.ts";
 import { event } from "../log.ts";
-import { type Context, NegotiateTask, acceptable, describe } from "../market/negotiate.ts";
+import { type Context, NegotiateTask, acceptable, describe, line, moveKind } from "../market/negotiate.ts";
+import { rolesFor, shortName, usualAsks, voiceFor } from "../market/roles.ts";
+import { endOfDay, isApplication, letterDefaults, letterFrom, letterHash } from "./hiring.ts";
+import type { OfferLetter } from "./model.ts";
 import { type Mandate, type Proposal, currencyOf, moneyText, newId } from "../market/types.ts";
-import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
+import { type PaymentMandate, buyerOf, cartFor, sellerFrom, sellerOf } from "./pay.ts";
 import { policy, policyHash } from "../config/policy.ts";
 import { CapacityError, available, availabilityText, certainty, hold, resourceFor } from "./resources.ts";
 import { BudgetError, allocate, deallocate } from "./goals.ts";
@@ -39,6 +42,10 @@ export interface Turn {
   engagementId: string;
   brief?: SharedBrief;
   offerFactId?: string | null;
+  /** The requester's opening line with the brief: an application, an enquiry or a booking request. */
+  intro?: string;
+  /** A hiring deal's offer letter, as issued (or as decided on). */
+  offerLetter?: OfferLetter;
   questions?: { id: string; question: string }[];
   answers?: { id: string; question: string; answer: string }[];
   /** AP2: the buyer's signed payment mandate, delivered to the seller's agent. */
@@ -58,6 +65,8 @@ export interface Turn {
 }
 
 export class Refused extends Error {}
+/** What the owner sent doesn't make sense as it is (a past start date, an empty change request): theirs to fix. */
+export class Invalid extends Error {}
 
 // MARK: - Storage helpers
 
@@ -100,8 +109,11 @@ export async function save(db: Docs, e: Engagement) {
   // Reservation: a deal on tracked stock holds the units for the policy's hold window (released if the deal ends,
   // committed when paid). Out of stock means the deal can't be paid; nothing is charged.
   if (e.phase === "agreed" && !e.reservation && e.offer.factId) await reserveFor(db, e);
+  // Some deals don't settle in the app (a job's salary is paid by the employer as agreed): no cart, no pass — the
+  // deal closes on the one paid marking it done (joined) and the one paying confirming it.
+  if (e.phase === "agreed" && !e.payment && !rolesFor(e.offer.category).payInApp) e.noPayment = true;
   // AP2: once both owners confirmed, the seller's agent issues the cart the buyer pays against.
-  if (e.phase === "agreed" && !e.payment && signer) {
+  if (e.phase === "agreed" && !e.payment && !e.noPayment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
     const cart = cartFor(e, signer, now());
     if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; if (e.reservation?.state !== "unavailable") say(e, agentOf(sellerOf(e)), `Ready to pay: ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })}.`, "rules"); }
@@ -119,6 +131,12 @@ function sellerInChat(e: Engagement): Side | null {
   return null;
 }
 
+/** Shown to both sides when an agent hands a decision back to its owner: who is being asked, never that a limit exists
+ *  or that the other side's offer is outside it. */
+const checking = (e: Engagement, s: Side) => {
+  const roles = rolesFor(e.offer.category);
+  return `The ${s === sellerOf(e) ? roles.payee : roles.payer}'s agent is checking with ${shortName(e[s].name)}.`;
+};
 const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: text.slice(0, 600), ...(by ? { by } : {}) }); };
 const agentOf = (s: Side): Event["who"] => (s === "requester" ? "requester_agent" : "provider_agent");
 const by = (m: boolean): Event["by"] => (m ? "gemini" : "rules");
@@ -194,26 +212,32 @@ const hasOwner = (e: Engagement, s: Side) => { const u = uidOf(e, s); return !!u
 
 async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" | "owner" | "engagementId" | "side" | "status" | "createdAt" | "title">): Promise<string> {
   // One request per decision: the same question, or the same deal to confirm, already open isn't asked again.
-  const proposalId = item.kind === "confirm" ? e.negotiation.deal?.id : undefined;
+  const decision = item.kind === "confirm" || item.kind === "offer_letter" || item.kind === "offer";
+  const proposalId = decision ? e.negotiation.deal?.id : undefined;
   for (const open of e.waiting[s]?.inbox ?? []) {
     const x = (await db.get(INBOX, open)) as InboxItem | null;
-    if (x?.status === "open" && x.kind === item.kind && (item.kind === "confirm" ? x.proposalId === proposalId : item.qaId ? x.qaId === item.qaId : x.question === item.question)) return x.id;
+    if (x?.status === "open" && x.kind === item.kind && (decision ? x.proposalId === proposalId : item.qaId ? x.qaId === item.qaId : x.question === item.question)) return x.id;
   }
   const id = newId();
   const t = now();
-  await db.set(INBOX, id, { ...item, ...(proposalId ? { proposalId } : {}), deadline: t + policy().timing.decisionTtlSec, onTimeout: item.kind === "confirm" ? "lapse" : "wait",
+  // An offer letter is open until the day it says; a deal to confirm lapses at the usual deadline; the rest wait.
+  const deadline = item.kind === "offer" && e.offerLetter ? endOfDay(e.offerLetter.validUntil) : t + policy().timing.decisionTtlSec;
+  await db.set(INBOX, id, { ...item, ...(proposalId ? { proposalId } : {}), deadline, onTimeout: item.kind === "confirm" || item.kind === "offer" ? "lapse" : "wait",
     id, owner: uidOf(e, s)!, engagementId: e.id, side: s, status: "open", title: e.title, createdAt: t } satisfies InboxItem);
   // A move the device makes on its own needs no one's attention; everything else notifies the owner.
   if (!(item.kind === "move" && !item.question)) {
-    // Who and what, never the raw request text (it can carry a price): "Confirm your deal" · "Study table with Lamp Buyer".
+    // Who and what, never the raw request text (it can carry a price): "Confirm your deal" · "Study table with Priya".
     const them = e[other(s)].name, thing = (e.offer.title || e.title).split(" · ")[0].slice(0, 60);
     const [title, body] = item.kind === "confirm" ? ["Confirm your deal", `${thing} with ${them}`]
+      : item.kind === "offer_letter" ? ["Send the offer letter", `${thing} for ${them}`]
+      : item.kind === "offer" ? ["An offer letter to decide on", `${thing} from ${them}`]
       : item.kind === "move" ? ["No deal within your limit yet", `${thing} with ${them} — your call`]
       : item.kind === "approve" ? ["Check an answer before it's shared", `${them} asked about ${thing}`]
       : [`${them} asked a question`, `About ${thing}. Tap to reply.`];
     void pushTo(uidOf(e, s)!, title, body, `/?engagement=${e.id}`);
   }
-  e.waiting[s] = { kind: item.kind, inbox: [...(e.waiting[s]?.inbox ?? []), id], text: item.question ?? (item.kind === "move" ? "A negotiating move with your private limit" : "Confirm the deal") };
+  e.waiting[s] = { kind: item.kind, inbox: [...(e.waiting[s]?.inbox ?? []), id], text: item.question ?? (item.kind === "move" ? "A negotiating move with your private limit"
+    : item.kind === "offer_letter" ? "Send the offer letter" : item.kind === "offer" ? "Decide on the offer letter" : "Confirm the deal") };
   return id;
 }
 
@@ -332,10 +356,13 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     const b = e.brief;
     facts = [{ label: "What they need", value: `${b.title}. ${b.summary}` }, ...(b.area ? [{ label: "Area", value: b.area }] : []),
       ...(b.mode ? [{ label: "How", value: b.mode.replace("_", " ") }] : []), ...(b.budget ? [{ label: "Budget", value: b.budget }] : []),
-      ...b.requirements.map(r => ({ label: r.label, value: r.value })), ...facts];
+      ...b.requirements.map(r => ({ label: r.label, value: r.value })),
+      // What they shared about themselves (a candidate's experience, notice period…) answers an employer's screening.
+      ...(b.about ?? []).map(a => ({ label: a.label, value: a.value })), ...facts];
   }
   if (!facts.length) return null;
-  const d = await decide(model, AnswerTask, { question: q.question, facts, side: s === "provider" ? "seller" : "buyer" });
+  const roles = rolesFor(e.offer.category);
+  const d = await decide(model, AnswerTask, { question: q.question, facts, side: s === sellerOf(e) ? roles.payee : roles.payer });
   if (d.output.action !== "answer") return null;
   const from = source(allowed, d.output.evidence);
   if (key && !from?.via && (!from || from.fact.id === e.offer.factId))
@@ -355,7 +382,7 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
   const names = await wallNames(db, uidOf(e, s), uidOf(e, other(s)) ?? "");
   const toName = s === "provider" ? e.requester.name : e.provider.name;
   for (const q of e.qa.filter(q => q.from === other(s) && q.status === "open")) {
-    const a = await answerAs(db, model, e, s, q);
+    const a = q.personal ? null : await answerAs(db, model, e, s, q);
     // An answer Model Armor finds sensitive data in isn't sent: the owner checks it first.
     if (a && !a.review && outgoingScreen && (await outgoingScreen(a.text)).flagged) a.review = true;
     if (a && !a.review) {
@@ -370,7 +397,7 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
       (out.pending ??= []).push(q.question);
       if (a?.review) await ask(db, e, s, { kind: "approve", qaId: q.id, question: q.question, draft: a.text });
       else await ask(db, e, s, { kind: "answer", qaId: q.id, question: q.question });
-      say(e, agentOf(s), s === "provider" ? "Let me check with the provider." : "Let me check with my owner.", "rules");
+      say(e, agentOf(s), `Let me check with ${shortName(e[s].name)}.`, "rules");
     } else {
       q.status = "declined";
       (out.declined ??= []).push(q.question);
@@ -384,17 +411,24 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
  *  first counter moves from it instead of repeating it). */
 function ctx(e: Engagement, s: Side, mandate: Mandate, listing = false): Context {
   const n = e.negotiation, mine = s === "provider" ? n.provider : n.requester;
-  const opened = listing && s === sellerOf(e) && e.offer.price != null && !mine.length
+  // The listed price is the listing owner's (the provider's) opening — a shop's ask or an employer's salary.
+  const opened = listing && s === "provider" && e.offer.price != null && !mine.length
     ? [{ id: "listing", price: e.offer.price, terms: {}, round: 0 } as Proposal] : mine;
-  return { side: s === sellerOf(e) ? "seller" : "buyer", catalog: catalog(domainOf(e.offer.category ?? "")), mandate, unit: e.offer.unit,
+  // Price follows who is paid; the category's other terms are written for the requester (domains.json's "buyer").
+  // …and each side talks as its role: a candidate's agent never says "we can offer" to an employer.
+  return { side: s === sellerOf(e) ? "seller" : "buyer", termsSide: s === "requester" ? "buyer" : "seller", voice: voiceFor(e.offer.category, s === sellerOf(e), e[s].name),
+    catalog: catalog(domainOf(e.offer.category ?? "")), mandate, unit: e.offer.unit,
     mine: opened, theirs: s === "provider" ? n.requester : n.provider };
 }
 
 /** One move with this side's limit (delegated to the cloud agent, or sent by the owner's device for this one move). */
 export async function move(model: Model | null, e: Engagement, s: Side, mandate: Mandate, out: Turn, listing = false) {
-  // A requester never opens above the asking price (a little under it instead).
-  if (s === "requester" && e.offer.price && mandate.price.opening >= e.offer.price) {
-    mandate = { ...mandate, price: { ...mandate.price, opening: Math.round(e.offer.price * 0.92) } };
+  // A requester never opens at the listed price: a paying one a little under it, a paid one (a candidate answering a
+  // job post) a little over it.
+  if (s === "requester" && e.offer.price) {
+    const paid = sellerOf(e) === "requester";
+    if (!paid && mandate.price.opening >= e.offer.price) mandate = { ...mandate, price: { ...mandate.price, opening: Math.round(e.offer.price * 0.92) } };
+    if (paid && mandate.price.opening <= e.offer.price) mandate = { ...mandate, price: { ...mandate.price, opening: Math.max(mandate.price.limit, Math.round(e.offer.price * 1.08)) } };
   }
   const c = ctx(e, s, mandate, listing);
   const m = await decide(model, NegotiateTask, { ctx: c, listPrice: e.offer.price ?? mandate.price.opening });
@@ -406,7 +440,7 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
     out.note = mv.message;
     e.phase = "negotiating";
     // For several units the move says what they come to (the rules' own wording is rewritten; a model's gets a line).
-    if (unitsOf(e) > 1 && !m.byModel) say(e, agentOf(s), `${mv.proposal.round ? "We can do" : "We can offer"} ${describe(mv.proposal, c)}.`, "rules");
+    if (unitsOf(e) > 1 && !m.byModel) say(e, agentOf(s), line(c, moveKind(c, mv.proposal.price), describe(mv.proposal, c)), "rules");
     else {
       say(e, agentOf(s), mv.message, by(m.byModel));
       if (unitsOf(e) > 1) say(e, "system", `On the table: ${describe(mv.proposal, c)}.`);
@@ -442,7 +476,7 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
   const l = await limitFor(db, e, s);
   if (l) {
     const r = await move(model, e, s, l.mandate, out);
-    if (r?.escalate && hasOwner(e, s)) { await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined, hint: await hint() }); say(e, "system", s === "provider" ? "The provider's agent is checking with the provider." : "Your agent needs you: no deal inside your limit yet."); }
+    if (r?.escalate && hasOwner(e, s)) { await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined, hint: await hint() }); say(e, "system", checking(e, s)); }
     return;
   }
   if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", listPrice: e.offer.price ?? undefined, hint: await hint() });
@@ -458,6 +492,74 @@ const pendingFor = (e: Engagement, s: Side) => !!e.waiting[s];
 /** Questions that hold up the negotiation: the buyer's must-knows. A seller's agent's questions are answered alongside it. */
 const questionsOpen = (e: Engagement) => e.qa.some(q => (q.status === "open" || q.status === "pending") && q.required);
 
+// MARK: - Hiring: the offer letter
+
+/** A deal for a job: settled by people through an offer letter, never by a standing mandate. */
+const hireDeal = (e: Engagement) => rolesFor(e.offer.category).flow === "hire";
+
+/** Asks one side to say yes to the deal on the table. In hiring that's the offer letter: the employer issues it (or
+ *  revises it after the candidate asked for changes), then the candidate decides on it — not before there's one. */
+async function askConfirm(db: Docs, e: Engagement, s: Side) {
+  if (!hasOwner(e, s)) return;
+  if (!hireDeal(e)) { await ask(db, e, s, { kind: "confirm" }); return; }
+  const l = e.offerLetter;
+  if (s === buyerOf(e)) {
+    if (!l || l.status === "changes asked") {
+      const fact = e.offer.factId ? ((await db.get(FACTS, e.offer.factId)) as Fact | null) : null;
+      // A revision starts from the letter they sent; a first letter from the job post and their own terms.
+      const base = l ? { role: l.role, salary: e.negotiation.deal?.price, unit: l.unit, start: l.start, validUntil: l.validUntil, mode: l.mode, probation: l.probation, notice: l.notice, note: l.note }
+        : letterDefaults(e, fact?.offer ?? null, now());
+      await ask(db, e, s, { kind: "offer_letter", letter: base, ...(l?.changesAsked ? { question: l.changesAsked } : {}) });
+    }
+    return;
+  }
+  if (l?.status === "issued") await ask(db, e, s, { kind: "offer", letter: l });
+}
+
+// MARK: - Applications to a job post
+
+/** Salary talk waits: an application to an employer's job post that the employer hasn't shortlisted yet. */
+export const onHold = (e: Engagement) => isApplication(e, rolesFor(e.offer.category).flow) && !e.hiring?.shortlisted && !e.hiring?.rejected;
+
+/** The employer shortlists an applicant: their agent opens the salary talk (or asks them for a limit). */
+export async function shortlist(db: Docs, model: Model | null, e: Engagement): Promise<Turn> {
+  const out: Turn = { kind: "collab.turn/v1", from: "provider", engagementId: e.id };
+  if (!e.hiring?.shortlisted) {
+    (e.hiring ??= {}).shortlisted = now();
+    say(e, "system", `${shortName(e.provider.name)} shortlisted ${shortName(e.requester.name)}.`);
+  }
+  if (!["agreed", "declined", "closed"].includes(e.phase)) await afterAnswers(db, model, e, "provider", out);
+  await save(db, e);
+  return out;
+}
+
+/** The employer invites an applicant to an interview: a question to their agent, which asks them when they're free. */
+export async function inviteToInterview(db: Docs, e: Engagement, note: string | null): Promise<Turn> {
+  const out: Turn = { kind: "collab.turn/v1", from: "provider", engagementId: e.id };
+  (e.hiring ??= {}).interview = now();
+  const question = `${shortName(e.provider.name)} would like to invite you to an interview${note ? ` (${note})` : ""}. Which days and times suit you this week?`;
+  // Their days and times are theirs to say: never answered from their profile.
+  const q: QA = { id: newId(), from: "provider", question, status: "open", personal: true };
+  e.qa.push(q);
+  out.questions = [{ id: q.id, question }];
+  say(e, "provider_agent", question, "owner");
+  await save(db, e);
+  return out;
+}
+
+/** The employer turns an applicant down: a polite note, and the conversation ends. Only ever the employer's call. */
+export async function rejectApplication(db: Docs, e: Engagement): Promise<Turn> {
+  const out: Turn = { kind: "collab.turn/v1", from: "provider", engagementId: e.id };
+  (e.hiring ??= {}).rejected = now();
+  e.phase = "declined";
+  e.waiting = { requester: null, provider: null };
+  out.decline = `Thank you for applying. ${shortName(e.provider.name)} has decided to go ahead with other candidates for this role — all the best with your search.`;
+  say(e, "provider_agent", out.decline, "owner");
+  await closeInbox(db, e.id);
+  await save(db, e);
+  return out;
+}
+
 // MARK: - The provider's agent
 
 /** Applies the requester's turn and decides the provider's. */
@@ -470,8 +572,10 @@ export async function providerTurn(db: Docs, model: Model | null, e: Engagement,
   if (!e.gathered && e.offer.factId && !e.briefId?.startsWith("direct-")) {
     e.gathered = true;
     const fact = (await db.get(FACTS, e.offer.factId)) as Fact | null;
-    const usual = domainOf(e.offer.category ?? "")?.sellerAsks ?? [];
-    const g = await decide(model, GatherTask, { offering: fact?.text ?? e.offer.title, brief: e.brief, answered: e.qa.filter(q => q.answer).map(q => q.question), usual });
+    // The usual questions for this direction: an employer screening a candidate, not a candidate's own questions.
+    const providerPaid = sellerOf(e) === "provider", v = voiceFor(e.offer.category, providerPaid, e.provider.name);
+    const usual = usualAsks(e.offer.category, "provider", providerPaid, domainOf(e.offer.category ?? ""));
+    const g = await decide(model, GatherTask, { offering: fact?.text ?? e.offer.title, brief: e.brief, answered: e.qa.filter(q => q.answer).map(q => q.question), usual, role: v.me, them: v.them });
     // With bookable time slots the buyer picks a time when booking — asking "what time suits you?" only stalls the
     // conversation on a question the slot picker already answers.
     const slotted = (await resourceFor(db, e.offer.factId))?.type === "slots";
@@ -505,7 +609,7 @@ export async function requesterTurn(db: Docs, model: Model | null, e: Engagement
       const isCheck = /^(can|could|do|does|is|are|will|would|have|has|did|shall)\b/i.test(q.question.trim());
       if (isCheck && (v.byModel || v.settled)) {
         e.phase = "closed";
-        out.decline = "That doesn't work for my owner, so we'll leave it here. Thank you.";
+        out.decline = `That doesn't work for ${shortName(e.requester.name)}, so we'll leave it here. Thank you.`;
         say(e, "system", `Ended: the answer to “${q.question}” didn't meet a must-have.`);
         say(e, "requester_agent", out.decline, by(v.byModel));
         return out;
@@ -524,6 +628,11 @@ const hasContent = (t: Turn) => !!(t.answers?.length || t.questions?.length || t
 /** After answering: move if it's this side's turn and nothing is open; confirm a deal. */
 async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   if (pendingFor(e, s) || e.offer.price == null) return;
+  if (e.phase === "deal" && hireDeal(e)) {
+    if (!e.negotiation.confirmed[s] && !e.waiting[s]?.inbox.length) await askConfirm(db, e, s);
+    settle(e);
+    return;
+  }
   if (e.phase === "deal") {
     // Their own offer still waiting for the other side's answer (a typed offer, or an agent's counter under "I confirm")
     // asks nothing of them yet. A tentative deal the other side's agent accepted is confirmed by both, as before.
@@ -541,7 +650,8 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
         e.negotiation.confirmed[s] = true;
         (e.negotiation.confirmedBy ??= {})[s] = "mandate";
         out.confirm = true;
-        say(e, s, "Confirmed by a standing mandate (the owner pre-authorised deals inside their limit).", "rules");
+        // Seen by both sides: who confirmed, never that a limit exists.
+        say(e, s, `Confirmed — ${shortName(e[s].name)} had agreed to deals like this in advance.`, "rules");
       } else {
         const demo = s === "provider" && (await db.get(PROFILES, e.provider.uid))?.demo;
         if (demo) { e.negotiation.confirmed.provider = true; out.confirm = true; say(e, "provider", "Confirmed.", "owner"); }
@@ -549,6 +659,17 @@ async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Sid
       }
     }
     settle(e);
+    return;
+  }
+  // An application to an employer's job post: salary waits until the employer shortlists it. The employer's agent
+  // says so once, after the questions; neither agent proposes a salary before then.
+  if (onHold(e)) {
+    // …once its own screening questions are answered too (it says it's reviewing what it has).
+    const screeningOpen = e.qa.some(q => q.from === "provider" && (q.status === "open" || q.status === "pending"));
+    if (s === "provider" && !questionsOpen(e) && !screeningOpen && !e.hiring?.heldNoted) {
+      (e.hiring ??= {}).heldNoted = true;
+      say(e, "provider_agent", `Thanks — ${shortName(e.provider.name)} is reviewing applications and will be in touch.`, "rules");
+    }
     return;
   }
   if (!questionsOpen(e) && myTurnToMove(e, s) && !out.questions?.length) {
@@ -564,7 +685,10 @@ export async function autoConfirm(db: Docs, e: Engagement, s: Side) {
   (e.negotiation.confirmedBy ??= {})[s] = "mandate";
   for (const id of e.waiting[s]?.inbox ?? []) await db.update(INBOX, id, (x: InboxItem | null) => (x && x.kind === "confirm" ? { ...x, status: "done" } : x));
   e.waiting[s] = null;
-  say(e, agentOf(s), "Booked at the listed price — confirmed by my owner's standing instruction.", "rules");
+  // A purchase is sold, a service is booked (an instant order on a cycle isn't a booking).
+  const booked = rolesFor(e.offer.category).flow === "book";
+  say(e, agentOf(s), booked ? `Booked at the listed price — ${shortName(e[s].name)} accepts bookings at this price straight away.`
+    : `Sold at the listed price — ${shortName(e[s].name)} accepts orders at this price straight away.`, "rules");
   settle(e);
   await save(db, e);
 }
@@ -604,7 +728,8 @@ function applyTheirs(e: Engagement, me: Side, t: Turn) {
 
 // MARK: - Owners (their devices)
 
-export interface Resolution { text?: string; share?: boolean; mandate?: Mandate; confirm?: boolean; decline?: boolean }
+/** `letter`: the offer letter the employer sends; `changes`: what a candidate asks to change in it (once). */
+export interface Resolution { text?: string; share?: boolean; mandate?: Mandate; confirm?: boolean; decline?: boolean; letter?: unknown; changes?: string }
 
 /** The owner's device resolves an inbox item: an answer (typed, or drafted from private notes and approved), a move
  *  with the private limit (used for this move only, never stored), a confirmation. Returns the turn to send if this
@@ -633,7 +758,7 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       }
     }
   } else if (item.kind === "move") {
-    if (r.decline) { e.phase = "closed"; out.decline = "My owner has decided not to go ahead. Thank you."; say(e, agentOf(s), out.decline, "owner"); }
+    if (r.decline) { e.phase = "closed"; out.decline = `${shortName(e[s].name)} has decided not to go ahead. Thank you.`; say(e, agentOf(s), out.decline, "owner"); }
     else if (r.mandate) {
       const res = await move(model, e, s, r.mandate, out);
       // Store the limit the owner used, so every device of theirs sees the same one. A delegated row keeps its
@@ -647,10 +772,67 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
         await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
         e.waiting[s] = null;
         await ask(db, e, s, { kind: "move", question: res.escalate, listPrice: e.offer.price ?? undefined });
-        say(e, "system", "No deal inside the limit yet — the owner can change it.");
+        say(e, "system", checking(e, s));
         await save(db, e);
         return { e, turn: null };
       }
+    }
+  } else if (item.kind === "offer_letter" || item.kind === "offer") {
+    // A letter is for the exact salary it was asked about; a finished or changed deal makes it stale.
+    if (e.phase !== "deal" || (item.proposalId && item.proposalId !== e.negotiation.deal?.id) || (item.kind === "offer" && e.offerLetter?.status !== "issued")) {
+      await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
+      throw new Stale(item.kind === "offer" ? "This offer letter has changed or ended — check the latest one." : "The salary changed since you were asked — check it before sending the letter.");
+    }
+    const who = shortName(e[s].name);
+    if (item.kind === "offer_letter" && r.decline) {
+      e.phase = "closed";
+      if (e.offerLetter) e.offerLetter = { ...e.offerLetter, status: "withdrawn", decidedAt: now() };
+      out.decline = `${who} has decided not to go ahead with an offer for this role. Thank you for your time.`;
+      say(e, agentOf(s), out.decline, "owner");
+    } else if (item.kind === "offer_letter") {
+      // The employer issues it — the letter is their confirmation, signed by their agent.
+      const prev = e.offerLetter, revising = prev?.status === "changes asked";
+      let fields;
+      try { fields = letterFrom(r.letter, e, now(), revising); } catch (err) { throw new Invalid((err as Error).message); }
+      if (fields.salary !== e.negotiation.deal!.price) {
+        const d = e.negotiation.deal!, p: Proposal = { id: newId(), price: fields.salary, terms: d.terms, round: d.round + 1 };
+        (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
+        e.negotiation.deal = p; e.negotiation.dealBy = s;
+      }
+      const letter: OfferLetter = { ...fields, issuedAt: now(), revision: (prev?.revision ?? 0) + 1, status: "issued", hash: "",
+        ...(prev?.changesAsked ? { changesAsked: prev.changesAsked } : {}) };
+      letter.hash = letterHash(e.id, letter);
+      if (signer && e[s].uid) letter.signature = signer(e[s].uid!, letter.hash);
+      e.offerLetter = letter;
+      e.negotiation.confirmed = { requester: false, provider: false };
+      e.negotiation.confirmed[s] = true; (e.negotiation.confirmedBy ??= {})[s] = "owner";
+      out.confirm = true; out.offerLetter = letter;
+      say(e, s, letter.revision > 1 ? "Sent a revised offer letter." : "Sent the offer letter.", "owner");
+      say(e, "system", `Offer letter: ${letter.role} · ${moneyText({ amount: letter.salary, currency: currencyOf(e), period: e.offer.unit })} · starts ${letter.start}${letter.mode ? ` · ${letter.mode}` : ""} · open until ${letter.validUntil}.`);
+      await askConfirm(db, e, other(s));
+    } else {
+      // The candidate decides — personally, every time.
+      const l = e.offerLetter!;
+      const note = (r.changes ?? r.text ?? "").trim().replace(/\s+/g, " ").slice(0, 300);
+      if (r.confirm) {
+        e.offerLetter = { ...l, status: "accepted", decidedAt: now() };
+        e.negotiation.confirmed[s] = true; (e.negotiation.confirmedBy ??= {})[s] = "owner";
+        out.confirm = true; out.offerLetter = e.offerLetter;
+        say(e, s, "Accepted the offer.", "owner");
+        settle(e);
+      } else if (r.changes !== undefined) {
+        if (l.changesAsked) throw new Invalid("You've already asked for changes once — accept or decline this letter.");
+        if (note.length < 3) throw new Invalid("Say what you'd like changed.");
+        e.offerLetter = { ...l, status: "changes asked", changesAsked: clean(note, names, [e[other(s)].name]) };
+        e.negotiation.confirmed = { requester: false, provider: false };
+        say(e, s, `Asked for changes: “${e.offerLetter.changesAsked}”`, "owner");
+        await askConfirm(db, e, other(s));
+      } else if (r.decline) {
+        e.offerLetter = { ...l, status: "declined", decidedAt: now() };
+        e.phase = s === "requester" ? "closed" : "declined";
+        out.decline = `${who} has decided not to accept the offer. Thank you.`;
+        say(e, s, `Declined the offer${note ? `: “${clean(note, names, [e[other(s)].name])}”` : "."}`, "owner");
+      } else throw new Invalid("Accept, decline, or ask for changes.");
     }
   } else if (item.kind === "confirm") {
     // An approval is for the exact deal it was asked about: a changed or finished deal makes it stale.
@@ -663,7 +845,7 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       // A deal offered in a direct chat: saying no keeps the conversation open for another offer.
       say(e, s, `Said no to ${moneyText({ amount: e.negotiation.deal?.price ?? 0, currency: currencyOf(e), period: e.offer.unit })}.`, "owner");
       e.phase = "asking"; e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.confirmed = { requester: false, provider: false }; e.negotiation.chatOffer = false;
-    } else if (r.decline) { e.phase = "closed"; out.decline = "My owner decided not to go ahead. Thank you."; say(e, s, "Walked away.", "owner"); }
+    } else if (r.decline) { e.phase = "closed"; out.decline = `${shortName(e[s].name)} decided not to go ahead. Thank you.`; say(e, s, "Walked away.", "owner"); }
     else {
       const over = await budgetCheck(db, e, s);
       if (over) throw new Refused(over);
@@ -691,9 +873,13 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
  * that doesn't divide evenly is split over two lines so the cart adds up to exactly what was said.
  */
 export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number, text: string | null, said = text ?? "", count: number | null = null, isTotal = true) {
+  // An employer who names a salary has shortlisted the applicant (they chose to talk money).
+  if (s === "provider" && onHold(e)) (e.hiring ??= {}).shortlisted = now();
   // A shop with no listing used to seal its shop name as the item. Seal the actual offer shown for confirmation.
   if (!e.offer.factId && said.trim()) e.offer.title = said.trim().slice(0, 160);
-  e.seller = sellerFrom(said, s) ?? e.seller ?? "provider";
+  // A listing with a price already settles who is paid (an employer's job post: the candidate); chat words only decide
+  // it in a chat with no listed price — "could you pay ₹38,000?" from a candidate never makes the employer the seller.
+  e.seller = e.offer.factId && e.offer.price != null ? (e.seller ?? "provider") : (sellerFrom(said, s) ?? e.seller ?? "provider");
   // A chat that didn't start from a listing names its item from the offer, so the cart, receipt and pickup pass say
   // what is being handed over (not the person's name).
   if (!e.offer.factId || e.offer.price == null) e.offer.title = dealItem(said) ?? e.offer.title;
@@ -723,8 +909,10 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   }
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
-  e.negotiation.confirmed = { requester: s === "requester", provider: s === "provider" };
-  (e.negotiation.confirmedBy ??= {})[s] = "owner";
+  // An offer is the offerer's confirmation — except in hiring, where a salary named is only agreed (the employer's
+  // letter and the candidate's decision on it settle it).
+  e.negotiation.confirmed = hireDeal(e) ? { requester: false, provider: false } : { requester: s === "requester", provider: s === "provider" };
+  if (!hireDeal(e)) (e.negotiation.confirmedBy ??= {})[s] = "owner";
   // An offer is the offerer's confirmation: a buyer's must fit their goal's budget.
   const over = await budgetCheck(db, e, s);
   if (over) throw new Refused(over);
@@ -752,7 +940,11 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   const left = (e.waiting[s]?.inbox ?? []).filter(id => !mine.includes(id));
   e.waiting[s] = left.length ? { ...e.waiting[s]!, inbox: left } : null;
   e.negotiation.chatOffer = true;
-  await ask(db, e, o, { kind: "confirm" });
+  // Hiring: a candidate is offered a salary to take, counter or walk away from; an employer offered one answers it
+  // with an offer letter (or a counter). Anything else: confirm.
+  if (hireDeal(e) && o === sellerOf(e)) await ask(db, e, o, { kind: "move", question: `${e[s].name} offers ${describeDeal(e)}. Take it, offer another ${rolesFor(e.offer.category).price}, or walk away.`,
+    listPrice: p.price, counter: { price: p.price, quantity: 1, total: p.price, by: e[s].name } });
+  else await askConfirm(db, e, o);
   await save(db, e);
 }
 
@@ -768,6 +960,14 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
  *  confirms next if it hasn't (its agent, if it may close deals, already has). */
 export async function takeOffer(db: Docs, e: Engagement, s: Side, text: string): Promise<Engagement> {
   say(e, s, text, "owner");
+  if (hireDeal(e)) {
+    for (const id of e.waiting[s]?.inbox ?? []) await db.update(INBOX, id, (x: InboxItem | null) => (x && (x.kind === "confirm" || x.kind === "move") ? { ...x, status: "done" } : x));
+    e.waiting[s] = null;
+    say(e, "system", `${e[s].name} took it: ${describeDeal(e)}. Next, the offer letter.`);
+    await askConfirm(db, e, buyerOf(e));
+    await save(db, e);
+    return e;
+  }
   for (const id of e.waiting[s]?.inbox ?? []) await db.update(INBOX, id, (x: InboxItem | null) => (x && (x.kind === "confirm" || x.kind === "move") ? { ...x, status: "done" } : x));
   const left: string[] = [];
   for (const id of e.waiting[s]?.inbox ?? []) if (((await db.get(INBOX, id)) as InboxItem | null)?.status === "open") left.push(id);
@@ -783,7 +983,7 @@ export async function takeOffer(db: Docs, e: Engagement, s: Side, text: string):
     const l = await limitFor(db, e, o);
     if (mayClose(l, e, o, e.negotiation.deal)) {
       e.negotiation.confirmed[o] = true; (e.negotiation.confirmedBy ??= {})[o] = "mandate";
-      say(e, agentOf(o), "Confirmed — it's inside the limit my owner set.", "rules"); settle(e);
+      say(e, agentOf(o), `Confirmed on ${shortName(e[o].name)}'s behalf.`, "rules"); settle(e);
     } else if (hasOwner(e, o) && !e.waiting[o]?.inbox.length) await ask(db, e, o, { kind: "confirm" });
   }
   await save(db, e);
@@ -800,17 +1000,18 @@ export async function respondToOffer(db: Docs, model: Model | null, e: Engagemen
   for (let round = 0; round < 12 && e.phase === "deal" && e.negotiation.deal && e.negotiation.dealBy; round++) {
     const s = other(e.negotiation.dealBy), l = await limitFor(db, e, s), deal = e.negotiation.deal;
     if (!l || e.negotiation.confirmed[s]) break; // no delegated limit: the owner decides (they've been asked)
+    if (s === "provider" && onHold(e)) break; // an unshortlisted application: the employer decides, not their agent
     const c = ctx(e, s, l.mandate);
     if (acceptable(deal, c)) {
       agreed = true;
       const fewer = s !== sellerOf(e) && e.wanted && unitsOf(e) < e.wanted;
-      if (mayClose(l, e, s, deal) && !fewer && !(await budgetCheck(db, e, s))) {
+      if (mayClose(l, e, s, deal) && !fewer && !hireDeal(e) && !(await budgetCheck(db, e, s))) {
         await doneConfirms(db, e, s);
         e.negotiation.confirmed[s] = true;
         (e.negotiation.confirmedBy ??= {})[s] = "mandate";
-        say(e, agentOf(s), "Confirmed — it's inside the limit my owner set.", "rules");
+        say(e, agentOf(s), `Confirmed on ${shortName(e[s].name)}'s behalf.`, "rules");
         settle(e);
-      } else say(e, agentOf(s), `${describe(deal, c)} works for us — ${s === sellerOf(e) ? e[s].name : "my owner"} gives the final yes.`, "rules");
+      } else say(e, agentOf(s), `${describe(deal, c)} works for us — ${shortName(e[s].name)} gives the final yes.`, "rules");
       break;
     }
     // Outside the limit: the agent negotiates instead of asking its owner yes or no.
@@ -821,13 +1022,14 @@ export async function respondToOffer(db: Docs, model: Model | null, e: Engagemen
     const r = await move(model, e, s, l.mandate, out, true);
     if (r?.escalate) {
       if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined });
-      say(e, "system", s === sellerOf(e) ? "Their agent is checking with them." : "Your agent needs you: no deal inside your limit yet.");
+      say(e, "system", checking(e, s));
       break;
     }
     if (!out.proposal) break;
     // The counter is the offer on the table now. It's this side's confirmation only if its owner lets it close deals.
     e.negotiation.deal = out.proposal; e.negotiation.dealBy = s; e.phase = "deal"; e.negotiation.chatOffer = true;
-    const own = mayClose(l, e, s, out.proposal);
+    // A hire is never closed by a standing mandate: the offer letter is the people's.
+    const own = mayClose(l, e, s, out.proposal) && !hireDeal(e);
     e.negotiation.confirmed = { requester: s === "requester" && own, provider: s === "provider" && own };
     if (e.negotiation.confirmed[s]) (e.negotiation.confirmedBy ??= {})[s] = "mandate";
     const o = other(s);
@@ -841,7 +1043,7 @@ export async function respondToOffer(db: Docs, model: Model | null, e: Engagemen
   }
   // Terms both agents accept: whoever still has to confirm them (owners who confirm deals themselves) is asked once.
   if (agreed && e.phase === "deal") for (const x of ["requester", "provider"] as Side[])
-    if (!e.negotiation.confirmed[x] && !e.waiting[x]?.inbox.length && hasOwner(e, x)) await ask(db, e, x, { kind: "confirm" });
+    if (!e.negotiation.confirmed[x] && !e.waiting[x]?.inbox.length && hasOwner(e, x)) await askConfirm(db, e, x);
   await save(db, e);
   return e;
 }
@@ -852,9 +1054,11 @@ export function summary(e: Engagement): string {
   return `${e.phase}${deal} · ${last.slice(0, 80)}`;
 }
 
+/** `ownerPays`: the listing's owner pays (an employer's job post), so the requester is the one paid. */
 export function fresh(args: { id?: string; briefId: string | null; brief: SharedBrief; requester: Engagement["requester"]; provider: Engagement["provider"];
-  offer: Engagement["offer"] }): Engagement {
+  offer: Engagement["offer"]; ownerPays?: boolean }): Engagement {
   return { id: args.id ?? newId(), taskId: null, contextId: null, briefId: args.briefId, requester: args.requester, provider: args.provider,
+    ...(args.ownerPays ? { seller: "requester" as Side } : {}),
     participants: [args.requester.uid, args.provider.uid].filter(Boolean) as string[], title: args.brief.title, brief: args.brief, offer: args.offer,
     phase: "asking", waiting: { requester: null, provider: null }, gathered: false, policy: policyHash(policy()),
     qa: args.brief.questions.map(q => ({ id: newId(), from: "requester" as Side, question: q, status: "open" as const, required: true })),
