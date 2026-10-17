@@ -13,11 +13,16 @@ import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.
 import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
+import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { notesReadBy, privacyFacts } from "./processing.js";
-import { $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
+import { avatarHTML, $, busy, esc, id, label, money, now, tag, toast } from "./ui.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
+// Incognito (Settings): remembered on this device only as the on/off choice itself.
+try { S.incognito = localStorage.getItem("collab-incognito") === "on"; } catch { S.incognito = false; }
+session.incognito = S.incognito;
+
 const root = $("#root");
 
 // MARK: - Boot
@@ -108,7 +113,7 @@ async function boot() {
   addEventListener("online", () => { toast("Back online — syncing what you did offline."); catchUp().then(() => paint()); });
   addEventListener("offline", () => { toast(engine.here ? "Offline — Gemma answers questions about your notes on this device. New notes are saved here and sync later." : "Offline — showing what's saved on this device. New notes sync when you're back."); paint(); });
   if (navigator.onLine) catchUp();
-  S.sessions = (await local.all("sessions")).sort((a, b) => b.updatedAt - a.updatedAt);
+  S.sessions = (await local.all("sessions")).map(s => ({ ...s, persisted: true })).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
   syncChats();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) syncChats(); });
@@ -116,9 +121,10 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section>
       <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
+  startPanel(paint);
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
   voiceInput();
   $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
@@ -169,8 +175,7 @@ function paintSidebar() {
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
       ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
-        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}
-        ${!session.pushOn && session.push && !("Notification" in window && Notification.permission === "denied") ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
+        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
         ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
@@ -179,7 +184,7 @@ function paintSidebar() {
         ${navRow("sharing", "◈", "Privacy", "")}
         ${navRow("settings", "⚙", "Settings", "")}
       </div>
-      <div class="stack" style="gap:4px">${label("Your agent's address")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a>
+      <div class="stack" style="gap:4px">${label("Your agent")}<button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
         ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
     </div>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
@@ -190,6 +195,8 @@ const navRow = (screen, ico, title, trail) => `<button class="${S.screen === scr
 function groupSessions(list) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const t = today.getTime() / 1000;
+  // A chat started with "Don't keep history" on is never listed: it lives only while it's open.
+  list = list.filter(s => !s.incognito || s.id === S.current);
   const g = [{ title: "Today", items: list.filter(s => s.updatedAt >= t) }, { title: "Earlier", items: list.filter(s => s.updatedAt < t) }];
   return g.filter(x => x.items.length);
 }
@@ -197,11 +204,14 @@ function groupSessions(list) {
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
   const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+  const detail = panelDetail();
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
-    <span class="end small faint">@${esc(S.profile.handle)}</span>`;
-  $("#panel-title").innerHTML = S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
-  $("#app").classList.toggle("split", S.screen !== "chat");
-  $("#panel").hidden = S.screen === "chat";
+    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="New chats aren't kept; nothing is remembered">◐ Not kept</span> ` : ""}@${esc(S.profile.handle)}</span>`;
+  // The right panel shows a screen, or something opened from it (a deal, a pass, a log…) with a way back.
+  $("#panel-title").innerHTML = detail ? `<button class="btn quiet compact" data-act="panel-close">‹ ${S.screen === "chat" ? "Close" : "Back"}</button>${label(detail.title, "sq ink")}`
+    : S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
+  $("#app").classList.toggle("split", S.screen !== "chat" || !!detail);
+  $("#panel").hidden = S.screen === "chat" && !detail;
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
   $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
 }
@@ -238,7 +248,8 @@ async function paintContent(soft = false) {
   painting = true;
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
-    const chat = `<div class="inner">${await chatHTML()}</div>`, side = S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
+    const detail = panelDetail();
+    const chat = `<div class="inner">${await chatHTML()}</div>`, side = detail ? `<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>` : S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
     const html = chat + "\u0000" + side;
     // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
     if (soft && html === lastHTML) return;
@@ -246,9 +257,9 @@ async function paintContent(soft = false) {
     lastHTML = html;
     if (chatChanged || !soft) el.innerHTML = chat;
     panel.innerHTML = side;
-    animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen); lastScreen = S.screen;
+    animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen && !panelDetail()); lastScreen = S.screen;
     if (chatChanged && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
-    if (!soft && S.screen !== "chat") panel.scrollTop = 0;
+    if (!soft && (S.screen !== "chat" || panelDetail())) panel.scrollTop = 0;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
     painting = false;
@@ -270,7 +281,7 @@ async function chatHTML() {
   // A listing being made gets its terms suggested at once, in the background (see prefillTerms).
   cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => {
     if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i);
-    if (c.type === "offer" && c.step === "review" && c.missing?.length && !c.answersTried) prefillAnswers(cur.id, m.id, i);
+    if (c.type === "offer" && c.step === "review" && c.missing?.length && c.answersTried !== ANSWERS_V) prefillAnswers(cur.id, m.id, i);
   }));
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
@@ -289,15 +300,18 @@ function howItWorks() {
     <div class="steps-plain"><div><b>1</b><span>Say what you need</span></div><div><b>2</b><span>Agents ask and bargain</span></div><div><b>3</b><span>You confirm, pay, collect</span></div></div></div>`;
 }
 
+/** The start of a chat: one question, your words, and a few things your agent thinks you might want next. */
+let startIdeas = null;
 function emptyChat() {
-  // Each tile: what it does, and the example it puts in the box (shown short).
-  const tiles = [["Find", "Need a 2BHK to rent in Indiranagar, budget 36,000 a month, I have a small dog", "2BHK in Indiranagar, pets ok", "peri"],
-    ["Sell", "I teach tabla online and at home in Jayanagar, ₹700 an hour, lowest 600", "Tabla lessons, ₹700/hr", ""],
-    ["Remember", "Remember that I teach guitar on weekends and I'm free after 6 pm", "Free after 6 pm on weekends", ""],
-    ["Ask your notes", "What did I note about guitar?", "What did I note about guitar?", ""]];
-  return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It deals with anyone's agent for you.</span></h1>
-    <div class="grid-tiles">${tiles.map(([l, p, short, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(short)}</p><span class="arrow">↗</span></button>`).join("")}</div>
-    ${privacyCard()}`;
+  if (startIdeas === null) { startIdeas = []; cached("/api/start", 120_000).then(r => { startIdeas = r.ideas ?? []; if (S.screen === "chat") paintContent(true); }).catch(() => {}); }
+  const ideas = startIdeas ?? [];
+  return `${howItWorks()}<div class="start">
+    <span class="label sq">step 1 of 2 · say it in your words</span>
+    <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
+    <h1 class="headline">What are you looking for right now?</h1>
+    <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
+    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="prompt" data-text="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas"><span class="small faint">Thinking of what you might want…</span></div>`}
+    ${privacyCard()}</div>`;
 }
 
 /**
@@ -307,7 +321,14 @@ function emptyChat() {
  */
 async function sellFromPhoto(file) {
   const input = $("#input"), caption = input.value.trim();
-  toast("Reading your photo…");
+  if (!/^image\//.test(file.type)) return toast("That isn't a photo. Choose a JPEG, PNG or WebP.");
+  // The photo shows at once, with what's happening to it, in the chat — not a toast that vanishes.
+  let cur = S.sessions.find(s => s.id === S.current && !s.to);
+  if (!cur) { cur = { id: id(), title: "From a photo", messages: [], updatedAt: now() }; S.current = cur.id; }
+  const preview = URL.createObjectURL(file);
+  const msg = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", photo: preview, cards: [] };
+  cur.messages.push(msg); S.screen = "chat"; paint();
+  const fail = async why => { msg.pending = null; msg.text = `${why} Type what it is instead, or try a closer, brighter photo.`; msg.cards = [{ type: "suggest", options: [{ label: "Try another photo", text: "" }], hint: "" }]; await saveSession(cur); paint(); };
   try {
     const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
     const cv = Object.assign(document.createElement("canvas"), { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
@@ -315,10 +336,11 @@ async function sellFromPhoto(file) {
     const image = cv.toDataURL("image/jpeg", 0.82);
     const r = await api("/api/offers/photo", { image, mimeType: "image/jpeg", caption });
     input.value = "";
+    cur.messages = cur.messages.filter(m => m !== msg); await saveSession(cur);
     // The preview is the copy on this phone: the server shows the photo to others only once it's on a public listing.
-    const preview = URL.createObjectURL(await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.82)));
-    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: preview, condition: r.condition }))) toast("Couldn't make a listing from that — try typing what it is.");
-  } catch (err) { toast(err.message || "Couldn't read that photo."); }
+    const small = URL.createObjectURL(await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.82)));
+    if (!(await publicIntake(r.text, null, { id: r.photo.id, url: small, condition: r.condition }))) await fail("Couldn't make a listing from that.");
+  } catch (err) { await fail(err.status === 422 ? "Couldn't tell what's in the photo." : err.status === 413 ? "That photo is too large." : (err.message || "Couldn't read that photo.")); }
 }
 
 /** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
@@ -408,11 +430,14 @@ async function prefillTerms(sid, mid, i, again = false) {
   await saveSession(now_.s); paintContent(true);
 }
 
+/** Bumped when suggestions change, so cards made earlier (whose first try came back empty) ask once more. */
+const ANSWERS_V = 2;
+
 /** Likely answers to the listing's common questions, suggested by Gemini from its words; the owner accepts them. */
 async function prefillAnswers(sid, mid, i) {
   const f = cardAt(sid, mid, i);
-  if (!f || f.c.answersTried) return;
-  f.c.answersTried = true; await saveSession(f.s);
+  if (!f || f.c.answersTried === ANSWERS_V) return;
+  f.c.answersTried = ANSWERS_V; await saveSession(f.s);
   const r = await api("/api/offers/answers", { text: f.c.publicText ?? f.c.text, questions: f.c.missing.map(m => ({ label: m.label, ask: m.ask, options: m.options ?? [] })) }).catch(() => null);
   const now_ = cardAt(sid, mid, i);
   if (!now_ || !r?.answers) return;
@@ -440,20 +465,15 @@ async function openPass(path) {
   const eng = live.engagements.get(pid);
   const seller = eng ? eng[eng.seller ?? "provider"].uid === session.uid : d.sellerHandle === S.profile.handle;
   const qr = seller ? "" : await passQR(link);
-  document.querySelector(".overlay")?.remove();
-  const o = document.createElement("div");
-  o.className = "overlay";
-  o.setAttribute("role", "dialog"); o.setAttribute("aria-modal", "true");
-  const draw = () => { o.innerHTML = `<div class="sheet">${passHTML(d, { qr, seller, link, manage: !!eng })}<button class="btn secondary" data-act="overlay-close">Close</button></div>`; };
+  const body = () => passHTML(d, { qr, seller, link, manage: !!eng });
+  const o = { querySelector: s => document.querySelector(`#panel ${s}`), remove: closePanel };
+  const draw = () => paintContent(true);
   // Changing or cancelling a booking, from the pass: the result is the same pass, redrawn.
   const booking = async body => {
     const x = await api(`/api/engagements/${encodeURIComponent(pid)}/booking`, body);
     live.engagements.set(x.id, x); d = await load(); draw(); refresh(openScreen);
   };
-  draw();
-  document.body.append(o);
-  o.addEventListener("click", async e => {
-    if (e.target === o || e.target.closest('[data-act="overlay-close"]')) return o.remove();
+  openPanel({ title: passKind(d).name, render: body, handle: async e => {
     if (e.target.closest('[data-act="pass-move"]')) {
       const box = o.querySelector(".pass-times");
       box.innerHTML = `<span class="spinner"></span>`;
@@ -480,7 +500,49 @@ async function openPass(path) {
       o.querySelector(".pass")?.insertAdjacentHTML("afterend", `<p class="small" role="alert" style="color:var(--danger);margin:0">${esc(err.message)}</p>`);
       refresh(openScreen);
     }
-  });
+  } });
+}
+
+/** A conversation in the side panel (its card, live: redrawn on every refresh while it's open). */
+function showEngagement(id) {
+  const e = live.engagements.get(id);
+  if (!e) return toast("That conversation isn't loaded yet.");
+  const them = e.requester.uid === session.uid ? e.provider : e.requester;
+  S.panelEng = id; S.panelLog = null;
+  openPanel({ title: `Your agent ⇄ ${them.name}'s agent`, render: () => { const x = live.engagements.get(id); return x ? `<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}` : ""; } });
+}
+
+/** What the agents said, as a stream: one conversation, or every conversation, newest last, with filters. */
+function logStream(ids, filter = "all") {
+  const mine = e => (e.requester.uid === session.uid ? "requester" : "provider");
+  const rows = [];
+  for (const id of ids) {
+    const e = live.engagements.get(id); if (!e) continue;
+    const side = mine(e), them = side === "requester" ? e.provider : e.requester;
+    const state = e.phase === "agreed" ? "won" : ["closed", "declined"].includes(e.phase) ? "lost" : "open";
+    if (filter !== "all" && filter !== state) continue;
+    for (const ev of e.events) rows.push({ at: ev.at, who: ev.who, text: ev.text, by: ev.by, them: them.name, id: e.id, side, state });
+  }
+  rows.sort((a, b) => a.at - b.at);
+  const who = r => (r.who === "system" ? "" : r.who.startsWith(r.side) ? (r.who.endsWith("_agent") ? "your agent" : "you") : `${r.them.split(" ")[0]}'s agent`);
+  const kind = r => (r.who === "system" ? "note" : /offer|counter|\₹|price/i.test(r.text) ? "propose" : /confirm|agreed|accept/i.test(r.text) ? "accept" : /declin|walk|no deal|end/i.test(r.text) ? "decline" : "say");
+  return rows.length ? rows.map(r => `<div class="lg ${r.who === "system" ? "sys" : r.who.startsWith(r.side) ? "me" : "them"}"><span class="lg-t">${new Date(r.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
+    <span class="lg-who">${ids.length > 1 ? `<span class="lg-name">${esc(r.them.split(" ")[0])}</span> ` : ""}${esc(who(r))}${r.who === "system" ? "" : ` → <span class="lg-kind ${kind(r)}">${kind(r)}</span>`}</span>
+    <span class="lg-text">${esc(r.text)}</span></div>`).join("") : `<p class="small muted">Nothing here yet.</p>`;
+}
+function showLog(id = null) {
+  const ids = id ? [id] : [...live.engagements.keys()];
+  S.panelLog = { id, filter: S.panelLog?.id === id ? S.panelLog.filter ?? "all" : "all" }; S.panelEng = null;
+  const draw = () => {
+    const f = S.panelLog.filter, n = ids.map(x => live.engagements.get(x)).filter(Boolean);
+    const won = n.filter(e => e.phase === "agreed").length, lost = n.filter(e => ["closed", "declined"].includes(e.phase)).length, open = n.length - won - lost;
+    return `<div class="row small"><span class="muted"><b>${n.length}</b> conversation${n.length === 1 ? "" : "s"} · ${won} ✓ · ${lost} ✕ · ${open} open</span>
+      <span class="seg end">${[["all", "all"], ["won", "won"], ["lost", "lost"], ["open", "open"]].map(([k, t]) => `<button class="${f === k ? "on" : ""}" data-act="log-filter" data-k="${k}">${t}</button>`).join("")}</span></div>
+      <div class="lg-stream">${logStream(ids, f)}</div>`;
+  };
+  const e = id ? live.engagements.get(id) : null, them = e ? (e.requester.uid === session.uid ? e.provider : e.requester).name : null;
+  openPanel({ title: them ? `Agent log · ${them}` : "Agent log", render: draw, handle: ev => { const b = ev.target.closest('[data-act="log-filter"]'); if (b) { S.panelLog.filter = b.dataset.k; paintContent(true); } } });
+  const body = document.querySelector("#panel .lg-stream"); if (body) body.scrollTop = body.scrollHeight;
 }
 
 /** The owner's own card, as customers see it — nothing can be sent from it. */
@@ -489,12 +551,21 @@ async function previewCard(el = null) {
   const p = await person(S.profile.handle, true);
   if (el) busy(el, false);
   if (!p) return toast("Couldn't load your card.");
-  document.querySelector(".overlay")?.remove();
-  const o = document.createElement("div");
-  o.className = "overlay";
-  o.innerHTML = `<div class="sheet">${storeCard(storeCardOf(p), { preview: true })}<button class="btn secondary" data-act="overlay-close">Close preview</button></div>`;
-  document.body.append(o);
-  o.addEventListener("click", e => { if (e.target === o || e.target.closest('[data-act="overlay-close"]')) o.remove(); });
+  openPanel({ title: "Your card, as others see it", html: storeCard(storeCardOf(p), { preview: true }) });
+}
+
+/** Your A2A agent card — how any agent finds and talks to yours — shown readably, with the JSON one tap away. */
+async function showAgentCard() {
+  const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
+  const c = await fetch(url).then(r => r.json()).catch(() => null);
+  if (!c) return toast("Couldn't load your agent card.");
+  const skills = (c.skills ?? []).map(s => `<div class="card slim"><b>${esc(s.name)}</b>${s.description ? `<span class="small muted">${esc(s.description)}</span>` : ""}${s.examples?.length ? `<span class="small faint">e.g. “${esc(s.examples[0])}”</span>` : ""}</div>`).join("");
+  openPanel({ title: "Your agent card", html: `
+    <div class="card"><div class="row">${avatarHTML(S.profile.name, S.profile.handle, 40)}<div><b>${esc(c.name ?? S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)} · A2A v${esc(c.protocolVersion ?? c.version ?? "1.0")}</span></div></div>
+      <span class="small muted">${esc(c.description ?? "")}</span>
+      <div class="row"><button class="btn secondary compact" data-act="copy" data-text="${esc(url)}">Copy link</button><button class="btn quiet compact" data-act="copy" data-text="${esc(JSON.stringify(c, null, 2))}">Copy JSON</button><a class="btn quiet compact" href="${esc(url)}" target="_blank" rel="noopener">Open ↗</a></div></div>
+    ${skills ? `${label("What it offers", "sq")}${skills}` : ""}
+    <details class="more"><summary>JSON</summary><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 
 async function openDirect(handle) {
@@ -644,7 +715,13 @@ async function orderFromCard(a, el) {
 
 // MARK: - Sessions
 
-async function saveSession(s) { s.updatedAt = now(); await local.put("sessions", s); S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)]; upload(s); }
+async function saveSession(s) {
+  s.updatedAt = now();
+  // Incognito: a chat started while it's on lives only in memory — never on this device, never in the account.
+  if (S.incognito && !s.persisted) s.incognito = true;
+  if (!s.incognito) { s.persisted = true; await local.put("sessions", s); upload(s); }
+  S.sessions = [s, ...S.sessions.filter(x => x.id !== s.id)];
+}
 
 // Chat history also lives in the account (owner-only), so the installed app, other browsers and other devices show
 // the same chats. Uploads wait a moment so a burst of edits is one write.
@@ -683,9 +760,7 @@ async function send(text, offerFactId = null) {
   let cur = S.sessions.find(s => s.id === S.current);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
   const user = { id: id(), role: "user", text, at: now() };
-  const reply = { id: id(), role: "agent", text: "", at: now(), pending: "Thinking", cards: [] };
-  const phrases = ["Thinking", "Reading your context", "Working it out", "Nearly there"]; let ph = 0;
-  const ticker = setInterval(() => { const l = document.querySelector(".thinking .label"); if (l) l.textContent = phrases[++ph % phrases.length]; }, 1800);
+  const reply = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", cards: [] };
   cur.messages.push(user, reply);
   await saveSession(cur);
   S.screen = "chat";
@@ -706,7 +781,6 @@ async function send(text, offerFactId = null) {
     Object.assign(reply, { pending: null, text: e.status && e.status < 500 ? e.message : `Something went wrong: ${e.message}`,
       ...(e.data?.suggest ? { cards: [{ type: "suggest", options: [{ label: e.data.suggest, text: e.data.suggest }], hint: "Sends it as your offer." }] } : {}) });
   }
-  clearInterval(ticker);
   await saveSession(cur);
   S.sending = false;
   paint();
@@ -720,7 +794,7 @@ const findCard = el => {
 
 // MARK: - Actions
 
-function openScreen(screen, focus) { S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); paint(); }
+function openScreen(screen, focus) { S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
 
 function onEdit(e) {
   const el = e.target;
@@ -787,6 +861,11 @@ async function onClick(e) {
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
+    if (a === "agent-card") return showAgentCard();
+    if (a === "eng-open") return showEngagement(el.dataset.id);
+    if (a === "eng-log") return showLog(el.dataset.id);
+    if (a === "agent-stream") return showLog(null);
+    if (a === "copy") { await navigator.clipboard.writeText(el.dataset.text ?? el.dataset.link ?? "").catch(() => {}); return toast("Copied."); }
     // The seller's quick moves on a request (their side of the conversation card).
     if (a === "seller-quote" || a === "seller-counter-send") {
       const price = a === "seller-quote" ? Number(el.dataset.price) : Number(document.querySelector(`[data-counter-price="${CSS.escape(el.dataset.id)}"]`)?.value);
@@ -947,15 +1026,15 @@ async function onClick(e) {
     }
     if (a === "eng-receipt") {
       busy(el, true);
-      const box = document.querySelector(`[data-receipt="${CSS.escape(el.dataset.id)}"]`);
       const r = await api(`/api/engagements/${el.dataset.id}/receipt`);
+      busy(el, false);
       const when = t => new Date(t * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-      const by = s => (r.confirmedBy[s] === "mandate" ? "their standing instruction" : "the owner");
-      box.innerHTML = `<div class="receipt">${receiptHTML(r, live.engagements.get(el.dataset.id))}
-        <span class="small muted">Agreed ${when(r.at)}${r.registeredAt ? ` · registered ${when(r.registeredAt)}` : ""}</span>
-        <a class="btn secondary compact" href="${esc(r.verifyPath)}" target="_blank" rel="noopener">Public verification & download</a><span class="small faint">Anyone with that link can view the receipt.</span>
-        <details class="more"><summary>How this is checked</summary>
-          <span class="small muted">When both sides confirmed, Collab hashed the terms, both parties and the time (SHA-256) and registered that hash. Verify recomputes it from the conversation: any change to price, terms or parties breaks the match. Confirmed by ${by("requester")} (requester) and ${by("provider")} (provider).</span>
+      const by = s => (r.confirmedBy[s] === "mandate" ? "a standing instruction" : "in person");
+      openPanel({ title: "Receipt", html: `<div class="receipt">${receiptHTML(r, live.engagements.get(el.dataset.id))}
+        <span class="small muted">Agreed ${when(r.at)} · ${r.matches ? "signed and unchanged" : "changed since"}</span>
+        <div class="row"><a class="btn secondary compact" href="${esc(r.verifyPath)}" target="_blank" rel="noopener">Verify ↗</a><span class="small faint">Anyone with the link can check it.</span></div>
+        <details class="more"><summary>How it's checked</summary>
+          <span class="small muted">Both confirmed (${by("requester")} / ${by("provider")}); Collab signed a fingerprint of the terms, people and time. Any change breaks it.</span>
           <code class="small" style="overflow-wrap:anywhere">${esc(r.hash)}</code></details>
         ${r.payment ? `<details class="more"><summary>Payment (AP2) · ${r.payment.status === "paid" ? "paid" : r.payment.status === "outside" ? "settled outside the app" : "waiting"}</summary>
           <dl class="kv small">
@@ -966,7 +1045,7 @@ async function onClick(e) {
             <dt>AP2 mandates</dt><dd>Checkout + Payment Mandates (SD-JWT) by @${esc(r.payment.ap2.checkout.buyer.handle)}'s agent, bound to the checkout hash · ${r.payment.check?.ap2?.mandatesOk ? tag("✓ valid", "fresh") : tag("doesn't match", "danger")}</dd>
             <dt>Instrument</dt><dd>${r.payment.ap2.instrument.type === "google_pay" ? `Google Pay · ${esc(r.payment.ap2.instrument.description ?? r.payment.ap2.instrument.network ?? "card")}` : "In the app"}</dd>` : ""}
           </dl>
-          <span class="small muted">AP2 (Agent Payments Protocol): the agent of whoever offers it signs a cart for exactly the agreed terms; the paying side's agent signs a payment against that cart only after Pay is tapped. The payment goes back to the first agent over A2A.</span></details>` : ""}</div>`;
+          <span class="small muted">AP2: one agent signs the cart for the agreed terms; the other signs the payment only after Pay is tapped.</span></details>` : ""}</div>` });
       return;
     }
     if (screens[S.screen]?.act && await screens[S.screen].act(a, el, S, { paint, toast, openScreen, openDirect, publicIntake, openPass })) return;
