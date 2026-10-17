@@ -282,7 +282,7 @@ function offerCard(c, at) {
     ${c.missing?.length && !o && c.basics ? `<div class="stack" style="gap:8px">${label("Common questions · Public", "sq")}${c.missing.map(m => {
       const ans = c.missingAnswers?.[m.label] ?? "";
       return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
-        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : sug === op ? "suggested" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}${sug === op ? (c.guessedAnswers?.[m.label] ? " · guess — check" : " · suggested") : ""}</button>`).join("")}</div>` : ""}
+        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
         <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
     }).join("")}</div>` : ""}
     ${o ? offerEssentials(c, at) : ""}
@@ -324,7 +324,7 @@ function offerImprovements(c, at) {
     questions: () => `<div class="stack" style="gap:8px">${pending ? `<div class="row"><button class="btn accent compact" data-act="offer-use-suggested" ${at}>Use these ${pending} suggested answers</button><span class="small faint">From your words, or Gemini's best guess — tap any to change</span></div>` : ""}${c.missing.map(m => {
       const ans = c.missingAnswers?.[m.label] ?? "", sug = !String(ans).trim() ? c.suggestedAnswers?.[m.label] : null;
       return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
-        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
+        ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : sug === op ? "suggested" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}${sug === op ? (c.guessedAnswers?.[m.label] ? " · guess — check" : " · suggested") : ""}</button>`).join("")}</div>` : ""}
         <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
     }).join("")}<span class="small faint">Public — answered once, so others' agents don't ask you.</span></div>`,
     terms: () => `<div class="stack" style="gap:6px"><span class="small muted">Shown on your card and in every receipt. Edit or clear any.</span>
