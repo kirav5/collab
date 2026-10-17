@@ -224,7 +224,7 @@ function briefCard(c, at) {
     ${s.requirements.length ? `<div class="row">${s.requirements.map((r, j) => `<span class="chip req ${r.strength === "required" ? "on" : ""}"><button class="linkish" data-act="brief-strength" data-j="${j}" ${at} title="Tap to switch must-have / nice-to-have">${esc(r.value)} · ${r.strength === "required" ? "must" : "nice"}</button><button class="linkish x" data-act="brief-drop" data-j="${j}" ${at} aria-label="Remove ${esc(r.label)}">×</button></span>`).join("")}</div>` : ""}
     <div class="privacy-split">
       <div>${label(`Shared with ${providers}`, "fresh")}<span class="small">What you need, ${esc(need.place.name)}${mode ? ` · ${esc(mode.toLowerCase())}` : ""}${s.requirements.length ? " · your must-haves" : ""}${s.about?.length ? " · your profile" : ""}${s.budget ? ` · a ${esc(R.price)} range (${esc(s.budget)})` : ` · no ${esc(R.price)}`}</span></div>
-      <div>${label("Kept private", "peri")}<span class="small">${cap(limitWords(paid))}, your notes, and your exact address and phone — never shared</span></div>
+      <div>${label("Kept private", "peri")}<span class="small">${cap(limitWords(paid))}, and your exact address and phone — never shared</span></div>
     </div>
     <details class="more"><summary>Exactly what ${esc(providers)}' agents get</summary><dl class="kv small">
       <dt>Title</dt><dd>${esc(s.title)}</dd><dt>Details</dt><dd>${esc(s.summary)}</dd><dt>Where</dt><dd>${esc(need.place.name)}${mode ? ` · ${esc(mode.toLowerCase())}` : ""}</dd>
@@ -307,7 +307,7 @@ function matchesCard(c, at) {
         </span></span>
     </label>`)).join("")}
     ${found.length > 3 && !c.showAll ? `<button class="btn quiet compact" data-act="matches-more" ${at}>More found · ${found.length - 3}</button><span class="small faint">Your agent recommends the three above.</span>` : ""}
-    <div class="row"><button class="btn accent" data-act="brief-engage" ${at}>Ask their agents</button>${watch}<span class="small faint">Your limit and private notes are never shared.</span></div>
+    <div class="row"><button class="btn accent" data-act="brief-engage" ${at}>Ask their agents</button>${watch}<span class="small faint">Your limit and contact details are never shared.</span></div>
   </div>`;
 }
 
@@ -459,7 +459,7 @@ function offerImprovements(c, at) {
     prices: () => `<div class="stack" style="gap:4px">${(c.insights ?? []).map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>`,
     privacy: () => `<div class="privacy-split">
         <div>${label(`Public — ${L.responders}' agents see`, "fresh")}<span class="small">The text above, your ${esc(L.price)} (${money(o.price.amount, o.price.period)}), ${esc(o.place.name)}${c.missing?.length ? ", the details you answer" : ""}${c.hoursOn ? ", your free times" : ""} and your terms</span></div>
-        <div>${label("Private — never shared", "peri")}<span class="small">${L.pays ? "The most you'd pay" : "The lowest you'll accept"}, and your private notes</span></div></div>`,
+        <div>${label("Private — never shared", "peri")}<span class="small">${L.pays ? "The most you'd pay" : "The lowest you'll accept"}</span></div></div>`,
   };
   return `<div class="stack" style="gap:6px">${label("Improve your listing · optional", "sq")}
     <div class="improve-list">${parts.map(([k, t, done, , status]) => `<details class="improve ${done ? "done" : ""}" ${open[k] ? "open" : ""}>
@@ -896,7 +896,7 @@ function dealBlock(e, mine) {
       if (!o.uid?.startsWith("demo-")) return "";
       const theirs = joiningBlock(e, other, esc(shortName(e[mine].name)), true);
       return /data-act="join-/.test(theirs) ? `<div class="card slim">${label(`For ${esc(shortName(o.name))} · demo`, "sq")}<span class="small faint">Their phone is simulated in the demo — you're marking it as them.</span>${theirs}</div>` : ""; })()}
-    <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button></div>
+    <div class="row" data-receipt="${id}"><button class="linkish small receipt-btn" data-act="eng-receipt" data-id="${id}">Receipt ›</button></div>
   </div>`;
   let pay;
   // A deal whose money doesn't move in the app (a job's salary): no cart, no pass — it closes on joining.
@@ -929,7 +929,7 @@ function dealBlock(e, mine) {
     ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed", "cancelled"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
     ${dealTalk(e, mine, buyer, them, id)}
     ${mine === buyer && e.offer?.factId && (p?.status === "paid" || p?.status === "outside") && f !== "cancelled" ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ ${passKind(e) === "booking" ? "Book again" : "Get it again"}</button><span class="small faint">Same thing${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
-    <div class="row" data-receipt="${id}"><button class="btn quiet compact receipt-btn" data-act="eng-receipt" data-id="${id}">✓ Deal record · verify</button><span class="end">${fell}</span></div>
+    <div class="row" data-receipt="${id}"><button class="linkish small receipt-btn" data-act="eng-receipt" data-id="${id}">Receipt ›</button><span class="end">${fell}</span></div>
   </div>`;
 }
 

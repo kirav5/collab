@@ -284,7 +284,7 @@ export const screens = {
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
           <textarea class="field" name="text" rows="2" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
-          <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Only me (never shared)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
+          <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Private (not listed — your agent may use it)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
         ${remembered.length ? `<details class="card slim memory" open><summary>${label(`Answers your agent remembers · ${remembered.length}`, "sq peri")}</summary>
           <span class="small faint">Everything you've answered, so you're never asked twice. When it comes up again, your agent answers on its own — it shows in Privacy › What your agent shared.</span>
@@ -293,11 +293,19 @@ export const screens = {
             <button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this answer">✕</button></div>`).join("")}</details>` : ""}
         <div class="stack">${facts.filter(f => f.source !== "answer").map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           ${factText(f)}
+          ${f.tier !== "public" ? `<div class="row small"><span class="faint">Your agent ${f.noShare ? "never uses this" : /₹|\brs\.?\s?\d|\brupees?\b|budget|lowest|floor|cost|charge|salary|lakh/i.test(f.text) ? "never repeats this (it mentions money)" : "answers others from this"}</span>
+            <div class="seg compact end" role="group" aria-label="May your agent use this to answer others?"><button class="${f.noShare ? "" : "on"}" data-act="fact-use" data-id="${esc(f.id)}" data-use="1">Use</button><button class="${f.noShare ? "on" : ""}" data-act="fact-use" data-id="${esc(f.id)}" data-use="0">Never</button></div></div>` : ""}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
     },
     async act(a, el, S, h) {
+      if (a === "fact-use") {
+        busy(el, true);
+        await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/use`, { use: el.dataset.use === "1" });
+        h.toast(el.dataset.use === "1" ? "Your agent answers others from this." : "Your agent never uses this to answer anyone.");
+        await h.paint(); return true;
+      }
       if (a === "fact-reuse") {
         busy(el, true);
         await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/reuse`, { reuse: el.dataset.reuse === "1" });
@@ -600,7 +608,7 @@ export const screens = {
       return frame("Privacy", "Who sees what", `
         <div class="card ${S.profile.paused ? "accent" : ""}"><div class="row">${label(S.profile.paused ? "Paused" : "Your agent is answering", "sq " + (S.profile.paused ? "stale" : "fresh"))}
           <button class="btn ${S.profile.paused ? "accent" : "secondary"} compact end" data-act="pause">${S.profile.paused ? "Resume" : "Pause"}</button></div>
-          <span class="small muted">${S.profile.paused ? "Your agent answers no one until you resume." : "It answers from Public facts and from Protected facts a rule below allows."} Private facts are never shared. A question you've answered before gets your same answer again — never contact details; change any in About me.</span></div>
+          <span class="small muted">${S.profile.paused ? "Your agent answers no one until you resume." : "It answers from everything you've told it, so nobody asks you the same thing twice."} It never says your limits, money in private notes, contact details, or a note you set to “never use” (About me). Everything it shares is listed below.</span></div>
         <form class="card" data-form="rule">${label("Share Protected facts", "sq")}
           <div class="row"><span class="small">With</span><select class="field" name="audience" style="max-width:280px"><option value="anyone">Anyone who contacts your agent</option>${contacts.map(c => `<option value="${esc(c.handle)}">${esc(c.name)} (@${esc(c.handle)})</option>`).join("")}</select></div>
           <div class="stack" style="gap:6px"><span class="small">About</span>

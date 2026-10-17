@@ -15,7 +15,7 @@ import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
-import { notesReadBy, privacyFacts } from "./processing.js";
+import { privacyFacts } from "./processing.js";
 import { ask, avatarHTML, $, busy, esc, id, label, money, now, shortName, tag, toast } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
@@ -36,7 +36,7 @@ async function setup() {
     timing("start_screen");
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
       ${label("Collab", "sq ink")}
-      <h1 class="headline">Your agent. <span class="soft">Your private context is never shared.</span></h1>
+      <h1 class="headline">Your agent. <span class="soft">It answers from your context. Your limits never leave.</span></h1>
       ${to ? `<div class="card slim" id="setup-to"><span class="small">You're about to ask <b>@${esc(to)}</b>'s agent.</span></div><p class="small muted">Start your own agent first — just your name. It asks for you, and keeps what's private to you.</p>` : ""}
       ${session.google ? (google
         ? `<p class="small muted">Signed in as <b>${esc(session.user.email ?? session.user.displayName ?? "Google")}</b> — this identity follows you to any device.</p>`
@@ -215,7 +215,7 @@ function paintTop() {
   $("#app").classList.toggle("split", S.screen !== "chat" || !!detail);
   $("#panel").hidden = S.screen === "chat" && !detail;
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
-  $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
+  $("#composer-note").innerHTML = label("Your agent answers from your context · never your limits or contacts");
 }
 
 let painting = false, lastHTML = "";
@@ -585,7 +585,7 @@ async function showAgentCard() {
     ${label("What it can do", "sq")}<div class="ac-caps">${caps.map(x => `<span>${esc(x)}</span>`).join("")}</div>
     ${offers.length ? `${label(`On offer · ${offers.length}`, "sq")}<div class="card slim">${offers.slice(0, 8).map(f => `<div class="ac-offer"><b class="small">${esc(f.offer.title.split(" · ")[0].replace(/\bI(phone|pad)\b/gi, (_, w) => "i" + w[0].toUpperCase() + w.slice(1).toLowerCase()))}</b><span class="small">${f.offer.price?.amount != null ? money(f.offer.price.amount, f.offer.price.period, f.offer.price.currency) : ""}</span></div>`).join("")}</div>` : ""}
     ${examples.length ? `${label("Other agents can ask", "sq")}<div class="ac-caps">${examples.slice(0, 4).map(x => `<span>“${esc(x)}”</span>`).join("")}</div>` : ""}
-    <div class="card slim">${label("Never shares", "peri")}<span class="small muted">Your private notes, your lowest price or budget, your phone, e-mail or exact address.</span></div>
+    <div class="card slim">${label("Never shares", "peri")}<span class="small muted">Your lowest price or budget, money in your private notes, your phone, e-mail or exact address, and any note you set to “never use”.</span></div>
     <details class="more"><summary>For developers · agent card JSON</summary><span class="small faint">Any A2A agent reads it at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 

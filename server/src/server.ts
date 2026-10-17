@@ -921,6 +921,14 @@ app.post("/api/facts/:id/delete", route(async req => {
   for (const a of await db.find(ANSWERS, [["factId", "==", f.id]], 200)) await db.delete(ANSWERS, docId(`${f.id}:${savedKey(a.question)}`));
   return { ok: true };
 }));
+/** A note the owner's agent may use to answer others (the default), or never. */
+app.post("/api/facts/:id/use", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid) throw new HttpError(404, "not found");
+  const noShare = req.body?.use === false;
+  await db.merge(FACTS, f.id, { noShare, updatedAt: now() });
+  return publicFact({ ...f, noShare });
+}));
 /** A remembered answer: given by the agent on its own when the question comes up again, or brought to the owner first. */
 app.post("/api/facts/:id/reuse", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;

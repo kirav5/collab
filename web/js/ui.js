@@ -42,7 +42,7 @@ export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)
 export const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 
 export function tierTag(tier, topics) {
-  if (tier === "private") return tag("Private · never shared", "peri");
+  if (tier === "private") return tag("Private", "peri");
   if (tier === "protected") return tag(`Protected${topics?.length ? " · " + topics.join(", ") : ""}`, "accent");
   return tag("Public", "fresh");
 }

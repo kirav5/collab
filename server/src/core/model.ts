@@ -43,6 +43,8 @@ export interface Fact {
   about?: string;
   /** The owner let their agent give this answer again without asking them. */
   reuse?: boolean;
+  /** The owner said their agent must never use this note to answer anyone (it's still theirs to read). */
+  noShare?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -143,7 +145,7 @@ export interface QA {
   question: string;
   answer?: string;
   /** Where the answer came from: the brief, a Public or Protected fact, or the owner. */
-  source?: "brief" | "public" | "protected" | "owner" | "listing" | "memory";
+  source?: "brief" | "public" | "protected" | "owner" | "listing" | "memory" | "private";
   status: "open" | "answered" | "pending" | "declined";
   /** The asker's judgement of the answer (requester's must-asks). */
   verdict?: "met" | "unmet" | "unclear";
@@ -286,6 +288,6 @@ export interface DelegatedLimit {
   createdAt?: number;
 }
 
-export interface Audit { id: string; owner: string; at: number; to: string; question: string; answer: string; tier: "public" | "protected"; rule: string | null }
+export interface Audit { id: string; owner: string; at: number; to: string; question: string; answer: string; tier: "public" | "protected" | "private"; rule: string | null }
 
 export type { DemandFilter, Need, Offer, Proposal };

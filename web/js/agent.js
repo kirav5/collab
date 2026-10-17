@@ -122,7 +122,7 @@ export async function chat(text, recent, area, open = null) {
       const fact = await saveNote(api, { text, tier: "private" });
       if (fact.queued) return { text: "Saved on this device — the connection dropped; it syncs to your account when you're back online.", cards: [] };
       await cacheNotes([...(await cachedNotes()), fact]); // at once on this device too, so the next matches can use it
-      return { text: "Saved to your context — only your agent can use it; it's never shared.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
+      return { text: "Saved to your context — your agent uses it to answer for you; it's never listed publicly.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {
       const facts = await api("/api/facts").catch(() => null) ?? await cachedNotes();
