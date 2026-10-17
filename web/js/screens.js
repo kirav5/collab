@@ -465,19 +465,19 @@ export const screens = {
       let qr = "";
       try { qr = await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
       // The card people get when they scan: who, what's on offer, and a record that comes from signed receipts.
-      const [facts, rec] = await Promise.all([cached("/api/facts").catch(() => []), fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null)]);
+      const [facts, rec] = await Promise.all([cached("/api/facts").catch(() => []), cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null)]);
       const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
       return frame("My card", "Share it — anyone can reach your agent", `
         <div class="card share-card">
-          <div class="share-top">${avatarHTML(S.profile.name, S.profile.handle, 56)}<div class="stack" style="gap:2px;min-width:0"><b class="share-name">${esc(S.profile.name)}</b>
-            <span class="small faint">@${esc(S.profile.handle)}${S.profile.area?.name ? ` · ${esc(S.profile.area.name)}` : ""}</span>${S.profile.bio ? `<span class="small muted">${esc(S.profile.bio)}</span>` : ""}</div></div>
+          <div class="share-top">${avatarHTML(S.profile.name, S.profile.handle, 64)}<b class="share-name">${esc(S.profile.name)}</b>
+            <span class="small faint">@${esc(S.profile.handle)}${S.profile.area?.name ? ` · ${esc(S.profile.area.name)}` : ""}</span>${S.profile.bio ? `<span class="small muted">${esc(S.profile.bio)}</span>` : ""}</div>
           <div class="share-stats"><div><b>${offers.length}</b><span>on offer</span></div><div><b>${rec?.verified ?? 0}</b><span>verified deals</span></div><div><b>${rec?.problems ?? 0}</b><span>problems</span></div></div>
           <div class="qr" aria-label="Your QR code">${qr}</div>
-          <span class="small muted" style="text-align:center">Scan with any phone camera to talk to ${esc(S.profile.name.split(" ")[0])}'s agent — no app needed.</span>
-          <div class="row share-actions"><button class="btn accent" data-act="share-card" data-link="${esc(link)}" data-name="${esc(S.profile.name)}">Share</button>
-            <button class="btn secondary compact" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
-            <a class="btn secondary compact" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Save QR</a></div>
-          <div class="row share-actions"><button class="btn quiet compact" data-act="preview-card">See it as others do</button><button class="btn quiet compact" data-act="agent-card">Agent card ›</button><button class="btn quiet compact" data-act="scan">Scan someone's QR</button></div></div>
+          <span class="small muted">Scan with any phone camera to talk to ${esc(S.profile.name.split(" ")[0])}'s agent — no app needed.</span>
+          <div class="share-grid"><button class="btn accent" data-act="share-card" data-link="${esc(link)}" data-name="${esc(S.profile.name)}">Share</button>
+            <button class="btn secondary" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
+            <a class="btn secondary" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Save QR</a></div>
+          <div class="share-grid quiet"><button class="btn quiet compact" data-act="preview-card">As others see it</button><button class="btn quiet compact" data-act="agent-card">Agent card ›</button><button class="btn quiet compact" data-act="scan">Scan a QR</button></div></div>
         <div id="scanner"></div>
         ${insights}
         <form class="card" data-form="add-contact">${label("Add someone by handle", "sq")}<div class="row"><input class="field" name="handle" placeholder="@handle" style="max-width:260px"><button class="btn" data-act="add-contact">Add</button></div>
@@ -658,7 +658,7 @@ export const screens = {
       const f = ["all", "bought", "sold"].includes(S.receiptsFilter) ? S.receiptsFilter : "all";
       const sold = e => mine(e) === (e.seller ?? "provider");
       const shown = list.filter(e => f === "all" || (f === "sold") === sold(e));
-      const rec = await fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+      const rec = await cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null);
       const cats = [...new Map(list.map(e => [e.offer.category, e])).values()].slice(0, 3);
       const market = (await Promise.all(cats.map(e => cached(`/api/insights?category=${encodeURIComponent(e.offer.category)}&item=${encodeURIComponent((e.offer.title ?? "").split(" · ")[0])}&unit=${encodeURIComponent(e.offer.unit ?? "")}`, 300_000)
         .then(r => (r?.insights ? { e, i: r.insights } : null)).catch(() => null)))).filter(Boolean);

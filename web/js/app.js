@@ -3,20 +3,20 @@
 // screens Collab has: what your agents are doing (Activity), your QR and public card (My card), what your agent knows (About me),
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
-import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
+import { api, cached, insightsLines, ios, onFreshRead, session, signIn, standalone } from "./api.js";
 import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { checkoutHTML, dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
+import { checkoutHTML, dealAmount, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
-import { ask, avatarHTML, $, busy, esc, id, label, money, notice, now, shortName, tag, toast } from "./ui.js";
+import { ask, avatarHTML, $, busy, esc, id, label, logoHTML, money, notice, now, shortName, tag, toast } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -35,7 +35,7 @@ async function setup() {
   return new Promise(resolve => {
     timing("start_screen");
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
-      ${label("Collab", "sq ink")}
+      ${logoHTML(30)}
       <h1 class="headline">Your agent. <span class="soft">It answers from your context. Your limits never leave.</span></h1>
       ${to ? `<div class="card slim" id="setup-to"><span class="small">You're about to ask <b>@${esc(to)}</b>'s agent.</span></div><p class="small muted">Start your own agent first — just your name. It asks for you, and keeps what's private to you.</p>` : ""}
       ${session.google ? (google
@@ -170,7 +170,7 @@ function paintSidebar() {
   if (!el) return;
   const n = needsYouCount();
   const groups = groupSessions(S.sessions);
-  const html = `<header>${label("Collab", "sq ink")}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
+  const html = `<header>${logoHTML(22)}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
       title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here && engine.mode !== "cloud-only" ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
@@ -251,7 +251,16 @@ async function paintContent(soft = false) {
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
     const detail = panelDetail();
-    const chat = `<div class="inner">${await chatHTML()}</div>`, side = detail ? `<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>` : S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
+    // The chat and the screen beside it are drawn together; a screen that's slow to load (it reads from the server)
+    // shows its frame at once when it was just opened, and fills in when its data arrives.
+    const chatP = chatHTML().then(h => `<div class="inner">${h}</div>`);
+    const sideP = detail ? Promise.resolve(`<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>`)
+      : S.screen === "chat" ? Promise.resolve("") : screens[S.screen].html(S).then(h => `<div class="inner">${h}</div>`);
+    if (!soft && !detail && S.screen !== "chat" && S.screen !== lastScreen
+      && !(await Promise.race([sideP.then(() => true, () => true), new Promise(r => setTimeout(() => r(false), 120))]))) {
+      panel.innerHTML = `<div class="inner">${screenLoading(S.screen)}</div>`; lastHTML = "";
+    }
+    const [chat, side] = await Promise.all([chatP, sideP]);
     const html = chat + "\u0000" + side;
     // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
     if (soft && html === lastHTML) return;
@@ -268,6 +277,11 @@ async function paintContent(soft = false) {
     if (again !== null) { const next = again; again = null; paintContent(next); }
   }
 }
+
+const SCREEN_TITLES = { receipts: "Receipts", context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+/** A screen's frame while its data loads: the same title and blocks where its cards will be. */
+const screenLoading = screen => `<div class="stack" style="gap:6px">${label(SCREEN_TITLES[screen] ?? "", "sq")}<div class="skel-line" style="width:62%;height:34px"></div></div>
+  <div class="stack">${[96, 160, 120].map(h => `<div class="card skel-card" style="height:${h}px"></div>`).join("")}</div>`;
 
 // Saved-note cards show the note as it is now (it may have moved tier on another screen); fetched at most every 20 s.
 let factsCache = null;
@@ -334,7 +348,7 @@ async function sellFromPhoto(file) {
   if (!cur) { cur = { id: id(), title: "From a photo", messages: [], updatedAt: now() }; S.current = cur.id; }
   const preview = URL.createObjectURL(file);
   const msg = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", photo: preview, cards: [] };
-  cur.messages.push(msg); S.screen = "chat"; paint();
+  cur.messages.push(msg); toChat(); paint();
   const fail = async why => { msg.pending = null; msg.text = `${why} Type what it is instead, or try a closer, brighter photo.`; msg.cards = [{ type: "suggest", options: [{ label: "Try another photo", text: "" }], hint: "" }]; await saveSession(cur); paint(); };
   try {
     const bmp = await createImageBitmap(file), k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));
@@ -566,7 +580,7 @@ async function previewCard(el = null) {
 async function showAgentCard() {
   const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`, link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
   const [c, rec, facts] = await Promise.all([fetch(url).then(r => r.json()).catch(() => null),
-    fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null), cached("/api/facts").catch(() => [])]);
+    cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null), cached("/api/facts").catch(() => [])]);
   if (!c) return toast("Couldn't load your agent card.");
   // What any agent reading the card learns, said plainly: who, its record, what it can do, what's on offer, what it never says.
   const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
@@ -722,7 +736,7 @@ async function orderFromCard(a, el) {
         : "Sent. Nothing is final until you both confirm.", at: now(), cards: [{ type: "engagement", id: e.id }] });
     await saveSession(cur);
     session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
-    S.screen = "chat"; paint();
+    toChat(); paint();
   } catch (err) {
     toast(err.message, null, "error");
     // Stock or a time may have changed: show the card as it is now.
@@ -784,7 +798,7 @@ async function send(text, offerFactId = null) {
   const reply = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", cards: [] };
   cur.messages.push(user, reply);
   await saveSession(cur);
-  S.screen = "chat";
+  toChat();
   paint();
   try {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
@@ -815,6 +829,11 @@ const findCard = el => {
 
 // MARK: - Actions
 
+/** Wide enough for the chat and a screen side by side (styles.css: the panel covers the chat at 1180px and below). */
+const sideBySide = () => matchMedia("(min-width: 1181px)").matches;
+/** Show the chat: on a wide screen the screen beside it (Activity…) stays open; on a phone the chat takes over. */
+function toChat() { if (!sideBySide() || !screens[S.screen]) S.screen = "chat"; }
+
 /**
  * Where a notification, a shortcut or a link points: a conversation opens itself (in the side panel; the whole screen
  * on a phone), waiting for it to load if it just arrived; a person's card, Activity or a screen open as they are.
@@ -830,7 +849,7 @@ async function openLink(link) {
 async function openEngagement(id) {
   for (let i = 0; i < 12 && !live.engagements.has(id); i++) { await refresh(openScreen).catch(() => {}); if (!live.engagements.has(id)) await new Promise(r => setTimeout(r, 700)); }
   if (!live.engagements.has(id)) return openScreen("requests");
-  if (S.screen !== "chat") { S.screen = "chat"; paint(); }
+  toChat();
   showEngagement(id);
 }
 
@@ -901,8 +920,9 @@ async function onClick(e) {
     if (a === "screen") return openScreen(el.dataset.screen);
     if (a === "intro-done") { try { localStorage.setItem("collab.intro", "done"); } catch {} return paint(); }
     if (a === "install") { if (session.install && await session.install()) toast("Installed — open Collab from your home screen or apps."); return paint(); }
-    if (a === "new-chat") { S.current = null; return openScreen("chat"); }
-    if (a === "open-session") { S.current = el.dataset.id; return openScreen("chat"); }
+    // A new or earlier chat replaces the chat only — Activity (or whatever is open beside it) stays on a wide screen.
+    if (a === "new-chat") { S.current = null; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
+    if (a === "open-session") { S.current = el.dataset.id; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
@@ -1035,21 +1055,19 @@ async function onClick(e) {
       return;
     }
     if (a === "price-check") {
-      busy(el, true, "Checking sources");
-      const box = el.parentElement.querySelector("[data-price-result]");
+      // Kept by what was asked, so a repaint (a live update, another tap) never loses it; a second tap while it's
+      // searching does nothing.
+      const key = priceKey(el.dataset.item, el.dataset.area, el.dataset.unit || null);
+      if (priceChecks.get(key)?.state === "loading") return;
+      priceChecks.set(key, { state: "loading" }); paintContent(true);
       try {
         // The request card's title as edited, if it was.
         const r = await api("/api/price-check", { item: el.closest(".brief")?.querySelector('[data-edit="title"]')?.value.trim() || el.dataset.item, area: el.dataset.area, unit: el.dataset.unit || undefined });
-        const left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
-        box.innerHTML = `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
-          <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(s => `<a class="small" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
-          <span class="small faint">${esc(r.note)}</span><span class="small faint">Only you see this${left} · ${new Date(r.checkedAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></div>`;
-        // Google's search suggestions (required with grounded answers): its links open in a new tab — google.com
-        // refuses to load inside a frame.
-        if (r.searchEntryPoint) { const frame = document.createElement("iframe"); frame.title = "Google Search suggestions"; frame.sandbox = "allow-popups allow-popups-to-escape-sandbox"; frame.srcdoc = `<base target="_blank">${r.searchEntryPoint}`; frame.style.cssText = "width:100%;border:0;height:64px"; box.append(frame); }
+        priceChecks.set(key, { state: "done", r });
       } catch (err) {
-        box.innerHTML = `<div class="card slim"><span class="small">Couldn't get prices from the web right now${err.status === 503 ? " — Google Search didn't answer in time" : ""}. Try again in a minute.</span></div>`;
-      } finally { busy(el, false); }
+        priceChecks.set(key, { state: "error", message: err.status === 429 ? err.message : `Couldn't get prices from the web right now${err.status === 503 ? " — Google Search didn't answer in time" : ""}. Try again in a minute.` });
+      }
+      paintContent(true);
       loadPolicy();
       return;
     }
@@ -1221,7 +1239,28 @@ async function cardAction(a, el, { s, m, c }) {
       for (const x of es) run(x.id);
       return;
     }
-    m.text = "";
+    // Nothing fits exactly: the closest listings come with the reply, and Google Maps is asked at once (no extra tap).
+    c.closest = r.closest ?? [];
+    m.text = c.closest.length ? "No exact match yet — here's what's closest, and what's nearby on Google Maps." : "No match on Collab yet — looking on Google Maps nearby.";
+    c.nearby = { loading: true };
+    await saveSession(s); paint();
+    const near = await api("/api/nearby", { item: d.shared.title, area: d.shared.area ?? "" }).catch(() => null);
+    const now_ = findCard(el) ?? { c, s };
+    now_.c.nearby = near ? { places: near.places ?? [], note: near.note } : { places: [], note: "" };
+    await saveSession(now_.s); paint();
+    return;
+  }
+  if (a === "closest-ask") {
+    // The owner chose to have their agent ask one of the closest listings anyway.
+    const f = c.closest?.[Number(el.dataset.j)];
+    if (!f) return;
+    busy(el, true, "Contacting");
+    const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: [{ factId: f.fact.id }] });
+    (c.askedClosest ??= {})[Number(el.dataset.j)] = true;
+    for (const x of es) { live.engagements.set(x.id, x); m.cards.push({ type: "discovery", briefId: c.briefId, engaged: [x.id], found: [], title: f.fact.offer?.title?.split(" · ")[0] ?? "" }); }
+    await saveSession(s); paint();
+    for (const x of es) run(x.id);
+    return;
   }
   if (a === "disc-more") {
     // The other good matches, contacted too.
@@ -1396,7 +1435,7 @@ async function publicIntake(text, noteId = null, photo = null) {
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
   cur.messages.push({ id: id(), role: "user", text: photo ? "📷 List this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
-  S.screen = "chat"; paint();
+  toChat(); paint();
   return true;
 }
 
@@ -1517,7 +1556,7 @@ navigator.serviceWorker?.addEventListener("message", e => {
 // Anything that stops start-up shows a way back instead of a blank page.
 try {
 await signIn();
-if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${label("Collab", "sq ink")}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
+if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${logoHTML(26)}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
 // A returning visitor: their profile and (from a QR) the person they're opening load side by side. A first visit has
 // no profile yet, so the start screen shows at once.
 if (session.uid) {
@@ -1530,6 +1569,10 @@ if (!S.profile) await setup();
 setOwner(session.uid);
 await boot();
 timing("app");
+// A screen drawn from what was kept repaints when the server's answer differs.
+onFreshRead(() => paintContent(true));
+// On a wide screen, what your agents are doing (Activity) sits beside the chat from the start.
+if (sideBySide() && S.screen === "chat") { S.screen = "requests"; paint(); }
 // Links from notifications, the installed app's shortcuts and QR codes open the right place.
 {
   const qp = new URLSearchParams(location.search);

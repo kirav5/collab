@@ -4,8 +4,8 @@
 :root {
   --bg: #f7f7f5; --surface: #ffffff; --surface2: #efefec; --hairline: #deded9;
   --text: #0a0a0a; --text2: #55554f; --text3: #6b6b66;
-  --accent: #2d5bff; --accent-ink: #2449d6; --peri: #5b5fd6; --peri-fill: #e6e7fb;
-  --fresh: #0b8a4e; --stale: #b86e00; --danger: #c9302c; --inverse: #0a0a0a; --on-inverse: #f7f7f5; --on-accent: #fff;
+  --accent: #ff3ea5; --accent-ink: #c4126e; --peri: #5b5fd6; --peri-fill: #e6e7fb;
+  --fresh: #0b8a4e; --stale: #b86e00; --danger: #c9302c; --inverse: #0a0a0a; --on-inverse: #f7f7f5; --on-accent: #0a0a0a;
   /* States of what your agents are doing (tiles): waiting on you, agents negotiating, agreed, ended. */
   --wait: #b86e00; --wait-fill: #fdf1dc; --talk: #5b5fd6; --talk-fill: #e6e7fb; --done-fill: #e2f4ea; --hot: #c9302c;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -17,7 +17,7 @@
 :root[data-look="dark"] {
   --bg: #0a0a0a; --surface: #121212; --surface2: #1a1a1a; --hairline: #262626;
   --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
-  --accent: #2d5bff; --accent-ink: #7d9bff; --on-accent: #ffffff; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #f5a524; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
+  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #f5a524; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
   --wait: #f5a524; --wait-fill: #2a1e05; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
   color-scheme: dark;
 }
@@ -25,7 +25,7 @@
   :root:not([data-look]) {
     --bg: #0a0a0a; --surface: #121212; --surface2: #1a1a1a; --hairline: #262626;
   --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
-  --accent: #2d5bff; --accent-ink: #7d9bff; --on-accent: #ffffff; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #f5a524; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
+  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --fresh: #3ddc97; --stale: #f5a524; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
   --wait: #f5a524; --wait-fill: #2a1e05; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
   color-scheme: dark;
   }
@@ -130,7 +130,13 @@ textarea.field { resize: vertical; min-height: 64px; }
 .send:disabled { opacity: .35; }
 .thinking .label { display: inline-block; min-width: 9ch; }
 .thinking { display: flex; align-items: center; gap: 8px; }
-.spinner { width: 12px; height: 12px; border: 2px solid var(--text3); border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+/* The loader is the mark: two brackets that keep coming together while the agent works. */
+.spinner { width: 14px; height: 14px; display: inline-block; position: relative; flex: none; vertical-align: -2px; }
+.spinner::before, .spinner::after { content: ""; position: absolute; width: 9px; height: 9px; box-sizing: border-box; }
+.spinner::before { left: 0; top: 0; border: 2.5px solid var(--accent); border-right: 0; animation: mark-a 1.1s ease-in-out infinite; }
+.spinner::after { right: 0; bottom: 0; border: 2.5px solid var(--text); border-left: 0; animation: mark-b 1.1s ease-in-out infinite; }
+@keyframes mark-a { 0%, 100% { transform: translate(-2px, -2px); } 50% { transform: translate(1px, 1px); } }
+@keyframes mark-b { 0%, 100% { transform: translate(2px, 2px); } 50% { transform: translate(-1px, -1px); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Engagement */
@@ -198,7 +204,20 @@ dialog::backdrop { background: rgb(0 0 0 / 45%); }
 /* No animations (data-motion="off" on <html>): screens, cards, notices and panels appear in place. The one exception is
    the small loading spinner, which says something is still working. */
 :root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after { animation: none !important; transition: none !important; }
-:root[data-motion="off"] .spinner { animation: spin .7s linear infinite !important; }
+:root[data-motion="off"] .spinner::before { animation: mark-a 1.1s ease-in-out infinite !important; }
+:root[data-motion="off"] .spinner::after { animation: mark-b 1.1s ease-in-out infinite !important; }
+/* Movement only while the agent is working: thinking, searching, looking in the background, loading. */
+:root[data-motion="off"] .logo-anim .lb-a { animation: logo-a 1.4s cubic-bezier(.6,0,.4,1) infinite !important; }
+:root[data-motion="off"] .logo-anim .lb-b { animation: logo-b 1.4s cubic-bezier(.6,0,.4,1) infinite !important; }
+:root[data-motion="off"] .splash-line::after { animation: splash-run 1.1s ease-in-out infinite !important; }
+:root[data-motion="off"] .calib-bar { animation: calib-move 1.2s linear infinite !important; }
+:root[data-motion="off"] .calib-line { animation: calib-in .5s ease forwards !important; animation-delay: calc(var(--i) * .9s) !important; opacity: 0; }
+:root[data-motion="off"] .thinking { animation: sweep 1.6s linear infinite !important; }
+:root[data-motion="off"] .live-dot { animation: blink 1.6s infinite !important; }
+:root[data-motion="off"] .chip.skel { animation: skel 1.2s linear infinite !important; }
+@keyframes logo-a { 0%, 100% { transform: translate(-6%, -6%); } 50% { transform: translate(0, 0); } }
+@keyframes logo-b { 0%, 100% { transform: translate(6%, 6%); } 50% { transform: translate(0, 0); } }
+@media (prefers-reduced-motion: reduce) { :root .logo-anim .lb-a, :root .logo-anim .lb-b, :root .spinner::before, :root .spinner::after { animation: none !important; } :root .calib-line { animation: none !important; opacity: 1; } }
 :root[data-motion="off"] .note-bar { display: none; }
 
 /* Cards, summary-first: who · progress · one status line · at most one action; evidence under Details. */
@@ -431,12 +450,9 @@ details.improve.done .improve-title { color: var(--fresh); }
 
 /* Opening: the mark, the name, a thin line that fills — calm, centred, gone as soon as the app is ready. */
 .splash { min-height: 100dvh; display: grid; place-content: center; justify-items: center; gap: 14px; background: var(--bg); }
-.splash-mark { width: 44px; height: 44px; background: var(--accent); position: relative; animation: splash-pulse 1.6s ease-in-out infinite; }
-.splash-mark::after { content: ""; position: absolute; inset: 13px; background: var(--bg); }
-.splash-name { font-size: 22px; font-weight: 650; letter-spacing: -.02em; color: var(--text); }
+.splash-mark { width: 64px; height: 64px; }
 .splash-line { width: 120px; height: 2px; background: var(--hairline); border-radius: 2px; overflow: hidden; position: relative; }
 .splash-line::after { content: ""; position: absolute; inset: 0; width: 40%; background: var(--accent); border-radius: 2px; animation: splash-run 1.1s ease-in-out infinite; }
-@keyframes splash-pulse { 50% { transform: scale(.92); opacity: .85; } }
 @keyframes splash-run { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
 .app { animation: app-in .4s ease-out both; }
@@ -540,12 +556,12 @@ details.improve.done .improve-title { color: var(--fresh); }
 .start-ideas .chip { font-size: 14px; padding: 10px 14px; }
 /* Calibrating: the agent's steps light up one by one */
 .calib { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); max-width: 420px; }
-.calib-bar { height: 6px; background: repeating-linear-gradient(-45deg, var(--text) 0 8px, transparent 8px 16px); background-size: 200% 100%; animation: calib-move 1.2s linear infinite; border-radius: 2px; opacity: .85; }
+.calib-bar { height: 6px; background: repeating-linear-gradient(-45deg, var(--accent) 0 8px, transparent 8px 16px); background-size: 200% 100%; animation: calib-move 1.2s linear infinite; border-radius: 2px; opacity: .85; }
 @keyframes calib-move { to { background-position: -32px 0; } }
 .calib-line { color: var(--text3); opacity: 0; animation: calib-in .5s ease forwards; animation-delay: calc(var(--i) * .9s); padding-left: calc(var(--i) * 12px); }
 .calib-line:last-child { color: var(--text); font-weight: 600; }
 @keyframes calib-in { to { opacity: 1; } }
-[data-motion="off"] .calib-line { opacity: 1; }
+
 /* Danger zone */
 .danger-zone > summary { color: var(--danger); }
 .danger-card { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
@@ -561,18 +577,20 @@ details.improve.done .improve-title { color: var(--fresh); }
 @keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .chip.skel { animation: none; } }
 
-/* My card: the share card (who, what's on offer, record from receipts, the QR) */
-.share-card { display: grid; gap: 14px; justify-items: stretch; max-width: 460px; }
-.share-top { display: flex; gap: 12px; align-items: center; }
-.share-name { font-size: 20px; letter-spacing: -0.01em; }
-.share-stats { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
-.share-stats > div { display: grid; gap: 2px; padding: 10px 12px; text-align: center; }
+/* My card: the share card (who, what's on offer, record from receipts, the QR) — centred, full width, even buttons. */
+.share-card { display: grid; gap: 16px; justify-items: center; text-align: center; }
+.share-top { display: grid; gap: 4px; justify-items: center; }
+.share-name { font-size: 22px; letter-spacing: -0.01em; margin-top: 6px; }
+.share-stats { width: 100%; max-width: 420px; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--hairline); border-radius: 6px; overflow: hidden; }
+.share-stats > div { display: grid; gap: 2px; padding: 10px 8px; text-align: center; }
 .share-stats > div + div { border-left: 1px solid var(--hairline); }
 .share-stats b { font-size: 20px; }
 .share-stats span { font-size: 12px; color: var(--text2); }
-.share-card .qr { width: 200px; height: 200px; justify-self: center; padding: 8px; border-radius: 10px; }
-.share-actions { justify-content: center; }
-.share-actions .btn.accent { min-width: 140px; }
+.share-card .qr { width: 200px; height: 200px; padding: 10px; border-radius: 6px; }
+.share-grid { width: 100%; max-width: 420px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.share-grid .btn { width: 100%; justify-content: center; text-align: center; text-decoration: none; min-height: 40px; }
+.share-grid.quiet .btn { min-height: 34px; }
+@media (max-width: 380px) { .share-grid { grid-template-columns: 1fr; } }
 
 /* The agent card, readable */
 .ac-head { display: flex; gap: 12px; align-items: center; }
@@ -618,3 +636,15 @@ dialog.ask::backdrop { background: color-mix(in srgb, var(--bg) 72%, transparent
 .ask-detail { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text2); }
 .ask-field { display: grid; gap: 6px; }
 .ask-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.search-entry { width: 100%; border: 0; height: 64px; }
+.disc-row.as-div { cursor: default; }
+/* A screen's frame while its data loads (no movement — just where things will be). */
+.skel-card { background: var(--surface2); border-color: transparent; }
+.skel-line { background: var(--surface2); border-radius: 4px; }
+
+/* The logo (ui.js logoHTML): a pink bracket and one in the text colour, interlocked; the wordmark beside it. */
+.logo { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
+.logo svg { display: block; flex: none; overflow: visible; }
+.logo svg path { transform-box: view-box; }
+.logo .lb-a { fill: var(--accent); } .logo .lb-b { fill: var(--text); }
+.logo-word { font-weight: 700; letter-spacing: -.03em; line-height: 1; }

@@ -8,7 +8,7 @@ import { gpay } from "./gpay.js";
 const gpayOk = () => gpay.available;
 import { live, poke } from "./live.js";
 import { fitsReasons } from "./fits.js";
-import { avatarHTML, byTag, esc, label, money, shortName, tag, tierTag, time } from "./ui.js";
+import { avatarHTML, byTag, esc, label, logoHTML, money, shortName, tag, tierTag, time } from "./ui.js";
 import { cap, limitPast, limitWords, listingRoles, offerWords, partyRoles, rolesOf } from "./roles.js";
 
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -16,7 +16,7 @@ const VERDICT = { met: tag("met", "fresh"), unmet: tag("not met", "danger"), unc
 const SOURCE = { public: tag("Public", "fresh"), protected: tag("Protected", "accent"), owner: tag("Owner", "ink"), brief: tag("Brief"), listing: tag("Listing") };
 
 /** The agent at work: the steps it goes through, lit one after another, the last one bold when it's nearly back. */
-export const calibrating = (lines, title = "your agent") => `<div class="calib" aria-live="polite"><span class="label sq">${esc(title)}</span><div class="calib-bar"></div>
+export const calibrating = (lines, title = "your agent") => `<div class="calib" aria-live="polite"><span class="row" style="gap:8px">${logoHTML(16, false, true)}<span class="label">${esc(title)} is working</span></span><div class="calib-bar"></div>
   ${lines.map((l, i) => `<span class="calib-line" style="--i:${i}">› ${esc(l)}${i < lines.length - 1 ? "…" : ""}</span>`).join("")}</div>`;
 
 export function renderCard(card, m, i) {
@@ -188,6 +188,21 @@ export function nearbyHTML(r) {
     <span class="small faint">${esc(r.note ?? "")} · Source: Google Maps</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
 }
 
+/** Web prices checked in this session, by what was asked — shown wherever that item's card is, through repaints. */
+export const priceChecks = new Map(); // key → { state: "loading" } | { state: "done", r } | { state: "error", message }
+export const priceKey = (item, area, unit) => `${item}|${area}|${unit ?? ""}`.toLowerCase();
+function priceResultHTML(key) {
+  const p = priceChecks.get(key);
+  if (!p) return "";
+  if (p.state === "loading") return `<div class="card slim working"><span class="row small"><span class="spinner"></span> Your agent is searching the web for asking prices…</span></div>`;
+  if (p.state === "error") return `<div class="card slim"><span class="small">${esc(p.message)}</span></div>`;
+  const r = p.r, left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
+  return `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
+    <ul class="price-list">${r.items.map(i => `<li><span>${esc(i.label)}</span><b>${money(i.price)}</b>${i.sources.map(x => `<a class="small" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "Source")}</a>`).join(" ")}</li>`).join("")}</ul>
+    <span class="small faint">${esc(r.note)}</span><span class="small faint">Only you see this${r.cached ? " · checked earlier today" : left} · ${new Date(r.checkedAt * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+    ${r.searchEntryPoint ? `<iframe class="search-entry" title="Google Search suggestions" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(`<base target="_blank">${r.searchEntryPoint}`)}"></iframe>` : ""}</div>`;
+}
+
 function gateBanner(c, at, kind) {
   const g = c.gate;
   if (!g || g.ok || c.gateOverride) return "";
@@ -241,7 +256,7 @@ function briefCard(c, at) {
       <div class="stack" style="gap:6px">${label("While you're away")}${autonomyPick(c)}</div>
       ${c.insights?.length ? `<div class="stack" style="gap:4px">${label("What similar deals closed at", "peri")}${c.insights.map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>` : ""}
     </details>
-    <div><button class="btn secondary compact" data-act="price-check" data-item="${esc(s.title)}" data-area="${esc(need.place.name)}" data-unit="${esc(need.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web for this item · only you see them</span><div data-price-result></div></div>
+    <div><button class="btn secondary compact" data-act="price-check" data-item="${esc(s.title)}" data-area="${esc(need.place.name)}" data-unit="${esc(need.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web for this item · only you see them</span><div data-price-result>${priceResultHTML(priceKey(s.title, need.place.name, need.unit))}</div></div>
     <div class="row"><button class="btn accent" data-act="brief-send" ${at}>Find people</button><span class="small faint">Your agent contacts the best matches itself — only what’s shared above goes out.</span></div>
   </div>`;
 }
@@ -279,8 +294,19 @@ function matchesCard(c, at) {
   const firstFit = fits.findIndex((r, j) => r.length && (j < 3 || c.showAll)); // the one line that says where these come from
   const watch = c.watching ? `<span class="small row" style="color:var(--fresh);gap:8px"><span class="live-dot"></span>live · your agent keeps looking in the background (every hour, 14 days)</span>`
     : `<button class="btn secondary compact" data-act="watch" ${at}>Keep watching</button>`;
-  if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Try a wider area or fewer requirements — or let your agent keep looking.</p><div class="row">${watch}
-      <button class="btn secondary compact" data-act="nearby" data-item="${esc(c.draft.shared.title)}" data-area="${esc(c.draft.shared.area ?? "")}">Look on Google Maps nearby</button></div><div data-nearby>${c.nearby ? nearbyHTML(c.nearby) : ""}</div></div>`;
+  if (!found.length) {
+    // Nothing fits exactly — never a dead end: the closest real listings on Collab, places from Google Maps (looked up
+    // on their own), and an agent that keeps looking.
+    const near = (c.closest ?? []).map((f, j) => `<div class="disc-row as-div">${avatarHTML(f.profile.name, f.profile.handle, 36)}<span class="disc-text"><b>${esc(f.profile.name)}${f.profile.demo ? ` ${tag("demo")}` : ""}</b>
+        <span class="small muted">${esc((f.fact.offer?.title ?? f.fact.text).split(" · ")[0])}${f.fact.offer?.price ? ` · ${money(f.fact.offer.price.amount, f.fact.offer.price.period, f.fact.offer.price.currency)}` : ""}</span></span>
+        <span class="disc-side">${c.askedClosest?.[j] ? tag("Asked", "fresh") : `<button class="btn secondary compact" data-act="closest-ask" data-j="${j}" ${at}>Ask their agent</button>`}</span></div>`).join("");
+    const maps = c.nearby?.loading ? `<div class="card slim working"><span class="row small"><span class="spinner"></span> Your agent is looking on Google Maps nearby…</span></div>` : c.nearby ? nearbyHTML(c.nearby) : "";
+    return `<div class="card" ${at}>${label("No exact match on Collab yet", "sq")}
+      <p class="small muted">Nobody lists “${esc(c.draft.shared.title)}” yet. ${near ? "These are the closest — your agent can ask them." : "Try a wider area or fewer requirements."}</p>
+      ${near ? `<div class="disc-list">${near}</div>` : ""}
+      <div data-nearby>${maps}</div>
+      <div class="row">${watch}${c.nearby ? "" : `<button class="btn secondary compact" data-act="nearby" data-item="${esc(c.draft.shared.title)}" data-area="${esc(c.draft.shared.area ?? "")}">Look on Google Maps nearby</button>`}</div></div>`;
+  }
   return `<div class="card" ${at}>
     ${stages(1)}
     <div class="row">${label(real ? `${real} ${real === 1 ? "match" : "matches"}` : "No exact match", "sq ink")}${c.rankedByModel && real ? `<span class="small faint">ranked by Gemini</span>` : ""}${found.length > real ? `<span class="small faint">· ${found.length - real} above your budget</span>` : ""}</div>
@@ -830,7 +856,7 @@ export function engagementCard(e, id) {
     ${open ? `<div class="row reply"><input class="field" data-followup="${esc(e.id)}" maxlength="300" placeholder="${mine === "requester" ? "Ask" : "Message"} ${esc(shortName(them.name))}'s agent…" aria-label="Follow-up">
       <button class="btn accent compact" data-act="eng-ask" data-id="${esc(e.id)}">Send</button><button class="btn quiet compact" data-act="eng-close" data-id="${esc(e.id)}">Done</button></div>
       <span class="small faint">To make an offer, name a ${esc(partyRoles(e, mine).price)} — “${esc(offerWords(e, mine, mine === "requester" ? "₹350" : "₹400"))}”. Their agent answers within their limits, or they do; nothing is final until both of you confirm.</span>` : ""}
-    ${["asking", "deal", "negotiating"].includes(e.phase) && mine === "requester" && !["paid", "outside"].includes(e.payment?.status) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result></div></div>` : ""}
+    ${["asking", "deal", "negotiating"].includes(e.phase) && mine === "requester" && !["paid", "outside"].includes(e.payment?.status) ? `<div><button class="btn secondary compact" data-act="price-check" data-item="${esc(priceItem(e))}" data-area="${esc(e.brief.area ?? "India")}" data-unit="${esc(e.offer?.unit ?? "")}">Check fair price</button><span class="small faint"> Prices from the web · only you see them</span><div data-price-result>${priceResultHTML(priceKey(priceItem(e), e.brief.area ?? "India", e.offer?.unit))}</div></div>` : ""}
     ${e.phase === "agreed" && e.negotiation.deal ? dealBlock(e, mine) : ""}
     <details class="more"><summary>Details · ${e.qa.length} question${e.qa.length === 1 ? "" : "s"}${e.negotiation.requester.length + e.negotiation.provider.length ? ` · ${e.negotiation.requester.length + e.negotiation.provider.length} offers` : ""} · A2A log</summary>
       ${e.qa.length ? `<div class="qa">${e.qa.map(q => `<div><span class="faint">${STATUS_ICON[q.status] ?? "○"}</span>

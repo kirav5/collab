@@ -1,8 +1,8 @@
-import type { Docs } from "../docs.ts";
+import { type Docs, docId } from "../docs.ts";
 import type { GroundedResult, Model } from "../ai/gemini.ts";
 import { policy } from "../config/policy.ts";
 
-export const PRICE_CHECKS = "price_checks";
+export const PRICE_CHECKS = "price_checks", PRICE_CACHE = "price_cache";
 export class PriceCheckError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export async function reserveCheck(db: Docs, uid: string, now: number) {
   const limit = policy().quotas.priceChecksPerDay;
@@ -73,10 +73,21 @@ export async function checkPrice(db: Docs, model: Model | null, uid: string, ite
   if (!policy().features.priceCheck) throw new PriceCheckError(503, "Price checks are turned off.");
   if (!item.trim()) throw new PriceCheckError(400, "Describe the item first.");
   if (!model?.grounded) throw new PriceCheckError(503, "Grounded search is not available in this environment.");
+  // Asking prices on the web are the same for everyone: a check for the same item and area in the last 12 hours is
+  // shown at once and doesn't use up the person's daily checks. Only evidence is kept, never who asked.
+  const key = docId(`${item.trim().toLowerCase()}|${area.trim().toLowerCase()}|${per}`).slice(0, 400);
+  const hit = (await db.get(PRICE_CACHE, key)) as { evidence: ReturnType<typeof priceEvidence>; at: number } | null;
+  if (hit && now - hit.at < 12 * 3600 && hit.evidence.status === "evidence") {
+    const result = { ...hit.evidence, owner: uid, item, area, checkedAt: hit.at, remaining: null, cached: true };
+    await db.set(PRICE_CHECKS, uid, result);
+    return result;
+  }
   const remaining = await reserveCheck(db, uid, now);
   const g = await model.grounded(item, area, per);
   if (!g) throw new PriceCheckError(503, "Google Search didn't answer in time. Try again in a minute.");
-  const result = { ...priceEvidence(g, per), owner: uid, item, area, checkedAt: now, remaining };
+  const evidence = priceEvidence(g, per);
+  if (evidence.status === "evidence") await db.set(PRICE_CACHE, key, { evidence, at: now, expireAt: new Date((now + 2 * 86_400) * 1000) });
+  const result = { ...evidence, owner: uid, item, area, checkedAt: now, remaining };
   // Separate owner-only collection: never written to shared briefs, engagements, or A2A turns.
   await db.set(PRICE_CHECKS, uid, result);
   return result;
