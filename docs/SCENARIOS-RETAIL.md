@@ -24,7 +24,7 @@ isn't the target here. The other four are.
 | A7 | Shop is paused (closed) | "Isn't taking requests right now"; offerings shown | ✅ | Show opening hours if stated |
 | A8 | Item sold out since the QR was printed | "Out of stock right now" on the card | ✅ | Offer "tell me when it's back" (a watch on that listing) |
 | A9 | Scan with the phone camera, no app | Opens the web app straight on the card | ✅ | — |
-| A10 | Buy again next week | Start again from the QR or chat | ❌ | **Buy again** on a past deal: same item, quantity and seller, one tap |
+| A10 | Buy again next week | **Buy again** on a paid deal: same item, quantity and seller, at today's price | ✅ | (17 Oct) |
 | A11 | Ask about warranty or returns | Answered from the seller's stated terms (with web-sourced suggestions they accepted) | ✅ | — |
 | A12 | Pay another way (cash, UPI) and still get a pass | "Paid another way" → pass says who marked it paid | ✅ | — |
 
@@ -35,14 +35,14 @@ isn't the target here. The other four are.
 | B1 | "Need 2 brass desk lamps in Indiranagar this week" | Brief card → Find people → matches; 2 taps | ✅ | — |
 | B2 | Vague request ("need stuff") | Quality check returns tap-to-answer questions before searching | ✅ | — |
 | B3 | Set the most I'll pay | Limit field on the brief, or in my own words ("up to ₹3,200") | ✅ | — |
-| B4 | Pick from three matches | Each row: Book · Negotiate · Ask about add-ons, plus tick boxes and "Ask their agents" | ⚠️ | **One primary button per row** (Book at the price if within your limit, else Negotiate); the rest under "More" |
+| B4 | Pick from three matches | One main button per match (Book within your limit, else Negotiate); the rest under More | ✅ | (17 Oct) |
 | B5 | Book a match outright | Book → joins the request's goal; "✓ Booked — see the deal" | ✅ | (fixed 17 Oct) |
 | B6 | Let agents bargain with three sellers at once | Tick 3 → Ask their agents; deals arrive on Deals | ✅ | Show the three side by side with a recommendation (PRD R5) |
 | B7 | No one fits | "Watch for me" runs hourly for 14 days and notifies | ✅ | — |
 | B8 | Nobody on Collab sells it nearby | Maps-grounded shops listed as leads | ✅ | Say clearly they aren't on Collab; offer to share an invite link |
 | B9 | Check whether a price is fair | Search-grounded fair price, private, 5 a day | ✅ | — |
 | B10 | Ask in Hindi or Kannada | Gemini reads any language; UI stays English | ⚠️ | Answer in the language asked; later, UI strings |
-| B11 | Say the request instead of typing | — | ❌ | **Voice input** in the composer (browser speech, en-IN / hi-IN) |
+| B11 | Say the request instead of typing | Mic in the composer (browser speech, Indian English or Hindi) | ✅ | (17 Oct) |
 | B12 | Search with a photo of what I want | — | ❌ | Photo → request (Gemini reads the item); next after photo listings |
 
 ## C. Quantity, stock and bulk
@@ -55,7 +55,7 @@ isn't the target here. The other four are.
 | C4 | Stale stock count | Marked unconfirmed, seller asked | ✅ | — |
 | C5 | Wholesale: 50 units at a bulk price | Negotiation per unit and quantity | ✅ | Seller-stated price breaks ("₹380 each for 20+") read from words |
 | C6 | Seller restocks | Update on hand on My info › stock, or POS sync | ⚠️ | Edit stock from the listing card itself; low-stock alert |
-| C7 | Low stock warning for the seller | — | ❌ | Push "3 left of X" once below a threshold |
+| C7 | Low stock warning for the seller | Push once when stock runs low; again after a restock | ✅ | (17 Oct) |
 | C8 | Variants (size, colour) | One listing per variant | ⚠️ | Variant chips on one listing (later) |
 | C9 | Pre-order when out of stock | Not offered | ❌ | "Notify me" (watch) instead of pre-order for now |
 | C10 | POS keeps stock in sync | POS key + webhook updates stock | ✅ | — |
@@ -69,8 +69,8 @@ isn't the target here. The other four are.
 | D3 | Slot taken while choosing | "That time was just taken — pick another" | ✅ | — |
 | D4 | Tutor: weekly lessons | Goal repeats every N days | ⚠️ | "Every week" chip on the booking |
 | D5 | Ask about add-ons (beard trim) | "Ask about add-ons" → agent lists them with prices | ✅ | — |
-| D6 | Reschedule | Not supported | ❌ | Release and rebook from the pass ("Change time") |
-| D7 | Cancel a booking | "Fell through" outcome only | ⚠️ | Cancel button on the pass; frees the slot |
+| D6 | Reschedule | "Change time" on the booking pass picks another free slot | ✅ | (17 Oct) |
+| D7 | Cancel a booking | "Cancel booking" on the pass; frees the slot | ✅ | (17 Oct) |
 | D8 | Electrician: price after inspection | Ask, then negotiate; no inspection step | ⚠️ | Quote-after-visit as a deal term |
 | D9 | Seller's calendar decides free times | iCal feed connector | ✅ | — |
 | D10 | Check-in at the salon | Booking pass, seller marks checked in | ✅ | — |
@@ -84,12 +84,12 @@ isn't the target here. The other four are.
 | E3 | What will buyers ask? | Gemini's likely questions, answered once on the card | ✅ | Fewer at once (top 2, rest folded) |
 | E4 | Warranty/returns terms | Suggested from what sellers of that item state on the web, with sources; seller edits | ✅ | — |
 | E5 | Rules in my words ("close on its own at ₹3,300+") | Read, confirmed, applied | ✅ | — |
-| E6 | Snap a photo to list an item | — | ❌ | **Photo → listing**: Gemini reads name, category and condition; seller adds the price |
-| E7 | Say the listing aloud | — | ❌ | Voice input (same as B11) |
-| E8 | Set stock while listing | Separate step on My info | ⚠️ | "How many do you have?" on the offer card |
+| E6 | Snap a photo to list an item | Photo → listing: Gemini reads the item and its condition; the seller sets the price | ✅ | (17 Oct) |
+| E7 | Say the listing aloud | Mic in the composer (same as B11) | ✅ | (17 Oct) |
+| E8 | Set stock while listing | Stock count on the offer card | ✅ | (17 Oct) |
 | E9 | Get my shop QR to print | People › Your QR › Download | ⚠️ | Name it **My shop** in the menu; QR first |
 | E10 | See my card as customers do | Preview opens fresh each time | ✅ | — |
-| E11 | Offer card has many sections | Questions, terms, rules, readiness, gate | ⚠️ | Publish first with what's known; the rest as "Improve your listing" chips after |
+| E11 | Offer card has many sections | Publish first; questions, terms and rules as "Improve your listing" chips after | ✅ | (17 Oct) |
 | E12 | List ten products | One chat message each | ⚠️ | Paste a list (one per line) → several listings to review |
 
 ## F. A seller's day
@@ -102,7 +102,7 @@ isn't the target here. The other four are.
 | F4 | Hand over with the pass | Pass modal → Mark collected | ✅ | (17 Oct) |
 | F5 | See today's orders to hand over | Requests › Agreed | ⚠️ | Name it **Deals**; "To hand over today" first for sellers |
 | F6 | See what I sold | Your deals with totals and stage | ✅ | (17 Oct) |
-| F7 | Find a past deal | Scroll | ❌ | **Filter chips**: To do · Sold · Bought · Done |
+| F7 | Find a past deal | Filter chips: To do · Sold · Bought · Done | ✅ | (17 Oct) |
 | F8 | Many buyers at once | Each a card; agents work in parallel | ✅ | — |
 | F9 | Pause everything for a day | Privacy › Pause | ✅ | — |
 | F10 | Reply to a buyer's message after agreeing | Chat line on the deal | ✅ | — |
@@ -120,7 +120,7 @@ isn't the target here. The other four are.
 | G7 | Hostile buyer tries to extract the floor | Refused; Model Armor screens injection | ✅ | — |
 | G8 | Accept the seller's price straight away | "Take their price" | ✅ | — |
 | G9 | Set autonomy once for all deals | Per request or listing | ⚠️ | Default in Settings ("Let my agent close within my rules") |
-| G10 | Understand why the agent did something | A2A log and events | ⚠️ | One plain line per move ("Countered ₹420 — inside your limit") at the top |
+| G10 | Understand why the agent did something | One colour-coded stage tag per deal; A2A log and events for detail | ✅ | (17 Oct) |
 
 ## H. After the deal
 
@@ -131,10 +131,10 @@ isn't the target here. The other four are.
 | H3 | Confirm it's as agreed | "Received it ✓ / Report a problem" | ✅ | (kept visible, 17 Oct) |
 | H4 | Report a problem | Seller sees it; part of the record | ✅ | — |
 | H5 | Receipt anyone can verify | Logged-out verify page; Ed25519 | ✅ | — |
-| H6 | Show a changed receipt failing | Command-line tool only | ⚠️ | **"Try changing the amount"** toggle on the verify page |
+| H6 | Show a changed receipt failing | "Try changing the price" on the verify page; the signature check refuses it | ✅ | (17 Oct) |
 | H7 | Seller's record grows | Verified sales on the public card | ✅ | — |
 | H8 | Return or refund | — | ❌ | Return request as a deal event; refund stays out of scope with payments |
-| H9 | Buy again | — | ❌ | Same as A10 |
+| H9 | Buy again | Same as A10 | ✅ | (17 Oct) |
 | H10 | Share the receipt | Link on the receipt | ✅ | — |
 
 ## I. Trust, privacy and safety
@@ -159,11 +159,11 @@ isn't the target here. The other four are.
 | J1 | First visit | Name → handle made → chat, under a second | ✅ | — |
 | J2 | Understand what to do | Three short steps and four tiles | ✅ | (17 Oct) |
 | J3 | Menu on a phone | Opens; closes on a tap outside | ✅ | (17 Oct) |
-| J4 | Too many menu items with jargon | Context · People · Sharing · Requests · Activity · Settings | ⚠️ | **Deals · My shop · About me · Privacy · Settings** (Activity inside Privacy) |
+| J4 | Too many menu items with jargon | Deals · My shop · About me · Privacy · Settings (Activity inside Privacy) | ✅ | (17 Oct) |
 | J5 | Ask about my notes without a 2 GB download | Matching notes shown at once; AI optional | ✅ | (17 Oct) |
 | J6 | Slow network | Offline shell, send queue | ✅ | — |
 | J7 | Light or dark | Auto/Light/Dark | ✅ | — |
-| J8 | QR code library unavailable | Loaded from esm.sh at runtime | ⚠️ | **Bundle it** with the app |
+| J8 | QR code library unavailable | Bundled with the app | ✅ | (17 Oct) |
 
 ## K. Notifications, devices and other agents
 
@@ -182,9 +182,9 @@ isn't the target here. The other four are.
 
 | Status | Count |
 |---|---|
-| ✅ smooth | 77 |
-| ⚠️ avoidable effort | 19 |
-| ❌ missing | 16 |
+| ✅ smooth | 93 |
+| ⚠️ avoidable effort | 11 |
+| ❌ missing | 8 |
 
 ## What to change, ranked by value for the theme and effort
 
@@ -204,11 +204,17 @@ isn't the target here. The other four are.
 **User experience**
 10. **Voice input** (B11, E7) — inclusion and a strong demo. S.
 11. **Bundle the QR library** (J8). S.
-12. **"Try changing the amount"** on the verify page (H6) — makes the receipt proof visible. S.
+12. **"Try changing the price"** on the verify page (H6) — makes the receipt proof visible. S.
 13. Cancel / change time on a booking pass (D6, D7). M.
 
 **Potential value (roadmap, not claimed)**
 Address after the deal (I3), block (I4), your data (I5), negotiating the pickup window (G6), price breaks (C5),
 compare three offers (B6), quiet hours (K2), returns (H8).
 
-Items 1, 2, 3, 7, 10, 11 and 12 are being built first (one pull request); photo listings next.
+**Business insights** (for the seller only; other people's data only as counts by item, from two or more people):
+shop insights show missed demand ("wanted 200, had 15"), what buyers ask most, prices actually agreed, buyer groups
+(new / repeat, at your price / bargained down) and what is often bought together. Next, once BigQuery access is
+granted: export the same counts to BigQuery and forecast demand per item with `AI.FORECAST`.
+
+Built 17 Oct: everything ranked above except the shop-card basket (A6), photo → request (B12) and "To hand over"
+first for sellers (F5).
