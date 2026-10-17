@@ -23,6 +23,21 @@ export function toast(text, onClick) {
   setTimeout(() => el.remove(), 5000);
 }
 
+/**
+ * An avatar made from the name: a hue and two shapes picked by a hash of the handle, so the same person always
+ * gets the same one and no two neighbours look alike — no photos needed (a photo, when there is one, replaces it).
+ */
+export function avatarHTML(name, handle = "", size = 30, photo = null) {
+  if (photo) return `<img class="avatar" src="${esc(photo)}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px;object-fit:cover">`;
+  const key = String(handle || name || "?");
+  let h = 2166136261; for (const ch of key) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const hue = h % 360, shape = (h >>> 8) % 4, rot = (h >>> 12) % 360, initial = String(name || "?").trim().slice(0, 1).toUpperCase();
+  const shapes = [`<circle cx="22" cy="10" r="9" />`, `<rect x="12" y="2" width="16" height="16" rx="3" transform="rotate(${rot % 45} 20 10)" />`, `<polygon points="20,1 29,18 11,18" />`, `<path d="M4 14 Q16 -4 28 14 T28 14" />`];
+  return `<svg class="avatar" viewBox="0 0 30 30" width="${size}" height="${size}" style="width:${size}px;height:${size}px" aria-hidden="true">
+    <rect width="30" height="30" rx="6" fill="hsl(${hue} 55% 88%)"/><g fill="hsl(${(hue + 40) % 360} 60% 62%)" opacity=".9">${shapes[shape]}</g>
+    <text x="15" y="21" text-anchor="middle" font-size="14" font-weight="700" font-family="-apple-system,Inter,sans-serif" fill="hsl(${hue} 50% 22%)">${esc(initial)}</text></svg>`;
+}
+
 export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)}</span>`;
 export const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 

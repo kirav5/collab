@@ -9,7 +9,7 @@ import { dealAmount, dealStage, defaultHours, engagementCard, hoursOk, hoursText
 import { local } from "./local.js";
 import { privacyFacts } from "./processing.js";
 import { live, needsYou, needsYouCount } from "./live.js";
-import { busy, byTag, esc, label, money, tag, tierTag, time } from "./ui.js";
+import { avatarHTML, busy, byTag, esc, label, money, tag, tierTag, time } from "./ui.js";
 import { pendingWrites, saveNote } from "./outbox.js";
 
 /** Rules read from a seller's words on the About me screen, waiting for them to confirm (by offering). */
@@ -57,7 +57,7 @@ async function insightsCard() {
     (i.unmet ?? []).length && panel("Asked near you, not filled", "accent", `<div class="ins-pills">${i.unmet.slice(0, 4).map(u => `<span>${esc(u.item)}<b>${n(u.requests)}</b></span>`).join("")}</div>`),
     (i.together ?? []).length && panel("Often wanted together", "accent", `<div class="ins-pills">${i.together.slice(0, 4).map(t => `<span>${esc(t.item)}<b>${n(t.buyers)}</b></span>`).join("")}</div>`),
     (i.asked ?? []).length && panel("People ask most", "talk", `<ul class="ins-qs">${i.asked.slice(0, 4).map(a => `<li><span>${esc(a.question)}</span><span>×${n(a.times)}</span></li>`).join("")}</ul>`),
-    panel("Next 7 days", "talk", next7 ? `<div class="ins-big"><b>${next7}</b><span>requests expected near you · BigQuery forecast</span></div>` : `<span class="small faint">${f?.available ? "Not enough history yet — the forecast fills in as requests come in." : esc(f?.reason || "Forecast not set up")}</span>`),
+    next7 && panel("Next 7 days", "talk", `<div class="ins-big"><b>${next7}</b><span>requests expected near you · BigQuery forecast</span></div>`),
   ].filter(Boolean);
   const lines = (i.summary ?? []).filter(Boolean);
   const head = `<div class="row">${label("Insights", "sq ink")}<span class="small faint end">last ${n(i.days) || 30} days</span></div>`;
@@ -423,9 +423,8 @@ export const screens = {
               <button class="btn accent compact" data-act="scan">Scan a QR</button>
               <button class="btn secondary compact" data-act="preview-card">See your card as others see it</button></div></div></div>
         <div id="scanner"></div>
-        <div class="card">${label("Your agent", "sq ink")}<b>${esc(S.profile.name)} <span class="faint">@${esc(S.profile.handle)}</span></b>
-          <span class="small muted">Other people's agents — in this app or any A2A agent — reach yours at:</span>
-          <code class="small" style="overflow-wrap:anywhere">${esc(card)}</code></div>
+        <div class="card"><div class="row">${avatarHTML(S.profile.name, S.profile.handle, 40)}<div><b>${esc(S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)}</span></div>
+          <button class="btn secondary compact end" data-act="agent-card">Agent card ›</button></div><span class="small muted">How any agent — here or elsewhere — finds and talks to yours.</span></div>
         <form class="card" data-form="add-contact">${label("Add someone by handle", "sq")}<div class="row"><input class="field" name="handle" placeholder="@handle" style="max-width:260px"><button class="btn" data-act="add-contact">Add</button></div>
           <span class="small faint">Contacts can be named in rules (Privacy). Try @riya, @kabir, @arjun, @meera, @dev, @sana or @nikhil — demo people.</span></form>
         <div class="stack">${contacts.map(c => `<div class="card slim"><div class="row"><b>${esc(c.name)}</b><span class="faint small">@${esc(c.handle)}</span>
@@ -639,6 +638,7 @@ export const screens = {
         await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
       }
       if (a === "deals-filter") { S.dealsFilter = el.dataset.k; h.paint(); return true; }
+      if (a === "radar") { S.radar = el.dataset.k; h.paint(); return true; }
       if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ behavior: "smooth", block: "center" }); c?.classList.remove("flash"); void c?.offsetWidth; c?.classList.add("flash"); return true; }
       if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
     },
@@ -725,24 +725,48 @@ export const screens = {
         return `<details class="more eng-row" data-anim="r-${esc(e.id)}" data-anim-sig="${esc(status)}"><summary><b>${esc(them.name)}</b> · ${esc(item)}${units} <span class="faint">· ${esc(status)}</span></summary>${engagementCard(e, e.id)}</details>`;
       };
       const alerts = live.alerts.map(a => `<div class="card slim needs-card">
-          <div class="row"><span class="avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(a.name)}</b><span class="small faint">fits “${esc(a.title)}” · found by your scheduled agent</span></div>${a.price ? `<span class="end"><b>${money(a.price, a.unit)}</b></span>` : ""}</div>
+          <div class="row">${avatarHTML(a.name, a.handle, 36)}<div class="eng-who"><b>${esc(a.name)}</b><span class="small faint">fits “${esc(a.title)}” · found by your scheduled agent</span></div>${a.price ? `<span class="end"><b>${money(a.price, a.unit)}</b></span>` : ""}</div>
           <span class="small muted">${esc(a.text)}</span>
           <div class="row"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Dismiss</button></div></div>`).join("");
-      return frame("Activity", "What your agents are doing", `
-        <div class="card slim attention ${need ? "wait" : ""}" data-anim="att" data-anim-sig="${need}"><span>${moves ? `Your agents made <b>${moves}</b> move${moves === 1 ? "" : "s"} today${closed ? ` and agreed <b>${closed}</b> deal${closed === 1 ? "" : "s"} inside your rules` : ""}.` : "Your agents are standing by."} ${need ? `<b>${need}</b> need${need === 1 ? "s" : ""} you.` : "Nothing needs you right now."}</span></div>
-        ${label(`Waiting for you · ${need}`, "sq wait")}${alerts}${waiting.map(e => engagementCard(e, e.id)).join("") || (alerts ? "" : `<p class="small muted">Nothing waits on you. Your agents ask only when a decision is yours.</p>`)}
-        ${talking.length ? `${label(`Agents negotiating · ${talking.length}`, "sq talk")}${talking.map(row).join("")}` : ""}
-        ${toFinish.length ? `${label(`Agreed — to pay or hand over · ${toFinish.length}`, "sq fresh")}${toFinish.map(e => engagementCard(e, e.id)).join("")}` : ""}
-        ${goals.length ? `${label(`Your goals · ${open.length} open`, "sq ink")}${open.map(goalRow).join("")}${doneGoals.length ? `<details class="more"><summary>Finished goals · ${doneGoals.length}</summary>${doneGoals.map(goalRow).join("")}</details>` : ""}` : ""}
-        ${live.watches.length ? `${label(`Watching · ${live.watches.length}`, "sq")}${live.watches.map(w => `<div class="card slim"><div class="row"><span class="dot pulse" style="color:var(--fresh)"></span><b class="small">${esc(w.title)}</b>
-          <button class="btn quiet compact end" data-act="watch-stop" data-id="${esc(w.id)}">Stop</button></div>
-          <span class="small faint">Checks every ${w.every >= 60 ? `${w.every / 60} h` : `${w.every} min`} · ${w.runs ? `last ${when(w.lastRun)} · ` : ""}next ${when(w.nextRun)} · until ${new Date(w.expires * 1000).toLocaleDateString()}</span></div>`).join("")}` : ""}
-        ${deals.length ? `${label(`Your deals · ${deals.length}`, "sq ink")}
-          <div class="card slim deals-sum"><div class="row" style="flex-wrap:wrap;gap:14px">${sold.length ? `<span><b>${sold.length}</b> sold${soldSum ? ` · ${soldSum} paid` : ""}</span>` : ""}${bought.length ? `<span><b>${bought.length}</b> bought${boughtSum ? ` · ${boughtSum} paid` : ""}</span>` : ""}<span><b>${deals.filter(e => e.fulfilment?.state === "accepted").length}</b> completed</span></div>
-            ${sold.length ? `<div class="row small"><span class="muted">What you sold is on your public card as a verified record — names and prices stay private.</span><button class="btn quiet compact end" data-act="preview-card">See your card</button></div>` : ""}</div>
-          <div class="row" style="gap:6px;flex-wrap:wrap">${DEAL_FILTERS.map(([k, t]) => { const n = deals.filter(e => dealIn(e, k)).length; return n || k === "all" ? `<button class="chip ${dealFilter === k ? "on" : ""}" data-act="deals-filter" data-k="${k}">${t} ${n}</button>` : ""; }).join("")}</div>
-          ${deals.filter(e => dealIn(e, dealFilter)).map(dealRow).join("") || `<p class="small muted">None here.</p>`}` : ""}
-        ${gone.length ? `<details class="more"><summary>Ended · ${gone.length}</summary>${gone.map(e => row(e).replace('class="more eng-row"', 'class="more eng-row ended"')).join("")}</details>` : ""}
+      // The radar: four counts across the top, each a filter; one row per conversation, with the decision right on it.
+      const finished = list.filter(e => e.phase === "agreed" && handed(e)), agreedAll = [...toFinish, ...finished];
+      const pick = S.radar && ["need", "talks", "agreed", "closed"].includes(S.radar) ? S.radar : need || live.alerts.length ? "need" : talking.length || open.length ? "talks" : agreedAll.length ? "agreed" : "need";
+      const counts = { need: need + live.alerts.length, talks: talking.length, agreed: agreedAll.length, closed: gone.length };
+      const radar = `<div class="radar">${[["need", "Awaiting you"], ["talks", "In talks"], ["agreed", "Agreed"], ["closed", "Closed"]].map(([k, t]) => `<button class="${pick === k ? "on" : ""} ${k}" data-act="radar" data-k="${k}"><b>${counts[k]}</b><span>${t}</span></button>`).join("")}</div>`;
+      // One row: who, what it's about, where it stands — and for a decision, accept / pass right there.
+      const decision = e => live.inbox.find(i => i.engagementId === e.id && i.owner === session.uid && ["confirm", "move"].includes(i.kind) && (i.kind === "confirm" || i.counter));
+      const rowOf = (e, why) => {
+        const side = me(e), them = side === "provider" ? e.requester : e.provider, [st, tone] = dealStage(e, side, waitingOn.has(e.id));
+        const d = decision(e), c = d?.counter, cur = e.offer?.currency;
+        const acts = d ? (d.kind === "confirm"
+            ? `<button class="btn accent compact" data-act="inbox-confirm" data-id="${esc(d.id)}">Accept</button><button class="btn secondary compact" data-act="inbox-walk" data-id="${esc(d.id)}">Pass</button>`
+            : `<button class="btn accent compact" data-act="take-price" data-eng="${esc(e.id)}" data-price="${c.price}">Accept ${c.quantity > 1 ? money(c.total, null, cur) : money(c.price, null, cur)}</button><button class="btn secondary compact" data-act="inbox-walk" data-id="${esc(d.id)}">Pass</button>`)
+          : waitingOn.has(e.id) ? `<button class="btn accent compact" data-act="eng-open" data-id="${esc(e.id)}">Answer ›</button>` : "";
+        return `<div class="rrow ${waitingOn.has(e.id) ? "needs" : ""}" data-anim="rr-${esc(e.id)}" data-anim-sig="${esc(st)}">
+          <button class="rrow-main" data-act="eng-open" data-id="${esc(e.id)}">${avatarHTML(them.name, them.handle, 40)}<span class="rrow-text"><b>${esc(them.name)}</b><span class="small muted">${esc(why)}</span></span></button>
+          <span class="rrow-side">${tag(st, tone)}<span class="row" style="gap:6px">${acts}<button class="btn quiet compact" data-act="eng-log" data-id="${esc(e.id)}">Agent log ›</button></span></span></div>`;
+      };
+      const why = e => { const d = decision(e), n = e.negotiation, item = (e.offer?.title ?? e.title).split(" · ")[0];
+        if (d?.kind === "confirm") return `Confirm ${dealAmount(e)} for ${item}`;
+        if (d?.counter) return `${shortName(d.counter.by)} offers ${money(d.counter.price, null, e.offer?.currency)} for ${item}`;
+        const q = live.inbox.find(i => i.engagementId === e.id && i.owner === session.uid && i.question); if (q) return q.question;
+        if (e.phase === "agreed") return `${dealAmount(e)} · ${item}`;
+        if (["closed", "declined"].includes(e.phase)) return e.events.filter(x => x.who === "system").at(-1)?.text ?? item;
+        const my = (me(e) === "provider" ? n.provider : n.requester).at(-1), their = (me(e) === "provider" ? n.requester : n.provider).at(-1);
+        return my || their ? `${item} · yours ${my ? money(my.price) : "—"} · theirs ${their ? money(their.price) : "—"}` : `${item} · agents are asking and answering`; };
+      const shortName = x => String(x ?? "").split(" ")[0];
+      const alertRows = live.alerts.map(a => `<div class="rrow needs"><button class="rrow-main" data-act="alert-ask" data-id="${esc(a.id)}">${avatarHTML(a.name, a.handle, 40)}<span class="rrow-text"><b>${esc(a.name)}</b><span class="small muted">fits “${esc(a.title)}”${a.price ? ` · ${money(a.price, a.unit)}` : ""} · found by your watch</span></span></button>
+          <span class="rrow-side">${tag("New match", "wait")}<span class="row" style="gap:6px"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Pass</button></span></span></div>`).join("");
+      const background = open.length || live.watches.length ? `<div class="stack" style="gap:6px">${label("In the background", "sq")}${open.map(goalRow).join("")}${live.watches.map(w => `<div class="card slim"><div class="row"><span class="live-dot"></span><b class="small">${esc(w.title)}</b><span class="small faint">live · looking every ${w.every >= 60 ? `${w.every / 60} h` : `${w.every} min`} until ${new Date(w.expires * 1000).toLocaleDateString()}</span>
+          <button class="btn quiet compact end" data-act="watch-stop" data-id="${esc(w.id)}">Stop</button></div></div>`).join("")}</div>` : "";
+      const body = pick === "need" ? `${alertRows}${waiting.map(e => rowOf(e, why(e))).join("")}` || `<p class="small muted">Nothing waits on you. Your agents ask only when a decision is yours.</p>`
+        : pick === "talks" ? `${talking.map(e => rowOf(e, why(e))).join("") || `<p class="small muted">No conversations running right now.</p>`}${background}`
+        : pick === "agreed" ? `${agreedAll.map(e => rowOf(e, why(e))).join("") || `<p class="small muted">Nothing agreed yet.</p>`}
+          ${deals.length ? `<div class="card slim deals-sum"><div class="row" style="flex-wrap:wrap;gap:14px">${sold.length ? `<span><b>${sold.length}</b> sold${soldSum ? ` · ${soldSum} paid` : ""}</span>` : ""}${bought.length ? `<span><b>${bought.length}</b> bought${boughtSum ? ` · ${boughtSum} paid` : ""}</span>` : ""}<span><b>${deals.filter(e => e.fulfilment?.state === "accepted").length}</b> completed</span>${sold.length ? `<button class="btn quiet compact end" data-act="preview-card">See your card</button>` : ""}</div></div>` : ""}`
+        : `${gone.map(e => rowOf(e, why(e))).join("") || `<p class="small muted">Nothing closed yet.</p>`}${doneGoals.length ? `<details class="more"><summary>Finished goals · ${doneGoals.length}</summary>${doneGoals.map(goalRow).join("")}</details>` : ""}`;
+      return frame("Activity", "What your agents are doing", `${radar}
+        <div class="row small"><span class="muted">${moves ? `<b>${moves}</b> move${moves === 1 ? "" : "s"} today${closed ? ` · <b>${closed}</b> agreed inside your rules` : ""}` : "Your agents are standing by."}</span><button class="btn quiet compact end" data-act="agent-stream">Agent log ›</button></div>
+        <div class="rlist">${body}</div>
         ${!list.length && !goals.length ? `<p class="small muted">Ask for something in chat — “Need a tabla teacher online” — or open someone's card. Your agents' work shows up here.</p>` : ""}`);
     },
   },
@@ -771,7 +795,7 @@ export const screens = {
       let look = "auto"; try { look = localStorage.getItem("collab-theme") || "auto"; } catch { /* private window */ }
       return frame("Settings", "You and your agent", `
         <form class="card set-card" data-form="profile">
-          <div class="set-head"><span class="set-avatar" aria-hidden="true">${esc((S.profile.name || "?").slice(0, 1).toUpperCase())}</span><div><b>${esc(S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)}</span></div></div>
+          <div class="set-head">${avatarHTML(S.profile.name, S.profile.handle, 48)}<div><b>${esc(S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)}</span></div></div>
           <label class="set-field"><span>Name</span><input class="field" name="name" value="${esc(S.profile.name)}"></label>
           <label class="set-field"><span>Handle</span><div class="row" style="flex-wrap:nowrap;gap:6px"><span class="faint">@</span><input class="field" name="handle" value="${esc(S.profile.handle)}"></div></label>
           <label class="set-field"><span>About you · public</span><input class="field" name="bio" value="${esc(S.profile.bio)}" placeholder="One line others see"></label>
@@ -785,7 +809,7 @@ export const screens = {
           <div class="set-row"><div><b>Answer my notes with</b><span class="small faint">${{ "device-only": "Gemma on this device — nothing sent", "my-devices": "Gemma on your devices — never the cloud", cloud: "Your devices, else Gemini", "cloud-only": "Always Gemini in the cloud" }[engine.mode] ?? ""}</span></div></div>
           <div class="seg wide">${[["device-only", "This device"], ["my-devices", "My devices"], ["cloud", "Devices, then cloud"], ["cloud-only", "Cloud"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
           <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
-          <details class="more"><summary>Technical details</summary><dl class="kv small"><dt>Model</dt><dd>${esc(session.config.model ?? "")} on Vertex AI</dd><dt>Between agents</dt><dd>A2A v1.0 (JSON-RPC)</dd></dl></details></div>
+</div>
         ${myDevices()}
         <div class="card">${label("App & notifications", "sq")}
           <span class="small muted">Get told when your agent needs you, even with Collab closed. Never prices or notes.</span>
@@ -801,7 +825,8 @@ export const screens = {
             : `<button class="btn secondary compact" data-act="push-on">🔔 Turn on notifications</button>`}</dd></dl></div>
         <div class="card">${label("Account", "sq")}
           ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and context on other devices.</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
-          <div class="row"><button class="btn danger compact" data-act="clear-device">Delete chat history</button>${session.signOut ? `<button class="btn quiet compact" data-act="sign-out">Sign out</button>` : ""}</div></div>`);
+          <div class="row">${session.signOut ? `<button class="btn secondary compact" data-act="sign-out">Sign out</button>` : ""}<button class="btn quiet compact" data-act="clear-device">Delete chat history</button></div></div>
+        <details class="more danger-zone"><summary>Danger zone</summary><div class="card danger-card"><div class="row"><div class="stack" style="gap:2px;flex:1;min-width:200px"><b>Delete account</b><span class="small">Your agent stops at once and everything you keep here is removed. Deals you made stay with the other person, as do their receipts.</span></div><button class="btn danger compact" data-act="delete-account">Delete</button></div></div></details>`);
     },
     async act(a, el, S, h) {
       // Incognito: chats started while it's on are never kept or synced, and nothing said is remembered (see app.js).
@@ -859,6 +884,14 @@ export const screens = {
           if (r === "linked") h.toast("Signed in with Google. Your handle and context now follow you to any device.");
         } catch (err) { h.toast(err.message); }
         h.paint(); return true;
+      }
+      if (a === "delete-account") {
+        if (!confirm("Delete your account? Your agent stops at once; notes, listings, rules, requests and chats are removed; your handle is freed. This can't be undone.")) return true;
+        if (prompt("Type DELETE to confirm") !== "DELETE") return true;
+        busy(el, true, "Deleting");
+        try { await api("/api/me/delete", {}); await local.clear().catch(() => {}); try { localStorage.clear(); } catch {} if (session.user?.delete) await session.user.delete().catch(() => {}); if (session.signOut) await session.signOut(); else location.href = "/"; }
+        catch (err) { busy(el, false); h.toast(err.message); }
+        return true;
       }
       if (a === "clear-device") { if (confirm("Delete your chat history on every device? Your context, facts, people and deals stay.")) { await api("/api/chats/clear", {}); await local.clear(); location.reload(); } return true; }
       if (a === "sign-out") {

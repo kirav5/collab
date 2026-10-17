@@ -735,3 +735,20 @@ test("shop insights: demand you missed (beyond stock, turned away), prices agree
   assert.ok(!JSON.stringify(i).includes("si-b") && !JSON.stringify(i).includes("Buyer One"), "no buyer ids or names");
   assert.equal(i.buyers.total, 0);
 });
+
+test("deleting an account: the agent stops, what they kept is gone, the handle is free; the other side keeps the conversation", async () => {
+  await as("del-a", "/api/me", { handle: "del-anu", name: "Anu", areaName: "Indiranagar" });
+  await as("del-b", "/api/me", { handle: "del-bo", name: "Bo", areaName: "Indiranagar" });
+  const f = await as("del-a", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
+  await as("del-a", "/api/facts", { tier: "private", text: "Gate code 4471" });
+  const e = await as("del-b", "/api/people/del-anu/ask", { text: "Is it available?", offerFactId: f.id });
+  const start = await as("del-a", "/api/start");
+  assert.ok(Array.isArray(start.ideas));
+  const r = await as("del-a", "/api/me/delete", {});
+  assert.equal(r.ok, true); assert.ok(r.removed.facts >= 2);
+  assert.equal((await raw("del-b", "/api/people/del-anu")).status, 404, "the handle is free");
+  assert.equal((await as("del-a", "/api/facts")).length, 0, "nothing kept");
+  const theirs = await as("del-b", `/api/engagements/${e.id}`);
+  assert.equal(theirs.phase, "closed"); assert.match(theirs.events.at(-1).text, /closed their account/);
+  await as("del-c", "/api/me", { handle: "del-anu", name: "New Anu", areaName: "Indiranagar" });
+});

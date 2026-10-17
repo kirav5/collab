@@ -20,7 +20,7 @@ import { savedKey } from "./market/answer.ts";
 import { docId } from "./docs.ts";
 import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
-import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
+import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
@@ -33,7 +33,7 @@ import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { suggestTerms } from "./core/terms.ts";
-import { AnswersTask, NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
+import { AnswersTask, StartIdeasTask, NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
 import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.ts";
 import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
@@ -63,7 +63,7 @@ import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
 import { seedDemo } from "./demo.ts";
 import { log } from "./log.ts";
-import { initPush, pushTo, saveToken } from "./core/push.ts";
+import { PUSH, initPush, pushTo, saveToken } from "./core/push.ts";
 import { clean as cleanText } from "./core/wall.ts";
 import { ALERTS, type Alert, WATCHES, type Watch, runDue, startWatch } from "./core/watch.ts";
 
@@ -382,6 +382,38 @@ app.post("/api/me", route(async req => {
   const areaPlace = placeFrom(b.area) ?? (typeof b.areaName === "string" ? resolve(b.areaName) : undefined);
   return saveProfile(db, req.uid, { handle: b.handle, name: b.name, bio: b.bio, ...(areaPlace !== undefined ? { area: areaPlace } : {}) }, () => event("signup"));
 
+}));
+/** What to start with, for the new-chat screen (see StartIdeasTask). */
+app.get("/api/start", route(async req => {
+  const p = await me(req.uid);
+  const [facts, briefs, es] = await Promise.all([db.find(FACTS, [["owner", "==", req.uid]], 100) as Promise<Fact[]>, db.find(BRIEFS, [["owner", "==", req.uid]], 50) as Promise<Brief[]>, db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 100) as Promise<Engagement[]>]);
+  const offers = facts.filter(f => f.tier === "public" && f.offer).map(f => f.offer!.title.split(" · ")[0]).slice(0, 6);
+  const asked = briefs.sort((a, b) => b.createdAt - a.createdAt).map(b => b.shared.title).filter((t, i, a) => a.indexOf(t) === i).slice(0, 6);
+  const bought = es.filter(e => e.phase === "agreed" && e[e.seller ?? "provider"].uid !== req.uid).map(e => e.offer.title.split(" · ")[0]).slice(0, 6);
+  const d = await decide(model, StartIdeasTask, { area: p.area?.name ?? "", offers, asked, bought });
+  return { ideas: d.output, byModel: d.byModel };
+}));
+/**
+ * Delete the account: the agent stops at once, everything the person keeps (notes, listings, rules, limits, stock,
+ * requests, watches, chats, devices) is removed and the handle is freed. Conversations they had stay with the other
+ * person, as do signed receipts — those are the other side's record too. Open negotiations are closed.
+ */
+app.post("/api/me/delete", route(async req => {
+  const uid = req.uid, p = await me(uid);
+  const wipe = async (col: string, field = "owner") => { const rows = (await db.find(col, [[field, "==", uid]], 500)) as { id: string }[]; await Promise.all(rows.map(r => db.delete(col, r.id))); return rows.length; };
+  const n: Record<string, number> = {};
+  for (const col of [FACTS, LIMITS, RULES, BRIEFS, GOALS, WATCHES, RESOURCES, GRANTS, CONTACTS, ANSWERS, PHOTOS]) n[col] = await wipe(col);
+  n.chats = (await db.find(CHATS, [["owner", "==", uid]], 500) as { id: string }[]).length; await Promise.all((await db.find(CHATS, [["owner", "==", uid]], 500) as { id: string }[]).map(r => db.delete(CHATS, chatKey(uid, r.id))));
+  n.push = await wipe(PUSH, "uid");
+  const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
+  for (const e of es) if (["asking", "negotiating", "deal"].includes(e.phase)) {
+    e.phase = "closed"; e.events.push({ at: now(), who: "system", text: `${p.name} closed their account; this conversation ended.` }); e.updatedAt = now();
+    await saveEngagement(db, e).catch(() => {});
+  }
+  await db.delete(HANDLES, p.handle.toLowerCase()).catch(() => {});
+  await db.set(PROFILES, uid, { uid, handle: `deleted-${uid.slice(0, 8)}`, name: p.name, bio: "", area: null, deleted: true, deletedAt: now() });
+  event("account_deleted");
+  return { ok: true, removed: n };
 }));
 app.post("/api/me/pause", route(async req => { const p = await me(req.uid); p.paused = !!req.body?.paused; await db.set(PROFILES, p.uid, p); return p; }));
 app.get("/api/people/:handle", route(async req => {
