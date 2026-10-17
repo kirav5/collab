@@ -871,8 +871,8 @@ const findCard = el => {
 
 // MARK: - Actions
 
-/** Wide enough for the chat and a screen side by side (styles.css: the panel covers the chat at 1180px and below). */
-const sideBySide = () => matchMedia("(min-width: 1181px)").matches;
+/** Wide enough for the chat and a screen side by side (styles.css: below 900 px what's open covers the chat). */
+const sideBySide = () => matchMedia("(min-width: 900px)").matches;
 /** Show the chat: on a wide screen the screen beside it (Activity…) stays open; on a phone the chat takes over. */
 function toChat() { if (!sideBySide() || !screens[S.screen]) S.screen = "chat"; }
 

@@ -110,7 +110,10 @@ textarea.field { resize: vertical; min-height: 64px; }
 .panel { border-left: 1px solid var(--hairline); display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
 .panel .inner { max-width: none; }
 .panel-top .close { margin-left: auto; }
-@media (max-width: 1180px) { .app.split { grid-template-columns: 290px 1fr; } .app.split .main { display: none; } .panel { border-left: 0; } }
+/* Middle widths (900–1180 px): the chat stays in the middle and what's open is squeezed to the right; the menu narrows.
+   Narrower than that, what's open covers the chat (one thing at a time on a tablet or phone). */
+@media (max-width: 1180px) and (min-width: 900px) { .app.split { grid-template-columns: 230px minmax(320px, 1fr) minmax(340px, 44%); } }
+@media (max-width: 899px) { .app.split { grid-template-columns: 290px 1fr; } .app.split .main { display: none; } .panel { border-left: 0; } }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--hairline); min-height: 49px; }
 .topbar .menu { display: none; }
 .content { flex: 1; overflow-y: auto; }
