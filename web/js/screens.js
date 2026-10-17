@@ -187,6 +187,14 @@ function draftCard(d) {
     <div class="row"><button class="btn accent" data-act="cm-post">Post to members</button><button class="btn quiet" data-act="cm-draft-cancel">Edit the words</button></div></div>`;
 }
 
+/** A listing's text: what it says, then the "Label: value." details it carries as a list (plain notes stay as they are). */
+function factText(f) {
+  if (!f.offer) return `<span>${esc(f.text)}</span>`;
+  const parts = f.text.split(/(?<=[.!?])\s+(?=[A-Z])/), head = [], kv = [];
+  for (const p of parts) { const m = p.match(/^([A-Z][^.:?!]{1,40}):\s+(.{1,160}?)\.?$/); if (m && kv.length + head.length) kv.push([m[1], m[2]]); else head.push(p); }
+  return `<span>${esc(head.join(" "))}</span>${kv.length ? `<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}`;
+}
+
 export const screens = {
   context: {
     async html() {
@@ -197,14 +205,14 @@ export const screens = {
       const grants = await api("/api/connectors").catch(() => []);
       // A linked system, in plain words: what it does, whether it's working, and how (one tap away).
       const connected = r => grants.filter(g => g.resourceId === r.id && g.status !== "revoked").map(g => {
-        const pos = g.provider !== "ical", last = g.lastEventAt ? new Date(g.lastEventAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
+        const pos = g.provider === "inventory-webhook", gcal = g.provider === "google-calendar", last = g.lastEventAt ? new Date(g.lastEventAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
         const state = g.status === "degraded" ? `<span style="color:var(--danger)">not reporting${g.lastError ? ` — ${esc(g.lastError)}` : ""}</span>`
           : last ? `<span style="color:var(--fresh)">● working</span> · last update ${esc(last)}` : `<span class="faint">● linked · waiting for its first update</span>`;
         const how = pos ? "Each sale in your billing app is sent here, signed with the key you were given once. Collab checks the signature and takes those units off this count — so what agents say about your stock stays right without you updating it."
           : "Collab reads only the busy times from your calendar, every few minutes; a busy time can't be booked. Event titles and details stay in your calendar.";
-        return `<div class="stack small" style="gap:2px"><div class="row small"><b>${pos ? "Linked to your billing app" : "Linked to your calendar"}</b><span>${state}</span></div>
+        return `<div class="stack small" style="gap:2px"><div class="row small"><b>${pos ? "Linked to your billing app" : gcal ? "Linked to Google Calendar" : "Linked to your calendar"}</b><span>${state}</span></div>
           <details class="more"><summary>How it works</summary><span class="small muted">${how}</span></details>
-          <div class="row">${pos ? "" : `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>`}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">Disconnect</button></div></div>`;
+          <div class="row">${pos ? "" : `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>`}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">${pos ? "Disconnect" : "Unlink"}</button></div></div>`;
       }).join("");
       const now_ = Date.now() / 1000;
       const stockRow = f => {
@@ -222,16 +230,28 @@ export const screens = {
         }
         const open = r.slots.filter(sl => sl.start > now_);
         const taken = sl => r.holds.filter(h => h.slotId === sl.id && (h.state === "committed" || (h.state === "held" && h.expiresAt > now_))).reduce((n, h) => n + h.qty, 0);
+        const free = open.filter(sl => taken(sl) < sl.capacity), booked = open.length - free.length;
         const hrs = r.hours ?? defaultHours(f.offer), rid = esc(r.id);
-        const hoursForm = `<details class="more"${r.hours || open.length ? "" : " open"}><summary>${r.hours ? `${esc(hoursText(r.hours))} · ${r.hours.minutes} min each · change` : "Set weekly hours — free times then refill on their own"}</summary>
+        const fmt = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+        // One line says it all: the hours, how many free times are open, when the next one is, and how many are booked.
+        const line = r.hours ? `${esc(hoursText(r.hours))} · ${r.hours.minutes} min each` : `${open.length} times set by hand`;
+        const summary = `<span class="faint">${line}${free.length ? ` · next free ${esc(fmt(free[0].start))}` : open.length ? " · all booked" : ""}${booked ? ` · ${booked} booked` : ""}</span>`;
+        return `<div class="stack small stock"><div class="row"><b>Bookable times</b>${summary}</div>
+          <details class="more"><summary>${r.hours ? "Change hours" : "Set weekly hours"} or add a one-off time</summary>
           <div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip"><input type="checkbox" data-hours-day="${rid}" value="${d}" ${hrs.days.includes(d) ? "checked" : ""}> ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label>`).join("")}</div>
           <div class="row"><input class="field compact" type="time" data-hours-from="${rid}" value="${esc(hrs.from)}" style="max-width:120px"><span>to</span><input class="field compact" type="time" data-hours-to="${rid}" value="${esc(hrs.to)}" style="max-width:120px">
             <input class="field compact" type="number" min="10" max="480" step="5" data-hours-mins="${rid}" value="${hrs.minutes}" style="max-width:80px"><span>min each</span></div>
-          <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div></details>`;
-        return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${hoursForm}${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
-          <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div>
-          ${connected(r) || `<div class="row small"><input class="field" type="url" placeholder="Calendar iCal URL (https)" data-ical="${esc(r.id)}"><button class="btn quiet compact" data-act="conn-ical" data-id="${esc(r.id)}">Connect calendar</button></div><span class="faint small">Only busy times are read — event titles stay with your calendar.</span>`}</div>`;
+          <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div>
+          <div class="row" style="margin-top:6px"><span class="faint" style="min-width:110px">One-off time</span><input class="field compact" type="datetime-local" data-slot-start="${rid}" style="max-width:230px"><input class="field compact" type="number" min="15" step="15" style="max-width:80px" data-slot-mins="${rid}" value="60" title="Minutes"><button class="btn quiet compact" data-act="slot-add" data-id="${rid}">Add</button></div></details>
+          ${connected(r) || calendarLink(r.id)}</div>`;
       };
+      // Linking a calendar so its busy times block bookings: Google through its own sign-in (when the server has an
+      // OAuth client); any calendar through its private iCal address (Google's "Secret address in iCal format").
+      const calendarLink = rid => `<div class="row small"><button class="btn secondary compact" data-act="gcal-link" data-id="${esc(rid)}">Link Google Calendar</button><button class="btn quiet compact" data-act="cal-other" data-id="${esc(rid)}">Other calendar</button><span class="faint">busy times then block bookings</span></div>
+        <div class="card slim stack" data-cal-other="${esc(rid)}" hidden style="gap:6px">
+          <span class="small muted">Any calendar can share busy times through its private iCal address. In Google Calendar: Settings → your calendar → <b>Integrate calendar</b> → <b>Secret address in iCal format</b>.</span>
+          <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link</button></div>
+          <span class="faint small">Only busy times are read — titles and guests stay with your calendar.</span></div>`;
       // The seller's own terms for an offering, and instant booking: their words, a row to add one, and Gemini's
       // suggestions for this listing on request. No headings or examples are put in front of them.
       // The seller's rules for their agent, in their words: what's in force, and a box to change them.
@@ -262,7 +282,7 @@ export const screens = {
           <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Only me (never shared)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
         <div class="stack">${facts.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
-          <span>${esc(f.text)}</span>
+          ${factText(f)}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
@@ -355,11 +375,19 @@ export const screens = {
         return true;
       }
       if (a === "copy") { try { await navigator.clipboard.writeText(el.dataset.value); h.toast("Copied."); } catch { h.toast("Couldn't copy — select it under “For your developer”."); } return true; }
+      if (a === "gcal-link") {
+        busy(el, true, "Opening Google");
+        try { const r = await api(`/api/google/calendar/start?resourceId=${encodeURIComponent(el.dataset.id)}`); location.href = r.url; return true; }
+        catch (err) { busy(el, false); h.toast(err.message); document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`)?.removeAttribute("hidden"); return true; }
+      }
+      if (a === "cal-other") { const box = document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`); if (box) box.hidden = !box.hidden; return true; }
       if (a === "conn-ical") {
         const url = document.querySelector(`[data-ical="${CSS.escape(el.dataset.id)}"]`)?.value.trim();
-        if (!url) { h.toast("Paste your calendar's iCal (https) address."); return true; }
+        if (!url) { h.toast("Paste your calendar's secret iCal address first."); return true; }
+        // Google's public address only works for calendars made public; the secret one carries "/private-".
+        if (/calendar\.google\.com/.test(url) && !/\/private-/.test(url)) { h.toast("That's the public address. Copy the “Secret address in iCal format” instead — it's a bit lower on the same settings page."); return true; }
         busy(el, true);
-        try { const r = await api("/api/connectors", { provider: "ical", resourceId: el.dataset.id, url }); h.toast(r.grant.status === "degraded" ? `Connected, but the feed couldn't be read: ${r.grant.lastError}` : "Calendar connected — busy times now block slots."); }
+        try { const r = await api("/api/connectors", { provider: "ical", resourceId: el.dataset.id, url }); h.toast(r.grant.status === "degraded" ? `Connected, but the feed couldn't be read: ${r.grant.lastError}` : "Calendar linked — your busy times now block bookings."); }
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
@@ -436,7 +464,7 @@ export const screens = {
       if (a === "remove-contact") { await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
       if (a === "view-person") {
         const p = await api(`/api/people/${el.dataset.handle}`);
-        document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals ? `<span class="small faint">${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<a class="small" href="${esc(p.agentCard)}" target="_blank" rel="noopener">A2A agent card ↗</a></div>`;
+        document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals ? `<span class="small faint">${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<div class="row"><button class="btn accent compact" data-act="cm-message" data-handle="${esc(el.dataset.handle)}">Open their shop</button><a class="small faint" href="${esc(p.agentCard)}" target="_blank" rel="noopener" title="The machine-readable card other agents read">agent card ↗</a></div></div>`;
         return true;
       }
     },
@@ -635,6 +663,12 @@ export const screens = {
         if (!confirm("Cancel this goal? Conversations without a deal end; agreed deals keep their obligations.")) return true;
         await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
       }
+      if (a === "deal-receipt") {
+        // The button sits in the row's summary, whose own toggle runs after this: open the row once that's done.
+        const row = el.closest("details");
+        setTimeout(() => { row.open = true; row.querySelector('[data-act="eng-receipt"]')?.click(); }, 0);
+        return true;
+      }
       if (a === "deals-filter") { S.dealsFilter = el.dataset.k; h.paint(); return true; }
       if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ behavior: "smooth", block: "center" }); c?.classList.remove("flash"); void c?.offsetWidth; c?.classList.add("flash"); return true; }
       if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
@@ -692,10 +726,11 @@ export const screens = {
         return Object.entries(m).filter(([, v]) => v).map(([c, v]) => money(v, null, c)).join(" + "); };
       const soldSum = paidBy(sold), boughtSum = paidBy(bought);
       // Find a deal fast: what still needs doing, what you sold, what you bought, what's finished.
-      const DEAL_FILTERS = [["all", "All"], ["todo", "To do"], ["sold", "Sold"], ["bought", "Bought"], ["done", "Done"]];
+      // Open: still to pay, hand over or confirm. Won: paid or handed over as agreed. Lost: cancelled or fell through.
+      const DEAL_FILTERS = [["open", "Open"], ["won", "Won"], ["lost", "Lost"], ["all", "All"]];
       const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
-      const dealIn = (e, k) => k === "all" || (k === "todo" ? !finishedDeal(e) : k === "done" ? finishedDeal(e) : k === "sold" ? sold.includes(e) : bought.includes(e));
-      const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "all";
+      const dealIn = (e, k) => k === "all" || (k === "open" ? !finishedDeal(e) : k === "lost" ? off(e) : finishedDeal(e) && !off(e));
+      const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "open";
       const STAGE = e => dealStage(e, me(e));
       const dealRow = e => {
         const side = me(e), them = side === "provider" ? e.requester : e.provider, mineSold = sellerOf(e) === side;
@@ -704,8 +739,15 @@ export const screens = {
         const [st, tone] = STAGE(e), at = new Date((e.agreedAt ?? e.updatedAt) * 1000).toLocaleDateString([], { day: "numeric", month: "short" });
         const line = `<span class="deal-line">${tag(mineSold ? "Sold" : "Bought", mineSold ? "fresh" : "peri")}<b class="grow">${esc((e.offer?.title ?? e.title).split(" · ")[0])}${n > 1 ? ` × ${n}` : ""}</b><span class="deal-amt">${money(total, null, e.offer.currency)}</span></span>
           <span class="deal-line small"><span class="faint">${mineSold ? "to" : "from"} ${esc(them.name)} · ${esc(at)}</span>${tag(st, tone)}</span>`;
+        const paid = ["paid", "outside"].includes(e.payment?.status);
         return shownAbove.has(e.id) ? `<button class="deal-row deal-jump" data-act="deal-jump" data-id="${esc(e.id)}" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}" title="Open this deal above">${line}</button>`
-          : `<details class="more deal-row" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}"><summary>${line}</summary>${engagementCard(e, e.id)}</details>`;
+          : `<details class="more deal-row" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}"><summary>${line}${paid ? `<button class="btn quiet compact" data-act="deal-receipt" data-id="${esc(e.id)}" title="The signed record of this deal">Receipt</button>` : ""}</summary>${engagementCard(e, e.id)}</details>`;
+      };
+      // Deals grouped by who they're with: one person's deals together, newest person first.
+      const byPerson = es => {
+        const groups = new Map();
+        for (const e of es) { const them = me(e) === "provider" ? e.requester : e.provider; (groups.get(them.uid ?? them.name) ?? groups.set(them.uid ?? them.name, { them, es: [] }).get(them.uid ?? them.name)).es.push(e); }
+        return [...groups.values()].map(g => `<div class="stack" style="gap:6px"><span class="small"><b>${esc(g.them.name)}</b>${g.them.handle ? ` <span class="faint">@${esc(g.them.handle)}</span>` : ""} <span class="faint">· ${g.es.length} deal${g.es.length === 1 ? "" : "s"}</span></span>${g.es.map(dealRow).join("")}</div>`).join("");
       };
       const t0 = new Date().setHours(0, 0, 0, 0) / 1000;
       const mine = e => (me(e) === "provider" ? "provider_agent" : "requester_agent");
@@ -738,7 +780,7 @@ export const screens = {
           <div class="card slim deals-sum"><div class="row" style="flex-wrap:wrap;gap:14px">${sold.length ? `<span><b>${sold.length}</b> sold${soldSum ? ` · ${soldSum} paid` : ""}</span>` : ""}${bought.length ? `<span><b>${bought.length}</b> bought${boughtSum ? ` · ${boughtSum} paid` : ""}</span>` : ""}<span><b>${deals.filter(e => e.fulfilment?.state === "accepted").length}</b> completed</span></div>
             ${sold.length ? `<div class="row small"><span class="muted">What you sold is on your public card as a verified record — names and prices stay private.</span><button class="btn quiet compact end" data-act="preview-card">See your card</button></div>` : ""}</div>
           <div class="row" style="gap:6px;flex-wrap:wrap">${DEAL_FILTERS.map(([k, t]) => { const n = deals.filter(e => dealIn(e, k)).length; return n || k === "all" ? `<button class="chip ${dealFilter === k ? "on" : ""}" data-act="deals-filter" data-k="${k}">${t} ${n}</button>` : ""; }).join("")}</div>
-          ${deals.filter(e => dealIn(e, dealFilter)).map(dealRow).join("") || `<p class="small muted">None here.</p>`}` : ""}
+          ${byPerson(deals.filter(e => dealIn(e, dealFilter))) || `<p class="small muted">None here.</p>`}` : ""}
         ${gone.length ? `<details class="more"><summary>Ended · ${gone.length}</summary>${gone.map(e => row(e).replace('class="more eng-row"', 'class="more eng-row ended"')).join("")}</details>` : ""}
         ${!list.length && !goals.length ? `<p class="small muted">Ask for something in chat — “Need a tabla teacher online” — or open someone's card. Your agents' work shows up here.</p>` : ""}`);
     },

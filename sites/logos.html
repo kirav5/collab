@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collab Logo Options</title>
+<style>
+/* Same tokens as the site; each option is drawn twice (dark and light) with currentColor for the ink parts. */
+:root {
+  --bg: #0a0a0a; --surface: #121212; --hairline: #262626; --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
+  --accent: #ff3ea5; --peri: #a5a8f0; --talk: #3fd8f2; --fresh: #3ddc97;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { --bg: #f7f7f5; --surface: #ffffff; --hairline: #deded9; --text: #0a0a0a; --text2: #55554f; --text3: #6b6b66; color-scheme: light; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f7f7f5; --surface: #ffffff; --hairline: #deded9; --text: #0a0a0a; --text2: #55554f; --text3: #6b6b66; color-scheme: light; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 48px 24px 72px; }
+@media (max-width: 600px) { .wrap { padding: 32px 16px 56px; } }
+.label { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); }
+h1 { font-size: clamp(34px, 5vw, 56px); letter-spacing: -.04em; line-height: 1.02; margin: 10px 0 8px; font-weight: 650; }
+.lede { color: var(--text2); margin: 0 0 36px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+@media (max-width: 400px) { .grid { grid-template-columns: 1fr; } }
+.opt { border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); overflow: hidden; display: grid; }
+.opt .head { display: flex; align-items: baseline; gap: 10px; padding: 14px 16px 0; }
+.opt .n { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--accent); }
+.opt h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
+.opt p { margin: 4px 16px 12px; color: var(--text2); font-size: 14px; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; }
+.tile { aspect-ratio: 1.25; display: grid; place-items: center; }
+.tile.dark { background: #0a0a0a; color: #f4f4f4; }
+.tile.light { background: #f7f7f5; color: #0a0a0a; }
+.tile svg { width: 46%; height: auto; }
+.row { display: flex; align-items: center; gap: 16px; padding: 14px 16px; border-top: 1px solid var(--hairline); flex-wrap: wrap; }
+.lock { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 650; letter-spacing: -.03em; }
+.lock svg { width: 34px; height: 34px; }
+.app { width: 52px; height: 52px; border-radius: 12px; background: #0a0a0a; color: #f4f4f4; display: grid; place-items: center; border: 1px solid var(--hairline); }
+.app svg { width: 34px; height: 34px; }
+.fav { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.fav span { width: 16px; height: 16px; display: grid; place-items: center; color: var(--text); }
+.fav span svg { width: 16px; height: 16px; }
+.fav span.b { width: 24px; height: 24px; } .fav span.b svg { width: 24px; height: 24px; }
+/* Motion: each mark shows how it would animate on the site */
+.anim .mv { animation: mv 3s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes mv { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(var(--dx, 0)); } }
+.anim .rot { animation: rot 8s linear infinite; transform-origin: 32px 32px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.anim .blink { animation: blink 3s ease-in-out infinite; }
+@keyframes blink { 0%, 40%, 100% { opacity: 1; } 50%, 90% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .anim * { animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="label">Collab · brand</span>
+  <h1>Pick a logo.</h1>
+  <p class="lede">Seven directions. Each is shown on dark and light, as an app icon, next to the name, and at favicon size.</p>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+// Each mark is a 64×64 drawing: accent parts in magenta, ink parts in currentColor so they flip with the background.
+const A = '#ff3ea5';
+const MARKS = [
+  { name: 'Nested square', why: 'Today\'s app icon, tightened. Your agent at the core.',
+    svg: (bg) => `<rect x="8" y="8" width="48" height="48" fill="${A}"/><rect x="24" y="24" width="16" height="16" fill="${bg}" class="blink"/>` },
+  { name: 'Overlap', why: 'Two agents meet. The deal is the shared space.',
+    svg: (bg) => `<rect x="6" y="17" width="30" height="30" fill="${A}"/><rect x="28" y="17" width="30" height="30" fill="currentColor"/><rect x="28" y="17" width="8" height="30" fill="${bg}"/>` },
+  { name: 'The wall', why: 'Two agents, one privacy wall, an offer crossing.',
+    svg: () => `<rect x="6" y="20" width="22" height="24" fill="${A}"/><rect x="36" y="20" width="22" height="24" fill="currentColor"/><rect x="30.5" y="12" width="3" height="40" fill="#a5a8f0"/><rect x="27" y="7" width="10" height="5" fill="${A}" class="mv" style="--dx:12px"/>` },
+  { name: 'Orbit', why: 'Your agent and the network it reaches.',
+    svg: () => `<circle cx="32" cy="32" r="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="4 5"/><rect x="22" y="22" width="20" height="20" fill="${A}"/><g class="rot"><rect x="50" y="11" width="9" height="9" fill="currentColor"/></g>` },
+  { name: 'Two bubbles', why: 'A conversation between agents, in two speech bubbles.',
+    svg: () => `<path d="M6 8h32v24H20l-8 8v-8H6z" fill="${A}"/><path d="M58 24H26v24h18l8 8v-8h6z" fill="currentColor" class="mv" style="--dx:-3px"/>` },
+  { name: 'C bracket', why: 'A square C holding an agent. Reads as Collab.',
+    svg: () => `<path d="M52 13H13v38h39" fill="none" stroke="${A}" stroke-width="11"/><rect x="34" y="26" width="12" height="12" fill="currentColor" class="mv" style="--dx:6px"/>` },
+  { name: 'Exchange', why: 'Give and get. Two arrows closing a loop.',
+    svg: () => `<path d="M12 30V14h34" fill="none" stroke="${A}" stroke-width="7"/><path d="M42 5l11 9-11 9z" fill="${A}"/><path d="M52 34v16H18" fill="none" stroke="currentColor" stroke-width="7"/><path d="M22 41l-11 9 11 9z" fill="currentColor"/>` },
+];
+
+const mark = (m, bg, cls = '') => `<svg viewBox="0 0 64 64" class="${cls}" aria-hidden="true">${m.svg(bg)}</svg>`;
+const page = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim() || '#121212';
+document.getElementById('grid').innerHTML = MARKS.map((m, i) => `
+  <article class="opt">
+    <div class="head"><span class="n">${String.fromCharCode(65 + i)}</span><h2>${m.name}</h2></div>
+    <p>${m.why}</p>
+    <div class="tiles anim"><div class="tile dark">${mark(m, '#0a0a0a')}</div><div class="tile light">${mark(m, '#f7f7f5')}</div></div>
+    <div class="row">
+      <div class="app">${mark(m, '#0a0a0a')}</div>
+      <div class="lock">${mark(m, page)}Collab</div>
+      <div class="fav"><span>${mark(m, page)}</span><span class="b">${mark(m, page)}</span></div>
+    </div>
+  </article>`).join('');
+</script>
+</body>
+</html>

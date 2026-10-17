@@ -27,6 +27,7 @@ import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
+import { finishLink, gcalConfig, startLink, syncGcal, unlink } from "./core/gcal.ts";
 import { getSafe } from "./a2a/webhooks.ts";
 import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, lowStock, moveHold, cancelBooking, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
@@ -48,7 +49,7 @@ import { expireDecisions } from "./core/decisions.ts";
 import { NearbyError, nearby } from "./core/nearby.ts";
 import { chooseOffering } from "./core/directory.ts";
 import { ap2Pay, verifyAp2, type Ap2Instrument } from "./core/ap2.ts";
-import { checkPrice, PriceCheckError, PRICE_CHECKS, quotaStatus } from "./core/price-check.ts";
+import { checkPrice, PriceCheckError, PRICE_CHECKS, priceEvidence, priceUnit, quotaStatus } from "./core/price-check.ts";
 import { appCheckDecision, appCheckMode, appCheckOutcome, appCheckRequired, freeUnverified, instanceBucket, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
@@ -106,6 +107,8 @@ const queue = turnQueue(env.TASKS_QUEUE, env.RUN_URL, env.TASKS_SERVICE_ACCOUNT)
 const cfg = { db, model, directUrl: env.RUN_URL || undefined, enqueue: queue ? queue.enqueue : undefined, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },
   screen: armor ? armor.incoming : undefined, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
+// Google Calendar linking (OAuth, free/busy only): on when the OAuth client is configured.
+const gcal = gcalConfig(env, cfg.publicUrl, cfg.secret);
 // Commerce events copied to BigQuery (anonymous rows) and the demand forecast — only when BQ_DATASET is set.
 const bq = analytics(env.GOOGLE_CLOUD_PROJECT, env.BQ_DATASET, cfg.secret);
 setSigner(signing.sign);
@@ -975,11 +978,31 @@ app.post("/api/offers/draft", route(async req => {
   return { offer: { ...o, details: publicText }, floor, publicText, missing, gate };
 }));
 
+// What others charge for this kind of thing near here, for the price a seller is about to set: Google-grounded
+// asking prices (the same evidence as a fair-price check), cached a day per item and area so making a listing doesn't
+// spend a search each time. Without grounded search the card just asks for the price.
+const PRICE_HINTS = "price_hints";
+app.post("/api/offers/price-hints", route(async req => {
+  const item = text(req.body?.item, 200).trim(), area = text(req.body?.area, 120).trim(), per = priceUnit(req.body?.unit);
+  if (!item) throw new HttpError(400, "Describe the offering first.");
+  if (!policy().features.priceCheck || !model?.grounded) return { status: "unavailable" };
+  const key = `${item}|${area}|${per}`.toLowerCase().replace(/[^\p{L}\p{N}|]+/gu, "-").slice(0, 300);
+  const cached = (await db.get(PRICE_HINTS, key)) as any;
+  if (cached && cached.checkedAt > now() - 86_400) return cached;
+  await spend(req.uid, 2);
+  const g = await model.grounded(item, area, per);
+  if (!g) return { status: "unavailable" };
+  const e = priceEvidence(g, per);
+  const out = { status: e.status, low: e.low, typical: e.typical, high: e.high, unit: e.unit, sources: e.sources.slice(0, 4), note: e.note, checkedAt: now(), expireAt: new Date((now() + 2 * 86_400) * 1000) };
+  await db.set(PRICE_HINTS, key, out);
+  return out;
+}));
+
 // Terms a seller might state, suggested for their kind of offering — returned for them to edit; nothing is saved here.
 app.post("/api/terms/suggest", route(async req => {
   await spend(req.uid, 2);
   const out = await suggestTerms(model, text(req.body?.category, 40), text(req.body?.text, 600));
-  return { terms: out.terms, byModel: out.byModel, grounded: out.grounded };
+  return { terms: out.terms, starters: out.starters, byModel: out.byModel, grounded: out.grounded };
 }));
 
 /** Words that only ever mean a floor ("minimum" or "at least" can mean a quantity). */
@@ -1399,14 +1422,32 @@ app.post("/api/connectors", route(async req => {
   } catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
 }));
 app.post("/api/connectors/:id/revoke", route(async req => {
-  try { return await revokeGrant(db, req.uid, String(req.params.id), now()); }
-  catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
+  try {
+    const g = await revokeGrant(db, req.uid, String(req.params.id), now());
+    if (g.provider === "google-calendar") await unlink(db, g, now());
+    return g;
+  } catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
 }));
 app.post("/api/connectors/:id/sync", route(async req => {
   const g = (await db.get(GRANTS, String(req.params.id))) as ConnectorGrant | null;
   if (!g || g.owner !== req.uid) throw new HttpError(404, "No such connector.", "NOT_FOUND");
+  if (g.provider === "google-calendar") return gcal ? syncGcal(db, gcal, g, now()) : { synced: false, reason: "Google Calendar linking isn't set up on this server" };
   return syncIcal(db, g, url => getSafe(url), now());
 }));
+
+// Google Calendar: the owner says yes on Google's page, comes back here, and their busy times block their slots.
+app.get("/api/google/calendar/start", route(async req => {
+  if (!gcal) throw new HttpError(503, "Google Calendar linking isn't set up on this server yet — paste your calendar's iCal address instead.", "UNSUPPORTED_CAPABILITY");
+  try { return { url: await startLink(db, gcal, req.uid, text(req.query.resourceId, 60), now()) }; }
+  catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
+}));
+app.get("/api/google/calendar/callback", async (req, res) => {
+  const back = (q: string) => res.redirect(`${cfg.publicUrl}/?screen=context&calendar=${q}`);
+  if (!gcal) return back("failed");
+  if (typeof req.query.error === "string") return back("declined");
+  try { await finishLink(db, gcal, text(req.query.code, 400), text(req.query.state, 600), now()); return back("linked"); }
+  catch (err) { log.warn("google calendar link failed", { error: String((err as Error).message ?? err).slice(0, 200) }); return back("failed"); }
+});
 
 // Stock and slots for an owner's offerings (the ledger the reservations come from).
 app.get("/api/resources", route(async req => db.find(RESOURCES, [["owner", "==", req.uid]], 100)));
@@ -1682,7 +1723,8 @@ app.post("/cron/run", async (req, res, next) => {
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
     // Connected calendars refresh every run; a feed that fails leaves its grant degraded and its data going stale.
     const calendars = ((await db.find(GRANTS, [["provider", "==", "ical"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked");
-    const synced = (await Promise.all(calendars.map(g => syncIcal(db, g, url => getSafe(url), now())))).filter(x => x.synced).length;
+    const linked = gcal ? ((await db.find(GRANTS, [["provider", "==", "google-calendar"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked") : [];
+    const synced = (await Promise.all([...calendars.map(g => syncIcal(db, g, url => getSafe(url), now())), ...linked.map(g => syncGcal(db, gcal!, g, now()))])).filter(x => x.synced).length;
     // Listings published before buyer questions were written for them (or while Gemini was away) get theirs.
     const unasked = ((await db.find(FACTS, [["tier", "==", "public"]], 300)) as Fact[]).filter(f => f.offer && !f.offer.questions?.length).slice(0, 10);
     for (const f of unasked) {

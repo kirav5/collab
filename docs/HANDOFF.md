@@ -230,6 +230,9 @@ cd .. && APPCHECK=enforce ./deploy.sh       # from the collab-market folder; ~4â
   `GEMINI_MODELS_CHEAP` (gemini-3.5-flash-lite), `GEMINI_THINKING` (low), `GEMINI_THINKING_CHEAP` (minimal),
   `GEMINI_PRICES` (`<substring>=<in>/<out>` per million tokens), `GEMINI_EMBEDDING_LOCATION` (asia-south1), `PUBLIC_URL`, `AGENT_SECRET`,
   `FIREBASE_WEB_CONFIG`, `RECAPTCHA_SITE_KEY`, `APPCHECK` (off/monitor/enforce), `DEBUG_TASKS=1` (prints raw model output).
+- `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`: an OAuth client (Web application, redirect URI
+  `$PUBLIC_URL/api/google/calendar/callback`) turns on **Link Google Calendar** (free/busy scope only; `core/gcal.ts`).
+  In production they come from Secret Manager (`google-oauth-client-id`, `google-oauth-client-secret`; deploy.sh).
 - `server/.env` holds an AI Studio key (git-ignored). Its free tier was exhausted during testing; Vertex is used live.
 
 ## 7. Key decisions (and why)

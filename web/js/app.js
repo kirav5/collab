@@ -117,7 +117,8 @@ async function boot() {
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
         <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
-        <div class="row" id="composer-note"></div></form></div></section></div>`;
+        <div class="row" id="composer-note"></div></form></div></section>
+      <aside class="panel" id="panel" hidden><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
   voiceInput();
   $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
@@ -169,7 +170,7 @@ function paintSidebar() {
       <button class="btn" data-act="new-chat">+ New chat</button>
       ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
         ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}
-        ${!session.pushOn && session.push ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
+        ${!session.pushOn && session.push && !("Notification" in window && Notification.permission === "denied") ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
         ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
@@ -196,15 +197,21 @@ function groupSessions(list) {
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
   const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
-  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
+  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
-  $("#composer").hidden = S.screen !== "chat";
+  $("#panel-title").innerHTML = S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
+  $("#app").classList.toggle("split", S.screen !== "chat");
+  $("#panel").hidden = S.screen === "chat";
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
   $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
 }
 
 let painting = false, lastHTML = "";
 let again = null;
+// A live repaint while a finger or mouse is down would replace the button being pressed, and the tap would be lost.
+let pointerDown = false, afterPointer = false;
+document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
+for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { pointerDown = false; if (afterPointer) { afterPointer = false; setTimeout(() => paintContent(true), 0); } }, true);
 /** Motion that means something: a new message or card rises in, one that changed (a counter, a payment) flashes once,
  *  and a screen opens in a short stagger. Live refreshes never replay animations; Settings › Appearance turns it off. */
 const seenAnim = new Map();
@@ -221,22 +228,27 @@ function animate(root, opened) {
 }
 
 async function paintContent(soft = false) {
-  const el = $("#content");
+  const el = $("#content"), panel = $("#panel-body");
   if (!el) return;
   // One paint at a time; a paint asked for meanwhile runs right after (a hard one wins over a soft one).
   if (painting) { again = again === false ? false : soft; return; }
-  // A live refresh never rewrites what the owner is typing.
-  if (soft && el.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  // A live refresh never rewrites what the owner is typing, nor what's under a pressed pointer.
+  if (soft && (el.contains(document.activeElement) || panel.contains(document.activeElement)) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+  if (soft && pointerDown) { afterPointer = true; return; }
   painting = true;
   try {
     const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
-    const html = `<div class="inner">${S.screen === "chat" ? await chatHTML() : await screens[S.screen].html(S)}</div>`;
+    const chat = `<div class="inner">${await chatHTML()}</div>`, side = S.screen === "chat" ? "" : `<div class="inner">${await screens[S.screen].html(S)}</div>`;
+    const html = chat + "\u0000" + side;
     // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
     if (soft && html === lastHTML) return;
+    const chatChanged = chat !== lastHTML.split("\u0000")[0];
     lastHTML = html;
-    el.innerHTML = html;
-    animate(el, S.screen !== lastScreen); lastScreen = S.screen;
-    if (S.screen === "chat" && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    if (chatChanged || !soft) el.innerHTML = chat;
+    panel.innerHTML = side;
+    animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen); lastScreen = S.screen;
+    if (chatChanged && (nearBottom || !soft)) el.scrollTop = el.scrollHeight;
+    if (!soft && S.screen !== "chat") panel.scrollTop = 0;
     if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
   } finally {
     painting = false;
@@ -266,6 +278,7 @@ async function chatHTML() {
   }
   // Matches: "Fits you" reasons come from the private notes kept on this device, read here and never sent anywhere.
   if (cur.messages.some(m => m.cards?.some(c => c.type === "brief" && c.step === "matches"))) setNotesHere(await cachedNotes());
+  for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "offer" && c.basics && !c.offer) priceHintsFor(c, cur);
   return cur.messages.map(messageHTML).join("");
 }
 
@@ -388,7 +401,10 @@ async function prefillTerms(sid, mid, i, again = false) {
   if (!now_) return;
   now_.c.termsLoading = false;
   if (r?.terms?.length && (again || !now_.c.terms?.length)) now_.c.terms = r.terms;
-  else if (again && r && !r.terms?.length) toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own.");
+  // The common terms for this kind of offering, to tap in — minus any already there.
+  const have = new Set((now_.c.terms ?? []).map(t => t.label.trim().toLowerCase()));
+  if (r) now_.c.starters = (r.starters ?? []).filter(t => !have.has(t.label.toLowerCase()));
+  if (again && r && !r.terms?.length && !now_.c.starters?.length) toast("Couldn't suggest terms just now — write your own.");
   await saveSession(now_.s); paintContent(true);
 }
 
@@ -668,6 +684,8 @@ async function send(text, offerFactId = null) {
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
   const user = { id: id(), role: "user", text, at: now() };
   const reply = { id: id(), role: "agent", text: "", at: now(), pending: "Thinking", cards: [] };
+  const phrases = ["Thinking", "Reading your context", "Working it out", "Nearly there"]; let ph = 0;
+  const ticker = setInterval(() => { const l = document.querySelector(".thinking .label"); if (l) l.textContent = phrases[++ph % phrases.length]; }, 1800);
   cur.messages.push(user, reply);
   await saveSession(cur);
   S.screen = "chat";
@@ -676,13 +694,19 @@ async function send(text, offerFactId = null) {
     const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
     // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
     const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
+    // "Say the area you mean" was the last reply: a short answer ("delhi") completes that request.
+    const asked = !cur.to && S.pendingAsk && text.split(/\s+/).length <= 4 && !/\b(need|want|find|remember|sell|book)\b/i.test(text);
+    if (asked) { text = `${S.pendingAsk} in ${text}`; user.text = text; }
+    S.pendingAsk = null;
     const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open);
+    if (r.askArea) S.pendingAsk = r.askArea;
     Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
   } catch (e) {
     // A refusal (not enough in stock, over budget…) is said as it is; when there's an offer that fits, it's one tap away.
     Object.assign(reply, { pending: null, text: e.status && e.status < 500 ? e.message : `Something went wrong: ${e.message}`,
       ...(e.data?.suggest ? { cards: [{ type: "suggest", options: [{ label: e.data.suggest, text: e.data.suggest }], hint: "Sends it as your offer." }] } : {}) });
   }
+  clearInterval(ticker);
   await saveSession(cur);
   S.sending = false;
   paint();
@@ -743,8 +767,9 @@ function onEdit(e) {
   }
   if (e.type === "change") {
     saveSession(f.s);
-    // A ticked box keeps focus, and a repaint never rewrites a focused field: let go of it so the card updates.
-    if (k === "autonomy" || f.c.type === "offer") { if (el.type === "checkbox") el.blur(); paintContent(true); }
+    // A ticked box or a picked option changes what the card shows: let go of it and repaint. A text field doesn't —
+    // its value is already on the card — and repainting as it loses focus would swallow the tap that moved focus.
+    if (k === "autonomy" || (f.c.type === "offer" && /checkbox|radio|select-one/.test(el.type))) { el.blur(); paintContent(true); }
   }
 }
 
@@ -1015,7 +1040,15 @@ async function cardAction(a, el, { s, m, c }) {
       c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
       (c.answered ??= []).push({ question: q.question, answer: opt });
       const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category }).catch(() => null);
-      if (r?.draft) { const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; c.gate = r.gate ?? c.gate; c.gateAnswers = {}; }
+      if (r?.draft) {
+        const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
+        const unchosen = new Set(q.options.filter(o => o !== opt).map(o => o.toLowerCase()));
+        c.draft.need.filters = (c.draft.need.filters ?? []).filter(f => !unchosen.has(String(f.value).toLowerCase()));
+        // The question is answered: it isn't asked again even if the model re-lists it.
+        c.gate = r.gate ? { ...r.gate, missing: r.gate.missing.filter(m => !(c.answered ?? []).some(x => x.question === m.question)) } : c.gate;
+        if (c.gate && !c.gate.missing.length) c.gate = { ...c.gate, ok: true };
+        c.gateAnswers = {};
+      }
     } else {
       // On an offering it's one more detail buyers see; answered, the gate opens.
       const lbl = q.question.replace(/\?$/, "").split(/\s+/).slice(0, 4).join(" ");
@@ -1071,6 +1104,9 @@ async function cardAction(a, el, { s, m, c }) {
     if (a === "match-addons") for (const x of es) api(`/api/engagements/${x.id}/ask`, { text: "What add-ons or extras do you offer, and what does each cost?" }).then(e => { live.engagements.set(e.id, e); paint(); }).catch(() => {});
     return;
   }
+  if (a === "hours-preset") { const h = (c.hours ??= defaultHours(c.offer)); h.days = el.dataset.days.split(",").map(Number).sort((x, y) => x - y); h.from = el.dataset.from; h.to = el.dataset.to; }
+  if (a === "offer-price-pick") { c.basicPrice = el.dataset.val === "other" ? "" : el.dataset.val; c.priceOther = el.dataset.val === "other"; }
+  if (a === "offer-ask-other") { (c.missingOther ??= {})[el.dataset.key] = true; }
   if (a === "offer-ask-pick") {
     (c.missingAnswers ??= {})[el.dataset.key] = c.missingAnswers[el.dataset.key] === el.dataset.val ? "" : el.dataset.val;
     c.answeredMissing = (c.missing ?? []).every(x => (c.missingAnswers[x.label] ?? "").trim());
@@ -1094,6 +1130,12 @@ async function cardAction(a, el, { s, m, c }) {
     c.insights = await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []);
   }
   if (a === "offer-suggest-terms") { const f = findCard(el); if (f) prefillTerms(f.s.id, f.m.id, Number(el.dataset.card), true); return; }
+  // A common term for this kind of offering, tapped in; "Add all" takes the rest.
+  if (a === "offer-term-add") {
+    const picks = el.dataset.j === "all" ? c.starters ?? [] : [c.starters?.[Number(el.dataset.j)]].filter(Boolean);
+    c.terms = [...(c.terms ?? []), ...picks.map(t => ({ ...t, sources: [] }))];
+    c.starters = (c.starters ?? []).filter(t => !picks.includes(t));
+  }
   if (a === "offer-publish") {
     if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
     busy(el, true, "Publishing");
@@ -1136,6 +1178,20 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "tier") await setTier(c.fact, el.dataset.tier, el);
   await saveSession(s);
   paint();
+}
+
+/**
+ * What others charge for this kind of thing near here, asked once per card as soon as the card asks for a price;
+ * the typical figure is filled in and low / typical / high become buttons. Nothing stops the seller typing their own.
+ */
+const hintsAsked = new WeakSet();
+function priceHintsFor(c, s) {
+  if (!c.basics || c.priceHints !== undefined || hintsAsked.has(c)) return;
+  hintsAsked.add(c); c.priceHints = null;
+  api("/api/offers/price-hints", { item: c.publicText ?? c.text, area: c.basicArea ?? c.basics.area ?? "", unit: c.basics.unit ?? undefined })
+    .then(h => { c.priceHints = h?.status === "evidence" ? h : { status: h?.status ?? "unavailable" }; if (c.priceHints.typical && !c.basicPrice) c.basicPrice = String(c.priceHints.typical); })
+    .catch(() => { c.priceHints = { status: "unavailable" }; })
+    .then(() => { saveSession(s); paintContent(true); });
 }
 
 /**
@@ -1269,6 +1325,10 @@ timing("app");
   else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
   else if (qp.get("alerts")) openScreen("requests");
   else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
+  if (qp.get("calendar")) {
+    toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
+    history.replaceState(null, "", location.pathname);
+  }
 }
 
 } catch (err) {
