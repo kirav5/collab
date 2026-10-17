@@ -97,10 +97,10 @@ test("job questions follow who is asking whom, in both directions", async () => 
   const now = Math.floor(Date.now() / 1000), here = resolve("Indiranagar");
   const post = (await read("Hiring a junior developer in Indiranagar, ₹30,000 a month", "sell", fakeModel(), now, here)).draft;
   assert.ok(post?.kind === "offer");
-  assert.match(post.offer.askBuyer.join(" "), /experience/, "the employer's agent asks the employer's questions");
+  assert.deepEqual(post.offer.askBuyer, [], "no canned questions stored on a listing: Gemini writes them per conversation");
   const seeker = (await read("Looking for a job as a junior developer in Indiranagar, ₹32,000 a month", "find", fakeModel(), now, here)).draft;
   assert.ok(seeker?.kind === "need");
-  assert.match(seeker.need.mustAsk.join(" "), /position still open/, "the candidate asks about the job");
+  assert.deepEqual(seeker.need.mustAsk, [], "no canned questions added to a request: only the ones Gemini writes for it (none offline)");
   assert.doesNotMatch(seeker.need.mustAsk.join(" "), /team size, and notice period/);
 });
 

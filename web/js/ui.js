@@ -15,12 +15,54 @@ export function money(amount, period, currency = "INR") {
 
 export function time(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
 
-export function toast(text, onClick) {
+/**
+ * A notice in the app's own look: a hairline card with a coloured edge for what kind it is, a small mono label, the
+ * title and a line under it, an action when tapping does something, and a bar that runs out (paused while the pointer
+ * is on it). At most three at once; the same notice isn't shown twice in a row.
+ *   kind: "attention" (needs you) · "success" · "error" · "deal" · "info" (default)
+ */
+const KINDS = { attention: ["Needs you", "!"], success: ["Done", "✓"], error: ["Problem", "×"], deal: ["Deal", "⇄"], info: ["Collab", "■"] };
+let lastNotice = { key: "", at: 0 };
+export function notice({ title, body = "", kind = "info", label: kicker, action, onClick, ttl } = {}) {
+  const box = $("#toast");
+  if (!box || !title) return;
+  const key = `${kind}|${title}|${body}`;
+  if (key === lastNotice.key && Date.now() - lastNotice.at < 2500) return;
+  lastNotice = { key, at: Date.now() };
+  const [word, glyph] = KINDS[kind] ?? KINDS.info;
   const el = document.createElement("div");
-  el.textContent = text;
-  if (onClick) el.onclick = () => { onClick(); el.remove(); };
-  $("#toast").append(el);
-  setTimeout(() => el.remove(), 5000);
+  el.className = `note note-${kind in KINDS ? kind : "info"}${onClick ? " tappable" : ""}`;
+  el.setAttribute("role", kind === "error" || kind === "attention" ? "alert" : "status");
+  const life = ttl ?? (kind === "attention" || kind === "error" ? 8000 : 4500);
+  el.style.setProperty("--life", `${life}ms`);
+  el.innerHTML = `<span class="note-ico" aria-hidden="true">${glyph}</span>
+    <span class="note-main"><span class="note-kicker">${esc(kicker ?? word)}</span><b class="note-title">${esc(title)}</b>${body ? `<span class="note-body">${esc(body)}</span>` : ""}
+      ${onClick ? `<span class="note-action">${esc(action ?? "Open")} ›</span>` : ""}</span>
+    <button class="note-x" type="button" aria-label="Dismiss">×</button><span class="note-bar" aria-hidden="true"></span>`;
+  let timer = null, left = life, started = Date.now();
+  const close = () => { clearTimeout(timer); el.classList.add("leaving"); setTimeout(() => el.remove(), 180); };
+  const run = () => { started = Date.now(); timer = setTimeout(close, left); el.classList.remove("paused"); };
+  el.addEventListener("pointerenter", () => { clearTimeout(timer); left -= Date.now() - started; el.classList.add("paused"); });
+  el.addEventListener("pointerleave", run);
+  el.querySelector(".note-x").onclick = e => { e.stopPropagation(); close(); };
+  if (onClick) el.onclick = () => { onClick(); close(); };
+  box.append(el);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  run();
+}
+
+/**
+ * The short form used across the app: one line of text (a "Title — detail" splits into title and line), an optional
+ * tap action, and its kind — given, or read from the words ("Sent…", "Saved…" are done; "Couldn't…" is a problem).
+ */
+export function toast(text, onClick, kind) {
+  const t = String(text ?? "").replace(/^[\u{1F300}-\u{1FAFF}\u2600-\u27BF]\uFE0F?\s*/u, "").trim();
+  if (!t) return;
+  const [title, ...rest] = t.split(" — ");
+  const k = kind ?? (/^(couldn'?t|can'?t|something went wrong|error|failed|not allowed|that (isn'?t|doesn'?t))\b/i.test(t) ? "error"
+    : /^(✓|sent|saved|paid|done|copied|link copied|published|booked|added|removed|marked|all \d+ receipts check out|your receipt checks out|thanks)\b/i.test(t) ? "success" : "info");
+  const body = rest.join(" — ");
+  notice({ title, body: body ? body[0].toUpperCase() + body.slice(1) : "", kind: k, onClick });
 }
 
 /**
@@ -42,7 +84,7 @@ export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)
 export const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 
 export function tierTag(tier, topics) {
-  if (tier === "private") return tag("Private · never shared", "peri");
+  if (tier === "private") return tag("Private", "peri");
   if (tier === "protected") return tag(`Protected${topics?.length ? " · " + topics.join(", ") : ""}`, "accent");
   return tag("Public", "fresh");
 }

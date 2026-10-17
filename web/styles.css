@@ -146,8 +146,33 @@ textarea.field { resize: vertical; min-height: 64px; }
 .chart text { font-family: var(--mono); font-size: 10px; fill: var(--text3); }
 .needs-card { border-color: var(--wait); box-shadow: inset 3px 0 0 var(--wait); }
 
-.toast { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 60; max-width: min(380px, calc(100vw - 32px)); }
-.toast > div { background: var(--inverse); color: var(--on-inverse); padding: 10px 14px; border-radius: 4px; font-size: 13px; animation: fade .2s ease; cursor: pointer; }
+/* Notices come in from the top (under the title bar), newest first. */
+.toast { position: fixed; right: 16px; top: calc(60px + env(safe-area-inset-top)); display: flex; flex-direction: column-reverse; gap: 8px; z-index: 60; width: min(380px, calc(100vw - 32px)); }
+/* Notices (ui.js notice): a hairline card, a coloured edge and mono label for the kind, a bar that runs out. */
+.toast { pointer-events: none; }
+.note { --c: var(--accent); pointer-events: auto; position: relative; overflow: hidden; display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: start;
+  padding: 12px 10px 13px 14px; background: var(--surface); color: var(--text); border: 1px solid var(--hairline); border-radius: 6px;
+  box-shadow: 0 1px 0 var(--hairline), 0 10px 30px -12px rgb(0 0 0 / 35%); animation: note-drop .28s cubic-bezier(.2,.8,.2,1) both; }
+.note::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--c); }
+.note.tappable { cursor: pointer; }
+.note.tappable:hover { border-color: color-mix(in srgb, var(--c) 55%, var(--hairline)); }
+.note-attention { --c: var(--wait); } .note-success { --c: var(--fresh); } .note-error { --c: var(--danger); } .note-deal { --c: var(--fresh); } .note-info { --c: var(--accent); }
+.note-ico { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 4px; font: 700 13px/1 var(--mono); color: var(--c);
+  background: color-mix(in srgb, var(--c) 12%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
+.note-main { display: grid; gap: 2px; min-width: 0; }
+.note-kicker { font: 600 10.5px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--c); }
+.note-title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.note-body { font-size: 13px; line-height: 1.4; color: var(--text2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.note-action { margin-top: 4px; font: 600 11px/1.4 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent-ink, var(--accent)); }
+.note-x { border: 0; background: none; color: var(--text3); font-size: 18px; line-height: 1; width: 26px; height: 26px; border-radius: 4px; cursor: pointer; }
+.note-x:hover { background: var(--surface2); color: var(--text); }
+.note-bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--c); opacity: .55; transform-origin: left; animation: note-life var(--life, 5s) linear forwards; }
+.note.paused .note-bar { animation-play-state: paused; }
+.note.leaving { animation: note-out .18s ease forwards; }
+@keyframes note-out { to { opacity: 0; transform: translateY(-8px); } }
+@keyframes note-drop { from { opacity: 0; transform: translateY(-10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes note-life { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .note, .note.leaving { animation: none; } .note-bar { display: none; } }
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 .setup { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
@@ -170,8 +195,11 @@ dialog::backdrop { background: rgb(0 0 0 / 45%); }
   .msg-user { max-width: 92%; }
   .ev { grid-template-columns: 1fr; gap: 0; }
 }
-/* Motion is on unless the device asks for less or Settings › Appearance turns it off (data-motion on <html>). */
+/* No animations (data-motion="off" on <html>): screens, cards, notices and panels appear in place. The one exception is
+   the small loading spinner, which says something is still working. */
 :root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after { animation: none !important; transition: none !important; }
+:root[data-motion="off"] .spinner { animation: spin .7s linear infinite !important; }
+:root[data-motion="off"] .note-bar { display: none; }
 
 /* Cards, summary-first: who · progress · one status line · at most one action; evidence under Details. */
 .eng { gap: 10px; }
@@ -335,7 +363,7 @@ label.mic { cursor: pointer; }
 .kv dd label.row .faint { grid-column: 2; }
 @media (max-width: 820px) {
   .field, select, textarea, .composer input, .composer textarea { font-size: 16px; }
-  .toast { left: 16px; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); max-width: none; }
+  .toast { left: 12px; right: 12px; top: calc(56px + env(safe-area-inset-top)); width: auto; }
 }
 @media (max-width: 520px) {
   .row[style*="nowrap"] { flex-wrap: wrap !important; }
@@ -522,6 +550,65 @@ details.improve.done .improve-title { color: var(--fresh); }
 .danger-zone > summary { color: var(--danger); }
 .danger-card { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); }
 .danger-card b { color: var(--danger); font-family: var(--mono); }
+
+/* About me › answers your agent remembers */
+.memory summary { cursor: pointer; list-style: none; }
+.mem-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--hairline); }
+.mem-row:first-of-type { border-top: 0; }
+.seg.compact button { padding: 4px 9px; min-height: 28px; font-size: 12px; }
+@media (max-width: 520px) { .mem-row { flex-wrap: wrap; } }
+.chip.skel { height: 34px; border-color: transparent; background: linear-gradient(90deg, var(--surface) 0%, var(--hairline) 50%, var(--surface) 100%); background-size: 200% 100%; animation: skel 1.2s linear infinite; }
+@keyframes skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .chip.skel { animation: none; } }
+
+/* My card: the share card (who, what's on offer, record from receipts, the QR) */
+.share-card { display: grid; gap: 14px; justify-items: stretch; max-width: 460px; }
+.share-top { display: flex; gap: 12px; align-items: center; }
+.share-name { font-size: 20px; letter-spacing: -0.01em; }
+.share-stats { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
+.share-stats > div { display: grid; gap: 2px; padding: 10px 12px; text-align: center; }
+.share-stats > div + div { border-left: 1px solid var(--hairline); }
+.share-stats b { font-size: 20px; }
+.share-stats span { font-size: 12px; color: var(--text2); }
+.share-card .qr { width: 200px; height: 200px; justify-self: center; padding: 8px; border-radius: 10px; }
+.share-actions { justify-content: center; }
+.share-actions .btn.accent { min-width: 140px; }
+
+/* The agent card, readable */
+.ac-head { display: flex; gap: 12px; align-items: center; }
+.ac-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+.ac-caps span { font-size: 12px; padding: 5px 9px; border-radius: 999px; border: 1px solid var(--hairline); background: var(--surface); }
+.ac-offer { display: flex; gap: 10px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--hairline); }
+.ac-offer:first-child { border-top: 0; }
+.ac-offer b { flex: 1; min-width: 0; }
+
+/* Checkout (side panel) */
+.co-order, .co-pay { display: grid; gap: 10px; }
+.co-lines { display: grid; gap: 6px; padding-top: 10px; border-top: 1px dashed var(--hairline); }
+.co-total { font-size: 17px; padding-top: 6px; border-top: 1px solid var(--hairline); }
+.btn.gpay.co-gpay { width: 100%; min-height: 48px; font-size: 17px; border-radius: 10px; }
+.co-pay .btn.secondary { width: 100%; min-height: 44px; }
+.co-next { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.co-done { justify-items: center; text-align: center; gap: 8px; padding: 22px 16px; }
+.co-tick { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; color: #fff; background: var(--fresh); animation: rise .35s cubic-bezier(.2,.8,.2,1) both; }
+
+/* Receipts: what they do for the network */
+.net-card { display: grid; gap: 10px; }
+.net-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.net-grid > div { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; }
+.net-grid b { font-size: 22px; }
+.net-grid span { font-size: 12px; color: var(--text2); line-height: 1.4; }
+@media (max-width: 520px) { .net-grid { grid-template-columns: 1fr; } }
+
+/* Discovery: one request, several agents at once */
+.disc { display: grid; gap: 10px; }
+.disc-list { display: grid; gap: 6px; }
+.disc-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .15s; }
+.disc-row:hover { border-color: var(--accent); }
+.disc-row.needs { border-color: var(--wait, #e0a100); box-shadow: inset 3px 0 0 var(--wait, #e0a100); }
+.disc-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.disc-text .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.disc-side { display: grid; justify-items: end; gap: 4px; }
 /* The app's own confirmation (ui.js ask): in the page, never a browser pop-up. Amber marks a decision made for a demo person. */
 dialog.ask { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); color: var(--text); padding: 0; width: min(420px, calc(100vw - 32px)); }
 dialog.ask::backdrop { background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(2px); }

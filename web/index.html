@@ -12,8 +12,7 @@
     window.applyLook = () => { let t = "auto"; try { t = localStorage.getItem("collab-theme") || "auto"; } catch {}
       const look = t === "auto" || !["light", "dark"].includes(t) ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : t;
       document.documentElement.dataset.look = look;
-      let motion = null; try { motion = localStorage.getItem("collab-motion"); } catch {}
-      document.documentElement.dataset.motion = motion ?? (matchMedia("(prefers-reduced-motion: reduce)").matches ? "off" : "on");
+      document.documentElement.dataset.motion = "off"; // no animations: things appear in place
       document.querySelector('meta[name="theme-color"]')?.setAttribute("content", look === "light" ? "#f7f7f5" : "#0a0a0a"); };
     applyLook(); try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyLook); } catch {}
   </script>

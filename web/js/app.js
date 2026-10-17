@@ -4,19 +4,19 @@
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
-import { autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
+import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
+import { checkoutHTML, dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
-import { notesReadBy, privacyFacts } from "./processing.js";
-import { ask, avatarHTML, $, busy, esc, id, label, money, now, shortName, tag, toast } from "./ui.js";
+import { privacyFacts } from "./processing.js";
+import { ask, avatarHTML, $, busy, esc, id, label, money, notice, now, shortName, tag, toast } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -36,7 +36,7 @@ async function setup() {
     timing("start_screen");
     root.innerHTML = `<div class="setup"><form class="card" id="setup">
       ${label("Collab", "sq ink")}
-      <h1 class="headline">Your agent. <span class="soft">Your private context is never shared.</span></h1>
+      <h1 class="headline">Your agent. <span class="soft">It answers from your context. Your limits never leave.</span></h1>
       ${to ? `<div class="card slim" id="setup-to"><span class="small">You're about to ask <b>@${esc(to)}</b>'s agent.</span></div><p class="small muted">Start your own agent first — just your name. It asks for you, and keeps what's private to you.</p>` : ""}
       ${session.google ? (google
         ? `<p class="small muted">Signed in as <b>${esc(session.user.email ?? session.user.displayName ?? "Google")}</b> — this identity follows you to any device.</p>`
@@ -135,7 +135,7 @@ async function boot() {
     if (!el || el.disabled) return;
     e.stopPropagation(); e.preventDefault();
     const sheet = openGooglePay(Number(el.dataset.amount), el.dataset.item ?? "Collab", el.dataset.currency ?? "INR");
-    sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message));
+    sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message, null, "error"));
   }, true);
   // The menu (phones) closes on a tap anywhere outside it, and that tap does nothing else; Escape closes it too.
   document.addEventListener("click", e => {
@@ -180,6 +180,7 @@ function paintSidebar() {
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
         ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
+        ${navRow("receipts", "✓", "Receipts", "")}
         ${navRow("people", "▦", "My card", "")}
         ${navRow("context", "▤", "About me", "")}
         ${navRow("sharing", "◈", "Privacy", "")}
@@ -204,7 +205,7 @@ function groupSessions(list) {
 
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
-  const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+  const titles = { receipts: "Receipts", context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
   const detail = panelDetail();
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
     <span class="end small faint">${S.incognito ? `<span class="tag ink" title="New chats aren't kept; nothing is remembered">◐ Not kept</span> ` : ""}@${esc(S.profile.handle)}</span>`;
@@ -214,7 +215,7 @@ function paintTop() {
   $("#app").classList.toggle("split", S.screen !== "chat" || !!detail);
   $("#panel").hidden = S.screen === "chat" && !detail;
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
-  $("#composer-note").innerHTML = label(`Notes read by ${notesReadBy(engine.mode)} · never shared`);
+  $("#composer-note").innerHTML = label("Your agent answers from your context · never your limits or contacts");
 }
 
 let painting = false, lastHTML = "";
@@ -224,7 +225,7 @@ let pointerDown = false, afterPointer = false;
 document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
 for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { pointerDown = false; if (afterPointer) { afterPointer = false; setTimeout(() => paintContent(true), 0); } }, true);
 /** Motion that means something: a new message or card rises in, one that changed (a counter, a payment) flashes once,
- *  and a screen opens in a short stagger. Live refreshes never replay animations; Settings › Appearance turns it off. */
+ *  and a screen opens in a short stagger. Animations are off (index.html sets data-motion="off"), so this marks nothing today. */
 const seenAnim = new Map();
 let lastScreen = null;
 function animate(root, opened) {
@@ -282,7 +283,7 @@ async function chatHTML() {
   // A listing being made gets its terms suggested at once, in the background (see prefillTerms).
   cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => {
     if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i);
-    if (c.type === "offer" && c.step === "review" && c.missing?.length && c.answersTried !== ANSWERS_V) prefillAnswers(cur.id, m.id, i);
+    if (c.type === "offer" && c.step === "review" && c.missing?.length && c.answersTried !== ANSWERS_V && c.answersTried !== "draft") prefillAnswers(cur.id, m.id, i);
   }));
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
@@ -304,14 +305,19 @@ function howItWorks() {
 /** The start of a chat: one question, your words, and a few things your agent thinks you might want next. */
 let startIdeas = null;
 function emptyChat() {
-  if (startIdeas === null) { startIdeas = []; cached("/api/start", 120_000).then(r => { startIdeas = r.ideas ?? []; if (S.screen === "chat") paintContent(true); }).catch(() => {}); }
+  // Shown at once from this device's last copy, then refreshed in the background.
+  if (startIdeas === null) {
+    try { startIdeas = JSON.parse(localStorage.getItem(`collab.start.${session.uid}`) ?? "[]"); } catch { startIdeas = []; }
+    cached("/api/start", 120_000).then(r => { const fresh = r.ideas ?? []; try { localStorage.setItem(`collab.start.${session.uid}`, JSON.stringify(fresh)); } catch {}
+      const changed = JSON.stringify(fresh) !== JSON.stringify(startIdeas); startIdeas = fresh; if (changed && S.screen === "chat") paintContent(true); }).catch(() => {});
+  }
   const ideas = startIdeas ?? [];
   return `${howItWorks()}<div class="start">
     <span class="label sq">step 1 of 2 · say it in your words</span>
     <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
     <h1 class="headline">What are you looking for right now?</h1>
     <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
-    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="prompt" data-text="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas"><span class="small faint">Thinking of what you might want…</span></div>`}
+    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="prompt" data-text="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
     ${privacyCard()}</div>`;
 }
 
@@ -443,7 +449,8 @@ async function prefillAnswers(sid, mid, i) {
   const now_ = cardAt(sid, mid, i);
   if (!now_ || !r?.answers) return;
   // "answer\u0000guess" marks a guess (the words said nothing); otherwise the words implied it.
-  now_.c.suggestedAnswers = Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, String(v).split("\u0000")[0]]));
+  const remembered = Object.fromEntries(Object.entries(now_.c.suggestedAnswers ?? {}).filter(([k]) => now_.c.fromMemory?.[k]));
+  now_.c.suggestedAnswers = { ...Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, String(v).split("\u0000")[0]])), ...remembered };
   now_.c.guessedAnswers = Object.fromEntries(Object.entries(r.answers).filter(([, v]) => String(v).includes("\u0000")).map(([k]) => [k, true]));
   await saveSession(now_.s); paintContent(true);
 }
@@ -460,7 +467,7 @@ async function openPass(path) {
     return d;
   };
   let d;
-  try { d = await load(); } catch (err) { return toast(err.message); }
+  try { d = await load(); } catch (err) { return toast(err.message, null, "error"); }
   // The seller by account, not handle (a handle can change after the deal); a pass scanned from someone else's deal
   // falls back to the handle the server reports as the seller's current one.
   const eng = live.engagements.get(pid);
@@ -484,10 +491,10 @@ async function openPass(path) {
       return;
     }
     const to = e.target.closest('[data-act="pass-move-to"]');
-    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message); } return; }
+    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message, null, "error"); } return; }
     if (e.target.closest('[data-act="pass-cancel"]')) {
       if ((await ask({ title: "Cancel this booking?", detail: "The time is freed for others, and they're told.", ok: "Cancel booking", cancel: "Keep it", danger: true })) === null) return;
-      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message); }
+      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message, null, "error"); }
       return;
     }
     const copy = e.target.closest('[data-act="pass-copy"]');
@@ -557,16 +564,29 @@ async function previewCard(el = null) {
 
 /** Your A2A agent card — how any agent finds and talks to yours — shown readably, with the JSON one tap away. */
 async function showAgentCard() {
-  const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
-  const c = await fetch(url).then(r => r.json()).catch(() => null);
+  const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`, link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
+  const [c, rec, facts] = await Promise.all([fetch(url).then(r => r.json()).catch(() => null),
+    fetch(`/public/people/${encodeURIComponent(S.profile.handle)}/record`).then(r => (r.ok ? r.json() : null)).catch(() => null), cached("/api/facts").catch(() => [])]);
   if (!c) return toast("Couldn't load your agent card.");
-  const skills = (c.skills ?? []).map(s => `<div class="card slim"><b>${esc(s.name)}</b>${s.description ? `<span class="small muted">${esc(s.description)}</span>` : ""}${s.examples?.length ? `<span class="small faint">e.g. “${esc(s.examples[0])}”</span>` : ""}</div>`).join("");
+  // What any agent reading the card learns, said plainly: who, its record, what it can do, what's on offer, what it never says.
+  const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
+  const examples = (c.skills ?? []).find(x => x.id === "engage")?.examples ?? [];
+  const ap2 = (c.capabilities?.extensions ?? []).some(x => /AP2/.test(x.uri ?? ""));
+  const caps = ["Answers questions from what you share", "Asks you what it can't answer", "Negotiates inside your private limits",
+    offers.some(f => f.offer.instant) ? "Takes bookings at your price" : null, ap2 ? "Test payments (AP2)" : null, c.capabilities?.streaming ? "Live updates" : null].filter(Boolean);
+  const since = rec?.since ? new Date(rec.since * 1000).toLocaleDateString([], { month: "short", year: "numeric" }) : null;
   openPanel({ title: "Your agent card", html: `
-    <div class="card"><div class="row">${avatarHTML(S.profile.name, S.profile.handle, 40)}<div><b>${esc(c.name ?? S.profile.name)}</b><span class="small faint">@${esc(S.profile.handle)} · A2A v${esc(c.protocolVersion ?? c.version ?? "1.0")}</span></div></div>
-      <span class="small muted">${esc(c.description ?? "")}</span>
-      <div class="row"><button class="btn secondary compact" data-act="copy" data-text="${esc(url)}">Copy link</button><button class="btn quiet compact" data-act="copy" data-text="${esc(JSON.stringify(c, null, 2))}">Copy JSON</button><a class="btn quiet compact" href="${esc(url)}" target="_blank" rel="noopener">Open ↗</a></div></div>
-    ${skills ? `${label("What it offers", "sq")}${skills}` : ""}
-    <details class="more"><summary>JSON</summary><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
+    <div class="card"><div class="ac-head">${avatarHTML(S.profile.name, S.profile.handle, 48)}<div class="stack" style="gap:2px;min-width:0"><b style="font-size:18px">${esc(S.profile.name)}'s agent</b>
+      <span class="small faint">@${esc(S.profile.handle)}${S.profile.area?.name ? ` · ${esc(S.profile.area.name)}` : ""} · A2A ${esc(c.supportedInterfaces?.[0]?.protocolVersion ?? "1.0")}${c.signatures?.length ? " · signed" : ""}</span></div></div>
+      ${S.profile.bio ? `<span class="small muted">${esc(S.profile.bio)}</span>` : ""}
+      <div class="share-stats"><div><b>${rec?.verified ?? 0}</b><span>verified deals</span></div><div><b>${rec?.handedOver ?? 0}</b><span>handed over</span></div><div><b>${rec?.problems ?? 0}</b><span>problems</span></div></div>
+      ${since ? `<span class="small faint">On Collab since ${esc(since)} · from signed receipts — no names or prices</span>` : `<span class="small faint">Your record grows with every signed receipt.</span>`}
+      <div class="row"><button class="btn accent compact" data-act="share-link" data-link="${esc(link)}">Share</button><button class="btn secondary compact" data-act="copy" data-text="${esc(url)}">Copy card link</button><button class="btn quiet compact" data-act="copy" data-text="${esc(JSON.stringify(c, null, 2))}">Copy JSON</button></div></div>
+    ${label("What it can do", "sq")}<div class="ac-caps">${caps.map(x => `<span>${esc(x)}</span>`).join("")}</div>
+    ${offers.length ? `${label(`On offer · ${offers.length}`, "sq")}<div class="card slim">${offers.slice(0, 8).map(f => `<div class="ac-offer"><b class="small">${esc(f.offer.title.split(" · ")[0].replace(/\bI(phone|pad)\b/gi, (_, w) => "i" + w[0].toUpperCase() + w.slice(1).toLowerCase()))}</b><span class="small">${f.offer.price?.amount != null ? money(f.offer.price.amount, f.offer.price.period, f.offer.price.currency) : ""}</span></div>`).join("")}</div>` : ""}
+    ${examples.length ? `${label("Other agents can ask", "sq")}<div class="ac-caps">${examples.slice(0, 4).map(x => `<span>“${esc(x)}”</span>`).join("")}</div>` : ""}
+    <div class="card slim">${label("Never shares", "peri")}<span class="small muted">Your lowest price or budget, money in your private notes, your phone, e-mail or exact address, and any note you set to “never use”.</span></div>
+    <details class="more"><summary>For developers · agent card JSON</summary><span class="small faint">Any A2A agent reads it at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 
 async function openDirect(handle) {
@@ -636,7 +656,7 @@ async function payDeal(el, googlePay, a = "eng-pay") {
     live.engagements.set(e.id, e);
     session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
     toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : "Marked as paid outside the app.");
-  } catch (err) { toast(err.message); busy(el, false); }
+  } catch (err) { toast(err.message, null, "error"); busy(el, false); }
   return refresh(openScreen);
 }
 
@@ -704,7 +724,7 @@ async function orderFromCard(a, el) {
     session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
     S.screen = "chat"; paint();
   } catch (err) {
-    toast(err.message);
+    toast(err.message, null, "error");
     // Stock or a time may have changed: show the card as it is now.
     if (err.status === 409) {
       const cur = S.sessions.find(s => s.to === handle); refreshedCards.delete(cur?.id); await person(handle, true); refreshStoreCard(cur);
@@ -795,7 +815,29 @@ const findCard = el => {
 
 // MARK: - Actions
 
-function openScreen(screen, focus) { S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
+/**
+ * Where a notification, a shortcut or a link points: a conversation opens itself (in the side panel; the whole screen
+ * on a phone), waiting for it to load if it just arrived; a person's card, Activity or a screen open as they are.
+ */
+async function openLink(link) {
+  const qp = new URL(link || "/", location.origin).searchParams;
+  if (location.search) history.replaceState(null, "", location.pathname);
+  if (qp.get("to")) return openDirect(qp.get("to"));
+  if (qp.get("engagement")) return openEngagement(qp.get("engagement"));
+  if (qp.get("alerts")) return openScreen("requests");
+  if (qp.get("screen") && screens[qp.get("screen")]) return openScreen(qp.get("screen"));
+}
+async function openEngagement(id) {
+  for (let i = 0; i < 12 && !live.engagements.has(id); i++) { await refresh(openScreen).catch(() => {}); if (!live.engagements.has(id)) await new Promise(r => setTimeout(r, 700)); }
+  if (!live.engagements.has(id)) return openScreen("requests");
+  if (S.screen !== "chat") { S.screen = "chat"; paint(); }
+  showEngagement(id);
+}
+
+function openScreen(screen, focus) {
+  // Notifications and alerts name a conversation: that conversation opens, not the list it's in.
+  if (screen === "engagement" && focus) { openEngagement(focus); return; }
+  S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
 
 function onEdit(e) {
   const el = e.target;
@@ -865,6 +907,12 @@ async function onClick(e) {
     if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
     if (a === "preview-card") return previewCard(el);
     if (a === "agent-card") return showAgentCard();
+    if (a === "checkout") { const eid = el.dataset.id; preloadGooglePay(); openPanel({ title: "Checkout", render: () => checkoutHTML(live.engagements.get(eid)) }); return; }
+    if (a === "share-link") {
+      const data = { title: `${S.profile.name} on Collab`, text: `Talk to ${S.profile.name}'s agent on Collab`, url: el.dataset.link };
+      if (navigator.share) await navigator.share(data).catch(() => {}); else { await navigator.clipboard.writeText(el.dataset.link).catch(() => {}); toast("Link copied."); }
+      return;
+    }
     if (a === "eng-open") return showEngagement(el.dataset.id);
     if (a === "eng-log") return showLog(el.dataset.id);
     if (a === "agent-stream") return showLog(null);
@@ -879,7 +927,7 @@ async function onClick(e) {
       const eng = live.engagements.get(el.dataset.id), side = eng?.requester.uid === session.uid ? "requester" : "provider";
       const each = (eng?.negotiation?.deal?.terms?.quantity ?? eng?.quantity ?? 1) > 1 ? " each" : "";
       try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text: `${offerWords(eng, side, `₹${price}`)}${each}` }); live.engagements.set(e.id, e); toast("Offer sent — their agent answers it, or they do."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "delegate") {
@@ -894,13 +942,13 @@ async function onClick(e) {
           pendingRules.set(el.dataset.id, { text: said, rules: r.rules });
           const box = document.querySelector(`[data-rules-preview="${CSS.escape(el.dataset.id)}"]`);
           if (box) box.innerHTML = `<div class="card slim">${rulesList(r.lines)}<div class="row"><button class="btn accent compact" data-act="rules-confirm" data-id="${esc(el.dataset.id)}">Confirm and hand over</button><span class="small faint">Nothing applies until you confirm.</span></div></div>`;
-        } catch (err) { toast(err.message); }
+        } catch (err) { toast(err.message, null, "error"); }
         busy(el, false); return;
       }
       const limit = Number(said.replace(/[^\d]/g, ""));
       busy(el, true, "Handing over");
       try { const e = await api(`/api/engagements/${el.dataset.id}/delegate`, { limit, autonomy: el.dataset.autonomy || "close" }); live.engagements.set(e.id, e); toast(e.phase === "agreed" ? "Your agent agreed inside your limit — pay below." : "Your agent has it — it negotiates inside your limit and asks only if there's no deal there."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "deal-msg" || a === "deal-note") {
@@ -909,7 +957,7 @@ async function onClick(e) {
       if (!text) return;
       busy(el, true, "Sending");
       try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text }); live.engagements.set(e.id, e); if (input) input.value = ""; }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "rules-confirm") {
@@ -918,7 +966,7 @@ async function onClick(e) {
       busy(el, true, "Handing over");
       try { const e = await api(`/api/engagements/${el.dataset.id}/rules`, p); live.engagements.set(e.id, e); pendingRules.delete(el.dataset.id);
         toast(e.phase === "agreed" ? "Your agent agreed inside your rules — pay below." : "Your agent has it — it follows your rules and asks you only when it can't."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "seller-counter") { const box = document.querySelector(`[data-counter="${CSS.escape(el.dataset.id)}"]`); box.hidden = !box.hidden; box.querySelector("input")?.focus(); return; }
@@ -927,7 +975,7 @@ async function onClick(e) {
       // Accepting the seller's listed price is an offer at that price: they confirm (or their agent does, if they allow it).
       busy(el, true, "Sending");
       try { const e = await api(`/api/engagements/${el.dataset.eng}/ask`, { text: `I'll buy it for ₹${el.dataset.price}` }); live.engagements.set(e.id, e); toast("Offered at their price — they confirm, then you pay."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "qty" || a === "shop-slot" || a === "store-offer-open") return shopControl(a, el);
@@ -955,14 +1003,14 @@ async function onClick(e) {
       if (a === "join-withdraw") { const r = await ask({ title: "Withdraw before joining?", detail: "They see your reason. This can't be undone.", ok: "Withdraw", danger: true, as, input: { label: "Why (they'll see it)", required: true, min: 3, placeholder: "e.g. I've accepted another offer" } }); if (r === null) return; body.reason = r; }
       busy(el, true);
       try { live.engagements.set(id, await api(`/api/engagements/${id}/joining`, body)); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       finally { busy(el, false); }
       return refresh(openScreen);
     }
     if (a === "demo-applicants") {
       busy(el, true, "Applying");
       try { const r = await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/demo-applicants`, {}); toast(r.added ? `${r.added} demo candidates applied — their agents are talking to yours.` : "The demo candidates have already applied."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       finally { busy(el, false); }
       await refresh(openScreen);
       for (const e of live.engagements.values()) if (e.outbox && e.requester.uid?.startsWith("demo-")) run(e.id);
@@ -979,8 +1027,9 @@ async function onClick(e) {
       const box = el.closest(".card").querySelector("[data-nearby]");
       try {
         const r = await api("/api/nearby", { item: el.dataset.item, area: el.dataset.area });
-        box.innerHTML = r.places.length ? `<div class="stack" style="gap:6px">${r.places.map(p => `<a class="small" href="${esc(p.uri)}" target="_blank" rel="noopener noreferrer">📍 ${esc(p.title)}</a>`).join("")}
-          <span class="small faint">${esc(r.note)} · Source: Google Maps · ${r.remaining == null ? "" : `${r.remaining} left today`}</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
+        box.innerHTML = nearbyHTML(r);
+        // Kept with the card, so a later repaint (Keep watching, a reload) still shows them.
+        const f = findCard(el); if (f) { f.c.nearby = { places: r.places, note: r.note }; await saveSession(f.s); }
       } finally { busy(el, false); }
       loadPolicy();
       return;
@@ -1039,7 +1088,7 @@ async function onClick(e) {
     if (a === "slot-pick") {
       busy(el, true, "Holding");
       try { const e = await api(`/api/engagements/${el.dataset.id}/slot`, { slotId: el.dataset.slot }); live.engagements.set(e.id, e); toast("Held for you — pay to book it."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "eng-delivered" || a === "eng-received") {
@@ -1082,7 +1131,7 @@ async function onClick(e) {
     const f = findCard(el);
     if (!f) return;
     await cardAction(a, el, f);
-  } catch (err) { toast(err.message); busy(el, false); }
+  } catch (err) { toast(err.message, null, "error"); busy(el, false); }
 }
 
 async function cardAction(a, el, { s, m, c }) {
@@ -1104,27 +1153,16 @@ async function cardAction(a, el, { s, m, c }) {
     setAbout(d.shared, el.dataset.key, cur === el.dataset.val ? "" : el.dataset.val);
   }
   if (a === "brief-clarify") {
-    // The owner's answer becomes part of the request, and Gemini reads it again (filters, brief, next questions).
-    const q = d.clarify[Number(el.dataset.j)], opt = q.options[Number(el.dataset.k)];
-    busy(el, true, "Updating");
-    c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
-    (c.answered ??= []).push({ question: q.question, answer: opt });
-    const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category });
-    if (r.draft) { const keep = d.mandate, about = d.shared.about; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep; if (about?.length) c.draft.shared.about = about; if (r.gate) c.gate = r.gate;
-      // Every answer tapped here stays in what sellers see, even if the re-read leaves it out ("When: Tomorrow").
-      const reqs = c.draft.shared.requirements;
-      for (const x of c.answered) if (!reqs.some(rq => rq.value.toLowerCase().includes(x.answer.toLowerCase()))) {
-        const when = /\b(when|time|day|date|book)\b/i.test(x.question);
-        reqs.push({ label: when ? "When" : /\bwho\b/i.test(x.question) ? "For" : x.question.replace(/\?$/, "").split(/\s+/).slice(0, 3).join(" "), value: x.answer, strength: when ? "nice" : "required" });
-      }
-      c.insights = await insightsLines({ side: "requester", category: r.draft.need.category, area: r.draft.need.place.name, limit: c.draft.mandate?.price.limit, unit: r.draft.need.unit, item: itemOf(r.draft) }); }
+    // The owner's answer joins the request at once (a requirement others' agents see) — no wait for a second read.
+    const q = d.clarify[Number(el.dataset.j)], opt = el.dataset.val ?? q.options[Number(el.dataset.k)];
+    answerBrief(c, q.question, opt);
   }
   if (a === "brief-rules-read" || a === "offer-rules-read") {
     const words = String(c.rulesText ?? "").trim();
     if (words.length < 4) return toast("Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
     busy(el, true, "Reading");
     const o = a === "offer-rules-read" ? c.offer : null;
-    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message); return null; });
+    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
     if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; }
   }
   if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; c.rulesText = ""; }
@@ -1146,23 +1184,12 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "gate-override") c.gateOverride = true;
   if (a === "matches-more") c.showAll = true;
   if (a === "gate-answer") {
-    const j = Number(el.dataset.j), q = c.gate.missing[j], opt = q.options[Number(el.dataset.k)];
+    const j = Number(el.dataset.j), q = c.gate.missing[j], opt = el.dataset.val ?? q.options[Number(el.dataset.k)];
     (c.gateAnswers ??= {})[j] = opt;
     if (c.type === "brief") {
-      // Answered like Gemini's other questions: it joins the request, which is read (and judged) again.
-      busy(el, true, "Updating");
-      c.text = `${c.text}. ${q.question.replace(/\?$/, "")}: ${opt}`;
-      (c.answered ??= []).push({ question: q.question, answer: opt });
-      const r = await api("/api/briefs/draft", { text: c.text, here: S.profile.area, category: d.need.category }).catch(() => null);
-      if (r?.draft) {
-        const keep = d.mandate; c.draft = r.draft; if (keep && !r.draft.mandate) c.draft.mandate = keep;
-        const unchosen = new Set(q.options.filter(o => o !== opt).map(o => o.toLowerCase()));
-        c.draft.need.filters = (c.draft.need.filters ?? []).filter(f => !unchosen.has(String(f.value).toLowerCase()));
-        // The question is answered: it isn't asked again even if the model re-lists it.
-        c.gate = r.gate ? { ...r.gate, missing: r.gate.missing.filter(m => !(c.answered ?? []).some(x => x.question === m.question)) } : c.gate;
-        if (c.gate && !c.gate.missing.length) c.gate = { ...c.gate, ok: true };
-        c.gateAnswers = {};
-      }
+      // Answered like Gemini's other questions: it joins the request at once, and the gate opens when nothing's left.
+      answerBrief(c, q.question, opt);
+      c.gateAnswers = {};
     } else {
       // On an offering it's one more detail buyers see; answered, the gate opens.
       const lbl = q.question.replace(/\?$/, "").split(/\s+/).slice(0, 4).join(" ");
@@ -1173,11 +1200,41 @@ async function cardAction(a, el, { s, m, c }) {
   }
   if (a === "brief-send") {
     if (c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Send as it is”.");
+    // The answers tapped for this request are kept (Private), and filled in the next time they're asked.
+    rememberAll(c.answered ?? [], d.shared?.title ?? null);
     busy(el, true, "Searching");
     const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7,
       ...(c.rulesOk ? { closeAt: c.closeAt ?? null, rulesText: c.rulesText } : {}) } : null });
     // Real matches first (only the best one pre-ticked); sellers that fit but cost more than the limit come last, unticked.
     Object.assign(c, { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] });
+    // Discovery runs on its own: the best matches (up to three, within budget) are contacted at once — only the shared
+    // request goes out — and one live list shows every conversation, with what needs the owner on top.
+    const first = r.found.slice(0, 3);
+    if (first.length) {
+      const es = await api(`/api/briefs/${r.brief.id}/engage`, { providers: first.map(p => ({ factId: p.fact.id })) });
+      c.step = "engaged"; c.engaged = es.map(x => x.id);
+      for (const x of es) live.engagements.set(x.id, x);
+      m.cards.push({ type: "discovery", briefId: r.brief.id, engaged: c.engaged, found: c.found, title: d.shared?.title ?? "" });
+      session.track("agents_contacted", { count: es.length, category: d.need?.category ?? "none", auto: true });
+      m.text = `Your agent is talking to ${es.length === 1 ? "1 agent" : `${es.length} agents`} — it comes to you only for a decision.`;
+      await saveSession(s); paint();
+      for (const x of es) run(x.id);
+      return;
+    }
+    m.text = "";
+  }
+  if (a === "disc-more") {
+    // The other good matches, contacted too.
+    const have = new Set(c.engaged.map(id => live.engagements.get(id)?.offer?.factId));
+    const rest = (c.found ?? []).filter(f => !f.over && !have.has(f.fact.id)).slice(0, 3);
+    if (!rest.length) return;
+    busy(el, true, "Contacting");
+    const es = await api(`/api/briefs/${c.briefId}/engage`, { providers: rest.map(p => ({ factId: p.fact.id })) });
+    c.engaged = [...c.engaged, ...es.map(x => x.id)];
+    for (const x of es) live.engagements.set(x.id, x);
+    await saveSession(s); paint();
+    for (const x of es) run(x.id);
+    return;
   }
   if (a === "watch") {
     // A scheduled agent for this request: it searches again every hour and alerts the owner (push, if allowed).
@@ -1200,7 +1257,7 @@ async function cardAction(a, el, { s, m, c }) {
       live.engagements.set(e.id, e); if (!m.cards.some(x => x.type === "engagement" && x.id === e.id)) m.cards.push({ type: "engagement", id: e.id });
       session.track("order_from_card", { kind: "match", instant: e.phase === "agreed" });
       await saveSession(s); paint();
-    } catch (err) { toast(err.message); busy(el, false); }
+    } catch (err) { toast(err.message, null, "error"); busy(el, false); }
     return;
   }
   if (a === "match-booked") { const card = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); card?.scrollIntoView({ behavior: "smooth", block: "center" }); card?.classList.remove("flash"); void card?.offsetWidth; card?.classList.add("flash"); return; }
@@ -1235,7 +1292,7 @@ async function cardAction(a, el, { s, m, c }) {
     const full = `${base} ₹${price.toLocaleString("en-IN")}${c.basics?.unit ? ` per ${c.basics.unit}` : ""}. ${/^online$/i.test(where) ? "Online." : `In ${where}.`}`;
     // The answers already tapped go to Gemini too, so the details it shows match them (they're published once, below).
     const said = Object.entries(c.missingAnswers ?? {}).filter(([, v]) => String(v).trim()).map(([k, v]) => `${k}: ${String(v).trim().replace(/[.]+$/, "")}.`).join(" ");
-    const d = await api("/api/offers/draft", { text: said ? `${full} ${said}` : full, here: S.profile?.area }).catch(err => { toast(err.message); return null; });
+    const d = await api("/api/offers/draft", { text: said ? `${full} ${said}` : full, here: S.profile?.area }).catch(err => { toast(err.message, null, "error"); return null; });
     if (!d?.offer) { busy(el, false); return toast(d?.problem ?? "Still couldn't read it as an offering — say a little more about what it is."); }
     const answered = (c.missing ?? []).filter(x => (c.missingAnswers?.[x.label] ?? "").trim());
     c.missing = [...answered, ...(d.missing ?? []).filter(x => !answered.some(y => y.label.toLowerCase() === x.label.toLowerCase()))].slice(0, 6);
@@ -1268,26 +1325,28 @@ async function cardAction(a, el, { s, m, c }) {
       .map(([k, v]) => `${k}: ${v.replace(/[.]+$/, "")}.`).filter(x => !base.includes(x)).join(" ");
     const terms = (c.terms ?? []).map(t => ({ label: String(t.label ?? "").trim(), text: String(t.text ?? "").trim() })).filter(t => t.label && t.text);
     const instant = !!c.instant;
-    if (extra) c.publicText = `${(c.publicText ?? c.text).trim()} ${extra}`;
+    if (extra) { const t = (c.publicText ?? c.text).trim(); c.publicText = `${t}${/[.!?]$/.test(t) ? "" : "."} ${extra}`; }
+    // What was answered here is kept (Private) and suggested for the next listing.
+    rememberAll((c.missing ?? []).map(m => ({ question: m.ask || m.label, answer: c.missingAnswers?.[m.label] })), c.offer?.title ?? null);
     // A note being made public is published in place (no private copy left behind).
     const fact = await api("/api/facts", { ...(c.noteId ? { id: c.noteId } : {}), tier: "public", text: c.publicText ?? c.text, negotiable: limitPast(c), category: c.offer?.category ?? c.basics?.category ?? null, ...(c.photo ? { photoId: c.photo.id } : {}) });
     factsCache = null;
     if (fact.floorKeptPrivate) toast(`${ownerPays(c) ? "The most you'd pay" : "Your lowest price"} was left out of the public text — it stays private.`);
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
     // A job post: the requirements its applicants are screened against, as the employer left them.
-    if (fact.offer && ownerPays(c) && c.offer?.requirements) await api(`/api/facts/${fact.id}/requirements`, { requirements: c.offer.requirements }).catch(err => toast(err.message));
+    if (fact.offer && ownerPays(c) && c.offer?.requirements) await api(`/api/facts/${fact.id}/requirements`, { requirements: c.offer.requirements }).catch(err => toast(err.message, null, "error"));
     // How many they have: tracked from the start, so "is it in stock?" never needs them.
     const stock = c.stock;
     if (fact.offer && Number.isInteger(stock) && stock >= 0) await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
     // Weekly hours: bookable times two weeks ahead, in the seller's own time zone, refilled by the server.
-    if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message));
+    if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message, null, "error"));
     if (c.offer && c.floor) {
       const listed = c.offer.price.amount, limit = ownerPays(c) ? Math.max(c.floor, listed) : Math.min(c.floor, listed);
       const mandate = { price: { opening: listed, limit }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 });
     }
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
-    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
+    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message, null, "error"));
     c.step = "published"; c.publicText = fact.text;
   }
   // Accept every suggested answer still open (the owner's own answers stay).
@@ -1390,8 +1449,10 @@ async function inboxAction(a, el) {
   busy(el, true);
   live.inbox = live.inbox.filter(i => i.id !== itemId);
   // A decision the server can't take as it is (a past start date…) comes back to fix, not lost until the next refresh.
-  try { await api(`/api/inbox/${itemId}`, body); }
-  catch (err) { toast(err.message); }
+  try {
+    await api(`/api/inbox/${itemId}`, body);
+    if (body.text && item.kind === "answer" && item.owner === session.uid) toast("Sent. Your agent gives this answer itself the next time it's asked.");
+  } catch (err) { toast(err.message, null, "error"); }
   await refresh(openScreen);
 }
 
@@ -1408,7 +1469,7 @@ async function run(engagementId) {
       paintContent(true);
       if (!e.outbox) break;
     }
-  } catch (err) { toast(err.message); } finally { running.delete(engagementId); refresh(openScreen); }
+  } catch (err) { toast(err.message, null, "error"); } finally { running.delete(engagementId); refresh(openScreen); }
 }
 
 /** The server's policy for this account (quotas left today, currencies, features), shown instead of fixed numbers. */
@@ -1443,11 +1504,13 @@ document.addEventListener("visibilitychange", async () => {
 // A push that arrives while Collab is open shows here (the system shows it when Collab is closed).
 addEventListener("collab-push", e => {
   const n = e.detail ?? {};
-  toast(`🔔 ${n.title ?? "Collab"} — ${n.body ?? ""}`, () => { if (n.link && n.link !== "/") location.href = n.link; });
+  notice({ title: n.title ?? "Collab", body: n.body ?? "", kind: "attention", label: "Your agent", action: "Open", onClick: () => openLink(n.link) });
   refresh(openScreen);
 });
 navigator.serviceWorker?.addEventListener("message", e => {
-  if (e.data?.type === "collab-updated") toast("A new version of Collab is ready — tap to reload.", () => location.reload());
+  // A notification tapped while Collab is open: go there, without a reload.
+  if (e.data?.type === "collab-open") { openLink(e.data.link); return; }
+  if (e.data?.type === "collab-updated") notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
 });
 
 // Started last, once everything above is defined.
@@ -1470,14 +1533,11 @@ timing("app");
 // Links from notifications, the installed app's shortcuts and QR codes open the right place.
 {
   const qp = new URLSearchParams(location.search);
-  if (qp.get("to")) openDirect(qp.get("to"));
-  else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
-  else if (qp.get("alerts")) openScreen("requests");
-  else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
   if (qp.get("calendar")) {
     toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
     history.replaceState(null, "", location.pathname);
   }
+  else if (location.search) openLink(location.pathname + location.search);
 }
 
 } catch (err) {

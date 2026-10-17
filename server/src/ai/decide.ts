@@ -1,6 +1,7 @@
 // The pattern every model decision follows (Collab's `DecisionTask`): the model proposes JSON, the task's own rules
 // check it against what was actually written, and a deterministic version decides when the model is missing, fails,
 // or proposes something the rules reject. The model can make an agent smarter, never less safe.
+import { createHash } from "node:crypto";
 import type { Model } from "./gemini.ts";
 
 export interface Task<I, O> {
@@ -32,16 +33,32 @@ export function firstJSON(text: string | null): any {
   try { return JSON.parse(text.slice(s, e + 1)); } catch { return null; }
 }
 
+const CACHE_ON = process.env.DECIDE_CACHE !== "0", CACHE_MS = 60 * 60_000, CACHE_MAX = 5000;
+const cache = new Map<string, { at: number; raw: Promise<string | null> }>();
+
 export async function decide<I, O>(model: Model | null, task: Task<I, O>, input: I): Promise<Decision<O>> {
   const s = task.settled?.(input);
   if (s != null) return { output: s, byModel: false, settled: true };
   if (model) {
-    const raw = await model.complete({ instructions: task.instructions, prompt: task.prompt(input), schema: task.schema, maxTokens: task.maxTokens, task: task.name, tier: task.tier, image: task.image?.(input) ?? null });
+    const prompt = task.prompt(input), image = task.image?.(input) ?? null;
+    // The same question asked again (the same listing re-read, a page reloaded, two devices at once) is answered from
+    // the cache: an answer that passed its checks is kept for an hour, and identical calls in flight share one.
+    const key = CACHE_ON ? createHash("sha256").update(`${task.name}\u0000${task.instructions}\u0000${prompt}\u0000${image ? createHash("sha256").update(image.data).digest("hex") : ""}`).digest("hex") : null;
+    const hit = key ? cache.get(key) : undefined;
+    let raw: string | null;
+    if (hit && Date.now() - hit.at < CACHE_MS) raw = await hit.raw;
+    else {
+      const p = model.complete({ instructions: task.instructions, prompt, schema: task.schema, maxTokens: task.maxTokens, task: task.name, tier: task.tier, image });
+      if (key) { cache.set(key, { at: Date.now(), raw: p }); p.catch(() => cache.delete(key)); if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!); }
+      raw = await p;
+      if (raw === null && key) cache.delete(key);
+    }
     const parsed = firstJSON(raw);
     const candidate = parsed === null ? null : task.parse(parsed, input);
     const checked = candidate === null ? null : task.validate(candidate, input);
     if (process.env.DEBUG_TASKS === "1") console.log(`[${task.name}]`, raw, "→", checked === null ? "rejected" : "kept");
     if (checked !== null) return { output: checked, byModel: true };
+    if (key) cache.delete(key); // a rejected answer is asked for again next time
   }
   return { output: task.fallback(input), byModel: false };
 }

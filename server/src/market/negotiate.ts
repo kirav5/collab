@@ -170,8 +170,22 @@ function scaledAmounts(text: string, rupeesOnly = false): { value: number; toler
 /** One line, and amounts in rupees (models sometimes write "$630" for a ₹ price). */
 const clean = (s: string) => { const t = s.replace(/[\r\n]+/g, " ").replace(/(?:US)?\$\s?(?=\d)/g, "₹").replace(/\b(?:Rs\.?|INR)\s?(?=\d)/gi, "₹").trim(); return t ? t.slice(0, 240) : null; };
 
+/** A message that adds what isn't in the offer — a credit period, a deposit, "30 days", a second price — says something
+ *  the deal doesn't: the plain wording is used instead. Only the offer's own numbers may appear. */
+export function invents(message: string, p: Proposal): boolean {
+  const qty = Number(p.terms?.quantity) || 1;
+  const ok = new Set([p.price, p.price * qty, qty, ...Object.values(p.terms ?? {}), ...(p.items ?? []).flatMap(l => [l.unitPrice, l.quantity, l.unitPrice * l.quantity])].map(n => Math.round(Number(n))));
+  // Amounts at the scale they're written: "₹72 lakh", "₹0.72 Cr", "₹72 L", "30k".
+  const SCALE: Record<string, number> = { lakh: 1e5, lakhs: 1e5, lac: 1e5, l: 1e5, crore: 1e7, crores: 1e7, cr: 1e7, k: 1e3 };
+  const nums = [...message.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(lakhs?|lac|crores?|cr|l|k)?\b/gi)].map(m => Math.round(Number(m[1].replace(/,/g, "")) * (SCALE[(m[2] ?? "").toLowerCase()] ?? 1)));
+  if (nums.some(n => !ok.has(n))) return true;
+  return /\b(credit|payment terms?|installments?|emi|advance|deposit|warranty|guarantee|free delivery|delivery charges?|bulk|refund)\b/i.test(message)
+    && !Object.keys(p.terms ?? {}).some(k => /credit|deposit|warranty|delivery/i.test(k));
+}
+
 export const NegotiateTask: Task<{ ctx: Context; listPrice: number }, Move> = {
   name: "negotiate",
+  tier: "cheap",
   maxTokens: 300,
   // Accepting and escalating are pure arithmetic: no model call for those.
   settled: ({ ctx }) => { const m = next(ctx); return m.action === "propose" ? null : m; },
@@ -220,7 +234,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         const t = ctx.theirs.at(-1);
         if (!t || t.id !== move.acceptId || !acceptable(t, ctx)) return null;
         const said = clean(move.message);
-        return { ...move, message: (said && !leaks(said, ctx) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
+        return { ...move, message: (said && !leaks(said, ctx) && !invents(said, t) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
       }
       case "escalate":
         return move.message ? { ...move, message: move.message.slice(0, 240) } : null;
@@ -239,7 +253,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         for (const [k, v] of Object.entries(p.terms)) if (direction(ctx, k) * (v - ctx.mandate.terms[k].opening) > 0.0001) return null;
         const said = clean(move.message);
         const sized = n && n > 1 ? { ...p, terms: { ...p.terms, quantity: n } } : p;
-        return { action: "propose", proposal: p, message: (said && !leaks(said, ctx) && saysOffer(said, p, n) && said) || line(ctx, moveKind(ctx, p.price), describe(sized, ctx)) };
+        return { action: "propose", proposal: p, message: (said && !leaks(said, ctx) && !invents(said, sized) && saysOffer(said, p, n) && said) || line(ctx, moveKind(ctx, p.price), describe(sized, ctx)) };
       }
     }
   },

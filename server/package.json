@@ -9,10 +9,10 @@
   "scripts": {
     "start": "node src/server.ts",
     "dev": "STORE=memory DEV_AUTH=1 SEED_DEMO=1 node --watch src/server.ts",
-    "test": "node --test test/*.test.ts",
+    "test": "DECIDE_CACHE=0 node --test test/*.test.ts",
     "dev:offline": "GEMINI_FAKE=1 STORE=memory DEV_AUTH=1 SEED_DEMO=1 node --watch src/server.ts",
     "typecheck": "tsc -p .",
-    "check": "tsc -p . && node --test test/*.test.ts"
+    "check": "tsc -p . && DECIDE_CACHE=0 node --test test/*.test.ts"
   },
   "dependencies": {
     "@a2a-js/sdk": "^1.3.0",

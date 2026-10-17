@@ -43,10 +43,14 @@ answer only from what their owners chose to share, ask what they need to know, a
 
 ## 4. Principles (non-negotiable)
 
-1. **Private by default.** Everything a person tells their agent is Private unless they choose otherwise.
-2. **The user decides what is shared**, per fact (tier), per person and topic (rules), per answer (approval).
-3. **The model is given only what may be shared.** A deterministic policy picks the allowed facts *before* Gemini
-   sees anything; a fact not returned can't be drawn out by any question.
+1. **Asked once, answered for you.** Everything a person tells their agent — notes, earlier answers, listings —
+   answers other people's agents by default, so nobody is asked the same thing twice (decided 18 Oct 2026). Private
+   means *not listed*: never in the directory or on the card.
+2. **The user decides what never leaves**, per note ("never use"), per person and topic (rules), per answer
+   (approval). Every answer given for them is listed in Privacy › What your agent shared.
+3. **Hard limits before the model.** Code picks the notes *before* Gemini sees anything: never one the owner set to
+   "never use", one with contact details, or a private note that mentions money (a budget, floor, cost or supplier
+   rate); signed-out outside agents get Public facts only; an answer naming the owner's limit goes to the owner.
 4. **Gemini proposes, code checks.** Every model output is validated (grounded in the user's words/facts, numbers
    must be written, no contact details, no limit leaks); a deterministic fallback decides otherwise.
 5. **Limits are never stated.** Negotiation prompts carry numbers only; messages revealing a limit are replaced.

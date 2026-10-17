@@ -108,6 +108,14 @@ Sharing should be audience-, purpose-, action- and time-specific. For example, a
 
 Private context can help an owner’s agent decide what is suitable without being sent to another party. The outgoing boundary must independently check what may be disclosed. A model’s instruction to keep a secret is insufficient by itself. Owners should be able to inspect what was shared, correct memory, export it, revoke future access and pause their agent. Revocation cannot erase information a recipient already received.
 
+**Answered once, never asked again (18 Oct 2026).** By default an owner's agent answers other agents from
+everything the owner has told it — private notes, answers they gave before, listings — so a second buyer or seller never
+asks them what the first already did. "Private" now means *not listed*, not *never used*. What never leaves: the
+owner's limits, any private note that mentions money, contact details, and any note the owner sets to "never use".
+Signed-out outside agents get Public facts only, and every answer given on the owner's behalf is listed for them.
+Answering others means Gemini reads those notes on the server; the owner's own questions about their notes can still
+stay on their device (Gemma).
+
 **Storage and disclosure are different promises.** The current web implementation stores Private facts and limits in the owner’s account on the server, with policy preventing disclosure to counterparties. Its local-note inference path can fall back to cloud inference. Therefore “under your control” must not be presented as “never leaves your device.” The target product should offer explicit processing choices: device-only, owner-approved cloud processing, and permitted shared context. Device-only must never silently fall back to cloud.
 
 **Not keeping history.** An owner can switch their agent to not keep history for a while: chats started then are kept only in memory — not on the device, not synced to the account — and nothing said is saved as a note or remembered. Public offerings, rules and existing commitments keep working, and the receipts of deals made meanwhile are still issued, because the other party relies on them. This limits what *the owner's own agent keeps*; it is not anonymity towards the people they deal with. (Incognito *discovery* — a need or offering that takes part in matching without being listed, revealed only when both sides agree — is a separate, planned mode.)

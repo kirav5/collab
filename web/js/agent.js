@@ -122,7 +122,7 @@ export async function chat(text, recent, area, open = null) {
       const fact = await saveNote(api, { text, tier: "private" });
       if (fact.queued) return { text: "Saved on this device — the connection dropped; it syncs to your account when you're back online.", cards: [] };
       await cacheNotes([...(await cachedNotes()), fact]); // at once on this device too, so the next matches can use it
-      return { text: "Saved to your context — only your agent can use it; it's never shared.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
+      return { text: "Saved to your context — your agent uses it to answer for you; it's never listed publicly.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {
       const facts = await api("/api/facts").catch(() => null) ?? await cachedNotes();
@@ -142,9 +142,12 @@ export async function chat(text, recent, area, open = null) {
       // A profile shared on an earlier request starts filled in (the owner can change any of it before sending).
       if (d.draft.profile) d.draft.shared.about = d.draft.profile.filter(q => q.answer).map(q => ({ label: q.label, value: q.answer }));
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
+      const card = await applyRecalled({ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" });
+      const filled = (card.answered ?? []).filter(x => x.before).length;
       return { text: d.gate && !d.gate.ok ? "Your agent needs a little more before others' agents can act on this — tap what fits, or send it as it is."
-          : d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send." : "Here's what your agent will ask for. Adjust it, then send.",
-        cards: [{ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" }] };
+          : d.draft.profile ? "Here's your application. Add a short profile so employers' agents can answer for you, then send."
+          : filled ? `Here's your request, with ${filled === 1 ? "an answer" : `${filled} answers`} from what you said before. Adjust it, then send.` : "Here's your request. Adjust it, then send.",
+        cards: [card] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
     case "refine": {
@@ -203,9 +206,106 @@ export async function offerReply(text, d, extra = {}) {
     const last = x => x.split(" ").at(-1), l = norm(m.label), hit = known.find(([k]) => k && (l === k || last(l) === last(k)));
     if (hit) missingAnswers[m.label] = m.options?.find(o => norm(o) === norm(hit[1])) ?? hit[1];
   }
-  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review",
+  // What the owner answered for an earlier listing is suggested again (marked, never applied without a tap).
+  const saved = d.missing?.length ? await rememberedAnswers() : [], fromMemory = {};
+  for (const m of d.missing ?? []) {
+    if (missingAnswers[m.label]) continue;
+    const f = recall(saved, m.ask || m.label) ?? recall(saved, m.label);
+    if (f) { missingAnswers[m.label] = asOption(m.options, f.answer) ?? f.answer; fromMemory[m.label] = true; }
+  }
+  // Gemini's likely answers come with the draft ("answer\u0000guess" marks a guess), so they show at once.
+  const fromDraft = d.answers && typeof d.answers === "object" ? d.answers : null;
+  const suggested = fromDraft ? { suggestedAnswers: Object.fromEntries(Object.entries(fromDraft).map(([k, v]) => [k, String(v).split("\u0000")[0]])),
+    guessedAnswers: Object.fromEntries(Object.entries(fromDraft).filter(([, v]) => String(v).includes("\u0000")).map(([k]) => [k, true])), answersTried: "draft" } : {};
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review", ...suggested,
     ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}),
-    ...(Object.keys(missingAnswers).length ? { missingAnswers, answeredMissing: (d.missing ?? []).every(m => missingAnswers[m.label]) } : {}), ...extra }] };
+    ...(Object.keys(missingAnswers).length ? { missingAnswers, answeredMissing: (d.missing ?? []).every(m => missingAnswers[m.label]) } : {}),
+    ...(Object.keys(fromMemory).length ? { fromMemory } : {}), ...extra }] };
+}
+
+// MARK: - What the owner answered before
+
+// Every answer the owner gives is kept as a Private note (server: core/memory.ts) and read here, on their device, so
+// the same question comes back filled in. Matching is by the question's words — no model, nothing leaves the device.
+const STOP = new Set(["a", "an", "the", "do", "does", "did", "is", "are", "you", "your", "i", "my", "me", "we", "of", "for", "to", "in", "on", "at",
+  "what", "which", "how", "would", "will", "can", "could", "should", "it", "this", "that", "and", "or", "be", "have", "has", "any", "prefer", "like", "want"]);
+const keyOf = q => String(q ?? "").toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").split(/\s+/).filter(Boolean).join(" ");
+const qwords = q => new Set(keyOf(q).split(" ").filter(w => w.length > 1 && !STOP.has(w)));
+export function likeness(a, b) {
+  if (keyOf(a) === keyOf(b)) return 1;
+  const x = qwords(a), y = qwords(b);
+  if (!x.size || !y.size) return 0;
+  let both = 0;
+  for (const w of x) if (y.has(w)) both++;
+  return both / Math.max(x.size, y.size);
+}
+export const rememberedAnswers = async () => (await cached("/api/facts").catch(() => [])).filter(f => f.source === "answer" && f.question && f.answer);
+/** The owner's earlier answer to this question, or one asked in other words. */
+export function recall(saved, question) {
+  let best = null, score = 0;
+  for (const f of saved) { const s = likeness(f.question, question); if (s > score) { best = f; score = s; } }
+  return score >= 0.6 ? best : null;
+}
+/** Which option an earlier answer picks ("english" → "English"), else the answer in the owner's own words. */
+const asOption = (options, answer) => (options ?? []).find(o => o.toLowerCase() === answer.toLowerCase())
+  ?? (options ?? []).find(o => answer.toLowerCase().includes(o.toLowerCase()) && o.length > 2) ?? null;
+
+/** A request's questions (Gemini's and the gate's) filled from earlier answers: c.recalled[question] = { answer, option }. */
+export async function recallBrief(c) {
+  const saved = await rememberedAnswers();
+  const qs = [...(c.draft?.clarify ?? []), ...(c.gate?.missing ?? [])];
+  const out = {};
+  for (const q of qs) { const f = recall(saved, q.question); if (f) out[q.question] = { answer: f.answer, option: asOption(q.options, f.answer), about: f.about ?? null }; }
+  c.recalled = out;
+  return c;
+}
+
+/**
+ * Questions the owner answered before are answered again on their own: the request is read once more with those
+ * answers in it (c.answered marks them `before`, so the card can say so). At most two answers shape a request — the
+ * owner isn't held up by round after round of questions.
+ */
+export async function applyRecalled(c) {
+  await recallBrief(c);
+  const done = new Set((c.answered ?? []).map(x => x.question));
+  const todo = [...(c.draft?.clarify ?? []), ...(c.gate?.missing ?? [])].filter(q => c.recalled?.[q.question] && !done.has(q.question))
+    .map(q => ({ question: q.question, answer: c.recalled[q.question].option ?? c.recalled[q.question].answer, before: true }));
+  c.recalled = {};
+  for (const x of todo) answerBrief(c, x.question, x.answer, true);
+  return trimQuestions(c);
+}
+
+/**
+ * An answer joins the request at once — no second read by the model, so a tap never waits: it becomes one of the
+ * request's requirements (what other agents see), the words are added for the record, and the question is done.
+ */
+export function answerBrief(c, question, answer, before = false) {
+  const d = c.draft;
+  if (!d || (c.answered ?? []).some(x => x.question === question)) return c;
+  (c.answered ??= []).push({ question, answer, ...(before ? { before: true } : {}) });
+  c.text = `${c.text}. ${question.replace(/\?$/, "")}: ${answer}`;
+  const when = /\b(when|time|day|days|date|week|book)\b/i.test(question);
+  const reqs = d.shared.requirements;
+  if (!reqs.some(r => r.value.toLowerCase().includes(String(answer).toLowerCase())))
+    reqs.push({ label: when ? "When" : /\bwho\b/i.test(question) ? "For" : question.replace(/\?$/, "").split(/\s+/).slice(0, 3).join(" "), value: answer, strength: when ? "preferred" : "required" });
+  if (!(d.need.filters ?? []).some(f => String(f.value).toLowerCase() === String(answer).toLowerCase()))
+    // A soft filter: it ranks offerings that mention it higher, never hides one that doesn't say.
+    (d.need.filters ??= []).push({ id: `ans-${(d.need.filters ?? []).length}`, label: when ? "When" : question.replace(/\?$/, "").split(/\s+/).slice(0, 3).join(" "), kind: "text", comparison: "mentions",
+      value: String(answer).slice(0, 80), unit: null, strength: "preferred", source: "stated", evidence: String(answer).slice(0, 80), question });
+  return trimQuestions(c);
+}
+/** Questions already answered aren't asked again, and two answers are enough. */
+export function trimQuestions(c) {
+  const asked = new Set((c.answered ?? []).map(x => x.question)), n = (c.answered ?? []).length;
+  if (c.draft) c.draft.clarify = n >= 2 ? [] : (c.draft.clarify ?? []).filter(q => !asked.has(q.question)).slice(0, 2 - n);
+  if (c.gate && !c.gate.ok) { c.gate = { ...c.gate, missing: (c.gate.missing ?? []).filter(q => !asked.has(q.question)) }; if (!c.gate.missing.length || n >= 2) c.gate = { ...c.gate, ok: true }; }
+  return c;
+}
+
+/** Kept for next time: what the owner answered while making a request or a listing. */
+export function rememberAll(answers, about) {
+  const list = answers.filter(a => a.question && String(a.answer ?? "").trim()).slice(0, 12).map(a => ({ question: a.question, answer: String(a.answer), about }));
+  if (list.length) api("/api/memory/answers", { answers: list }).catch(() => {});
 }
 
 // MARK: - What only this device can do
@@ -231,7 +331,19 @@ async function work() {
   working = true;
   try { do { again = false; await workOnce(); } while (again); } finally { working = false; }
 }
+const kicked = new Set();
 async function workOnce() {
+  // A conversation of ours that stalled — still negotiating, nobody waiting, nothing asked, the seller's agent's move —
+  // is woken once (the server lets the seller's agent answer the latest offer).
+  const t = Date.now() / 1000;
+  for (const e of live.engagements.values()) {
+    if (kicked.has(e.id) || e.requester?.uid !== session.uid || !["negotiating", "asking"].includes(e.phase) || e.waiting?.requester || e.waiting?.provider) continue;
+    const n = e.negotiation ?? { requester: [], provider: [] };
+    const sellersMove = n.lastBy ? n.lastBy === "requester" : n.provider.length <= n.requester.length;
+    if (!sellersMove || t - (e.updatedAt ?? t) < 20 || live.inbox.some(i => i.engagementId === e.id)) continue;
+    kicked.add(e.id);
+    api(`/api/engagements/${e.id}/run`, {}).then(poke).catch(() => {});
+  }
   for (const item of live.inbox) {
     if (inflight.has(item.id) || item.owner !== session.uid) continue;
     if (item.kind === "move" && !item.question) {
@@ -240,6 +352,9 @@ async function workOnce() {
       inflight.add(item.id);
       api(`/api/inbox/${item.id}`, { mandate }).then(poke).catch(() => {}).finally(() => setTimeout(() => inflight.delete(item.id), 5000));
     } else if (item.kind === "answer" && !drafts.has(item.id)) {
+      // Answered before: the owner's own words, filled in at once (no model needed).
+      const before = recall(await rememberedAnswers(), item.question ?? "");
+      if (before) { drafts.set(item.id, { text: before.answer, notes: [before.text], on: "memory", about: before.about ?? null }); for (const fn of live.listeners) fn(); continue; }
       inflight.add(item.id);
       const facts = (await cached("/api/facts").catch(() => [])).filter(f => f.tier === "private");
       const notes = relevant(facts, item.question ?? "");

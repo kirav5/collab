@@ -33,8 +33,18 @@ export interface Fact {
   offer: Offer | null;
   /** Search by meaning (Public only). */
   embedding?: number[];
-  /** "chat": remembered from the owner's own chat (a question and the answer they got) — always Private. */
-  source?: "chat";
+  /** "chat": remembered from the owner's own chat (a question and the answer they got) — always Private.
+   *  "answer": something the owner answered (an agent's question, a request's or a listing's), kept so they aren't
+   *  asked again (memory.ts) — always Private. */
+  source?: "chat" | "answer";
+  question?: string;
+  answer?: string;
+  /** What it was asked about ("Guitar lessons"). */
+  about?: string;
+  /** The owner let their agent give this answer again without asking them. */
+  reuse?: boolean;
+  /** The owner said their agent must never use this note to answer anyone (it's still theirs to read). */
+  noShare?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -135,7 +145,7 @@ export interface QA {
   question: string;
   answer?: string;
   /** Where the answer came from: the brief, a Public or Protected fact, or the owner. */
-  source?: "brief" | "public" | "protected" | "owner" | "listing";
+  source?: "brief" | "public" | "protected" | "owner" | "listing" | "memory" | "private";
   status: "open" | "answered" | "pending" | "declined";
   /** The asker's judgement of the answer (requester's must-asks). */
   verdict?: "met" | "unmet" | "unclear";
@@ -175,7 +185,9 @@ export interface Engagement {
     /** Who confirmed: the owner on their device, or their standing mandate inside its limit. */
     confirmedBy?: Partial<Record<Side, "owner" | "mandate">>;
     /** The pending deal was a price an owner typed in the chat (saying no keeps the conversation open). */
-    chatOffer?: boolean };
+    chatOffer?: boolean;
+    /** Who made the last offer: the other side moves next. */
+    lastBy?: Side };
   events: Event[];
   /** When both owners confirmed (for the receipt). */
   agreedAt?: number;
@@ -276,6 +288,6 @@ export interface DelegatedLimit {
   createdAt?: number;
 }
 
-export interface Audit { id: string; owner: string; at: number; to: string; question: string; answer: string; tier: "public" | "protected"; rule: string | null }
+export interface Audit { id: string; owner: string; at: number; to: string; question: string; answer: string; tier: "public" | "protected" | "private"; rule: string | null }
 
 export type { DemandFilter, Need, Offer, Proposal };

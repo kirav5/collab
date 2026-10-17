@@ -61,7 +61,10 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
   const fresh = input.id && /^[a-z0-9]{6,40}$/.test(input.id) ? input.id : newId();
   if (input.tier === "private") {
     const fact: Fact = { id: prev?.id ?? fresh, owner: owner.uid, text, tier: "private", topics: [], offer: null,
-      ...(input.source === "chat" || prev?.source === "chat" ? { source: "chat" as const } : {}), createdAt: prev?.createdAt ?? now(), updatedAt: now() };
+      ...(input.source === "chat" || prev?.source === "chat" ? { source: "chat" as const } : {}),
+      // A remembered answer stays one (and keeps answering its question) while its words are unchanged.
+      ...(prev?.source === "answer" && prev.text === text ? { source: "answer" as const, question: prev.question, answer: prev.answer, about: prev.about, reuse: prev.reuse } : {}),
+      createdAt: prev?.createdAt ?? now(), updatedAt: now() };
     await db.set(FACTS, fact.id, fact);
     return fact;
   }

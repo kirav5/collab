@@ -215,7 +215,9 @@ function termBounds(attributes: Record<string, string>, d: Domain, side: "buyer"
  *  no listed category fits goes to "other" instead of being turned away. */
 // "haircuts and beard trims" → "Haircuts and Beard Trims"; a word that already has a capital (iPhone, MacBook) stays.
 const SMALL = new Set(["a", "an", "and", "at", "by", "for", "in", "of", "on", "or", "the", "to", "with"]);
-export const titleCase = (t: string) => t.replace(/\p{L}[\p{L}\p{N}'’-]*/gu, (w, at: number) => (/\p{Lu}/u.test(w) || (at > 0 && SMALL.has(w)) ? w : w[0].toUpperCase() + w.slice(1)));
+export const titleCase = (t: string) => brandCase(t.replace(/\p{L}[\p{L}\p{N}'’-]*/gu, (w, at: number) => (/\p{Lu}/u.test(w) || (at > 0 && SMALL.has(w)) ? w : w[0].toUpperCase() + w.slice(1))));
+/** Names written with a small first letter stay that way, however the model wrote them ("IPhone" → "iPhone"). */
+export const brandCase = (t: string) => t.replace(/\bI(Phone|Pad|Pod|Mac|Cloud)\b/gi, (_, w: string) => `i${w[0].toUpperCase()}${w.slice(1).toLowerCase()}`).replace(/\bE-?bay\b/gi, "eBay");
 
 export async function read(text: string, side: ReadSide, model: Model | null, now: number, here?: Place | null, category?: string | null, transaction = false): Promise<ReadResult> {
   const byModel: Record<string, boolean> = {};
@@ -283,12 +285,13 @@ export function build(f: Fields, text: string, d: Domain, side: ReadSide, now: n
     if (mandate.price.opening !== mandate.price.limit || Object.keys(mandate.terms).length) attributes.negotiable = "yes";
     if (plan.mode) attributes.mode = plan.mode;
     const offer: Offer = { id: newId(), category: d.id, title, details: text, price: { amount: f.price, currency: "INR", period },
-      place, attributes, askBuyer: usualAsks(d.id, "provider", !ownerPays, d).slice(0, 2), publishedAt: now, expiresAt: now + 30 * 86_400, status: "active",
+      place, attributes, askBuyer: [], publishedAt: now, expiresAt: now + 30 * 86_400, status: "active",
       ...(ownerPays ? { ownerPays: true } : {}) };
     return { kind: "offer", offer, mandate, plan };
   }
-  // The usual questions for this direction: someone looking for a job asks an employer's questions, not a hirer's.
-  const mustAsk = usualAsks(d.id, "requester", f.payer !== "other", d).slice(0, 2);
+  // Only the questions Gemini wrote for this request: no canned questions by category (a broad category's — "How many
+  // revisions are included?" — don't fit every request in it, an electrician's visit least of all).
+  const mustAsk: string[] = [];
   for (const q of f.questions.slice(0, 3)) if (!mustAsk.some(x => sameQuestion(x, q))) mustAsk.push(q);
   const radiusKm = isProperty ? (place.isCity ? 15 : 3) : d.family === "b2b" ? 40 : (place.isCity ? 25 : 8);
   // What the fields read (grounded: the topic's own keys, numbers written in the request) are filters too; the

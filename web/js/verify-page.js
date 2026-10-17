@@ -35,19 +35,6 @@ try {
     ${t.offerLetter ? (l => `<p class="small"><b>The offer letter, as accepted</b></p><p class="small">${esc(l.role)} · starts ${esc(l.start)}${l.mode ? ` · ${esc(l.mode)}` : ''}${l.probation ? ` · probation: ${esc(l.probation)}` : ''}${l.notice ? ` · notice period: ${esc(l.notice)}` : ''}${l.note ? ` · “${esc(l.note)}”` : ''}</p>`)(t.offerLetter) : ''}
     ${t.policies?.length ? `<p class="small"><b>${esc(owner)}'s terms, as they stated them</b></p>${t.policies.map(p => `<p class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</p>`).join('')}` : ''}
     <p class="small muted">Checked in this browser — agreement: ${ok(result.receipt)} · cart: ${ok(result.cart)} · payment: ${ok(result.payment)}${result.ap2 ? ` · AP2 checkout: ${ok(result.ap2.merchant)} · AP2 mandates: ${ok(result.ap2.mandates)}` : ''}${r.legacyAttestation ? ' · older agreement, attested on export' : ''}</p>`;
-  // Show the check failing: the same record with the price changed, verified the same way in this browser.
-  const tamper = document.querySelector('#tamper'), out = document.querySelector('#tamper-result');
-  if (result.receipt && tamper) {
-    tamper.hidden = false;
-    tamper.onclick = async () => {
-      if (out.dataset.on) { out.textContent = ''; delete out.dataset.on; tamper.textContent = 'Try changing the price'; return; }
-      const changed = structuredClone(r), lower = Math.max(1, Math.round(t.price * 0.8));
-      changed.terms.price = lower;
-      const v = await verifyReceiptBundle(changed, trusted);
-      out.textContent = v.receipt ? 'Unexpected: the changed receipt verified.' : `✗ With the price changed from ${amount(t.price)} to ${amount(lower)}, the signature no longer matches. The record is refused.`;
-      out.style.color = v.receipt ? '' : 'var(--danger)'; out.dataset.on = '1'; tamper.textContent = 'Show the real receipt';
-    };
-  }
   const a = document.querySelector('#download');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' })); a.download = `collab-${id}.json`; a.hidden = false;
 } catch (e) { document.querySelector('#status').textContent = e.message; }

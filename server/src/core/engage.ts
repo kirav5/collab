@@ -26,6 +26,8 @@ import { linesOf, totalOf } from "./pay.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, trackRecord } from "./deals.ts";
+import { matchSaved, savedAnswers } from "./memory.ts";
+import { hasContact } from "../market/text.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
@@ -335,9 +337,17 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
   }
+  // An answer the owner gave before and said their agent may give again: their exact words, no model.
+  if (!paused && owner) {
+    const mine = matchSaved(await savedAnswers(db, owner), q.question, true);
+    if (mine?.answer) return { text: mine.answer, src: "memory", review: false, byModel: false };
+  }
   const key = s === "provider" && e.offer.factId ? docId(`${e.offer.factId}:${savedKey(q.question)}`) : null;
   const allowed = owner ? await allowedFor(db, owner, asker, now()) : [];
-  let facts = asFacts(allowed);
+  // Everything else the owner told their agent answers too, by default (see ownContext).
+  // Only for someone on Collab: an outside agent that hasn't signed in is a stranger and gets Public facts only.
+  const own = owner && asker && !paused ? await ownContext(db, owner, new Set(allowed.map(a => a.fact.id))) : [];
+  let facts = [...asFacts(allowed), ...own.map(a => ({ label: a.fact.source === "answer" ? "What your owner answered before" : "What your owner told you", value: a.fact.text }))];
   if (s === "provider" && e.offer.factId) {
     const entry = allowed.find(a => a.fact.id === e.offer.factId);
     // A cached listing answer is reused only while the offering is still Public (and the owner isn't paused).
@@ -364,14 +374,44 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
   const roles = rolesFor(e.offer.category);
   const d = await decide(model, AnswerTask, { question: q.question, facts, side: s === sellerOf(e) ? roles.payee : roles.payer });
   if (d.output.action !== "answer") return null;
-  const from = source(allowed, d.output.evidence);
-  if (key && !from?.via && (!from || from.fact.id === e.offer.factId))
+  const from = source([...allowed, ...own], d.output.evidence), mine = !!from && own.includes(from);
+  // The owner's limit is never said, whatever the notes hold: an answer naming it goes to the owner instead.
+  if (await namesLimit(db, e, s, d.output.text)) return null;
+  if (key && !mine && !from?.via && (!from || from.fact.id === e.offer.factId))
     await db.set(ANSWERS, key, { factId: e.offer.factId, owner, question: q.question, answer: d.output.text, evidence: d.output.evidence, at: now() });
   const text = from?.via ? shapeAnswer(d.output.text, from.via.shape) : d.output.text;
-  return { text, src: from ? (from.via ? "protected" : "public") : s === "requester" ? "brief" : "listing", review: from?.via?.approval === "review", byModel: d.byModel };
+  return { text, src: mine ? "private" : from ? (from.via ? "protected" : "public") : s === "requester" ? "brief" : "listing", review: from?.via?.approval === "review", byModel: d.byModel };
 }
 
-async function audit(db: Docs, owner: string | null, to: string, q: string, a: string, tier: "public" | "protected") {
+// A note that mentions money — a budget, a floor, what something cost them, a supplier's rate — is never used to
+// answer: prices others see come from listings and offers, never from private notes.
+const MONEY = /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|limit|lowest|floor|at most|max(?:imum)?|min(?:imum)?|go below|go above|won'?t (?:go|pay|take)|can'?t (?:go|pay)|afford|kam se kam|best price|cost(?:s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b/i;
+
+/**
+ * What else the owner has told their agent — private notes, answers they gave before, things remembered from chat,
+ * Protected facts no rule names — answers other agents' questions by default, so the owner isn't asked the same thing
+ * by every new person. Never a note the owner marked "never use", one with a phone number, e-mail or address, or one
+ * that states a price limit.
+ */
+export async function ownContext(db: Docs, owner: string, have: Set<string>): Promise<Allowed[]> {
+  const all = (await db.find(FACTS, [["owner", "==", owner]], 500)) as Fact[];
+  return all.filter(f => !have.has(f.id) && f.tier !== "public" && !f.noShare && !hasContact(f.text) && !MONEY.test(f.text))
+    .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 40).map(fact => ({ fact, via: null }));
+}
+
+/** Whether an answer names this side's private limit for this conversation (any way it's written). */
+export async function namesLimit(db: Docs, e: Engagement, s: Side, text: string): Promise<boolean> {
+  const key = s === "provider" ? (e.offer.factId ? `fact:${e.offer.factId}` : null) : e.briefId ? `brief:${e.briefId}` : null;
+  const l = key ? ((await db.get(LIMITS, key)) as { mandate?: { price?: { limit?: number } } } | null) : null;
+  const limit = l?.mandate?.price?.limit;
+  if (!limit) return false;
+  // Amounts at the scale they're written ("3,000", "3k", "₹2.5 lakh") — "30 days" is thirty, not ₹30,000.
+  const SCALE: Record<string, number> = { k: 1e3, lakh: 1e5, lakhs: 1e5, lac: 1e5, l: 1e5, crore: 1e7, cr: 1e7 };
+  const nums = [...text.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(k|lakhs?|lac|l|crore|cr)?\b/gi)].map(m => Number(m[1].replace(/,/g, "")) * (SCALE[(m[2] ?? "").toLowerCase()] ?? 1));
+  return nums.some(n => Math.abs(n - limit) < 0.5);
+}
+
+async function audit(db: Docs, owner: string | null, to: string, q: string, a: string, tier: Audit["tier"]) {
   if (!owner) return;
   const id = newId();
   await db.set(AUDIT, id, { id, owner, at: now(), to, question: q.slice(0, 300), answer: a.slice(0, 600), tier, rule: null } satisfies Audit);
@@ -391,7 +431,8 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
       q.status = "answered";
       (out.answers ??= []).push({ id: q.id, question: q.question, answer: q.answer });
       say(e, agentOf(s), q.answer, by(a.byModel));
-      if (a.src === "public" || a.src === "protected") await audit(db, uidOf(e, s), toName, q.question, q.answer, a.src);
+      // Everything shared from the owner's own context is recorded, so they can see what their agent said for them.
+      if (a.src === "public" || a.src === "protected" || a.src === "memory" || a.src === "private") await audit(db, uidOf(e, s), toName, q.question, q.answer, a.src === "public" ? "public" : a.src === "protected" ? "protected" : "private");
     } else if (hasOwner(e, s)) {
       q.status = "pending";
       (out.pending ??= []).push(q.question);
@@ -436,6 +477,7 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
   if (mv.action === "propose") {
     mv.proposal = sized(e, mv.proposal);
     (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(mv.proposal);
+    e.negotiation.lastBy = s;
     out.proposal = mv.proposal;
     out.note = mv.message;
     e.phase = "negotiating";
@@ -482,10 +524,14 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
   if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", listPrice: e.offer.price ?? undefined, hint: await hint() });
 }
 
-const myTurnToMove = (e: Engagement, s: Side) => {
+export const myTurnToMove = (e: Engagement, s: Side) => {
   const n = e.negotiation, mine = s === "provider" ? n.provider.length : n.requester.length, theirs = s === "provider" ? n.requester.length : n.provider.length;
-  // The provider opens with its quote once the questions are settled; then turns alternate.
-  return s === "provider" ? mine === theirs : theirs > mine;
+  // The provider opens with its quote once the questions are settled; then turns alternate: whoever made the last
+  // offer waits for the other. A buyer can make more than one offer in a row (typed offers, then their agent's), so
+  // counting offers isn't enough — that once left a conversation where neither side moved. Conversations from before
+  // `lastBy` was kept fall back to the counts.
+  if (n.lastBy) return n.lastBy !== s;
+  return s === "provider" ? mine <= theirs : theirs > mine;
 };
 
 const pendingFor = (e: Engagement, s: Side) => !!e.waiting[s];
@@ -574,6 +620,8 @@ export async function providerTurn(db: Docs, model: Model | null, e: Engagement,
     const fact = (await db.get(FACTS, e.offer.factId)) as Fact | null;
     // The usual questions for this direction: an employer screening a candidate, not a candidate's own questions.
     const providerPaid = sellerOf(e) === "provider", v = voiceFor(e.offer.category, providerPaid, e.provider.name);
+    // Questions people in this kind of deal often ask, as context only: Gemini asks one only if it fits this listing
+    // and this request (an employer screening a candidate — not "how many revisions?" to an electrician).
     const usual = usualAsks(e.offer.category, "provider", providerPaid, domainOf(e.offer.category ?? ""));
     const g = await decide(model, GatherTask, { offering: fact?.text ?? e.offer.title, brief: e.brief, answered: e.qa.filter(q => q.answer).map(q => q.question), usual, role: v.me, them: v.them });
     // With bookable time slots the buyer picks a time when booking — asking "what time suits you?" only stalls the
@@ -714,6 +762,7 @@ function applyTheirs(e: Engagement, me: Side, t: Turn) {
   if (t.proposal && !t.proposal.items?.length && t.proposal.terms?.quantity === undefined) t.proposal = sized(e, t.proposal);
   if (t.proposal && !(them === "provider" ? e.negotiation.provider : e.negotiation.requester).some(p => p.id === t.proposal!.id)) {
     (them === "provider" ? e.negotiation.provider : e.negotiation.requester).push(t.proposal);
+    e.negotiation.lastBy = them;
     e.phase = "negotiating";
   }
   if (t.accept) {
@@ -908,6 +957,7 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
     else { p.price = unit; p.items = [{ id: "item_1", title: e.offer.title, quantity: units - 1, unitPrice: unit }, { id: "item_2", title: e.offer.title, quantity: 1, unitPrice: total - unit * (units - 1) }]; }
   }
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
+  e.negotiation.lastBy = s;
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
   // An offer is the offerer's confirmation — except in hiring, where a salary named is only agreed (the employer's
   // letter and the candidate's decision on it settle it).
