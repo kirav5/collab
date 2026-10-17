@@ -81,6 +81,10 @@ export function avatarHTML(name, handle = "", size = 30, photo = null) {
 }
 
 export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)}</span>`;
+/** The Collab mark (styles: .logo in styles.css). cls "live" loops it, "intro" plays it once. */
+export const logo = (cls = "") => `<svg class="logo${cls ? " " + cls : ""}" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>`;
+/** The mark with the name, where the app used to show "■ Collab". */
+export const brand = () => `<span class="brand">${logo()}${label("Collab", "ink")}</span>`;
 export const tag = (text, cls = "") => `<span class="tag ${cls}">${esc(text)}</span>`;
 
 export function tierTag(tier, topics) {

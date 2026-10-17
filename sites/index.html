@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Collab</title>
 <meta name="description" content="Collab gives every person and small business an agent that talks to other people's agents, shares only what they permit, and gets things done.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0a0a'/%3E%3Cpath d='M52 13H13v38h39' fill='none' stroke='%23ff3ea5' stroke-width='11'/%3E%3Crect x='34' y='26' width='12' height='12' fill='%23f4f4f4'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230a0a0a'/%3E%3Cg fill='none' stroke-width='8'%3E%3Cpath d='M42 12H12V40H42' stroke='%23ff3ea5'/%3E%3Cpath d='M22 24H52V52H22' stroke='%23f4f4f4'/%3E%3C/g%3E%3C/svg%3E">
 <script>
   // A remembered light/dark choice; without one the page follows the device.
   try { const t = localStorage.getItem('collab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
@@ -85,7 +85,10 @@ button { font: inherit; color: inherit; }
 nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--hairline); }
 nav .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; text-decoration: none; font-size: 17px; }
-.mark { width: 24px; height: 24px; flex: none; }
+.brand .logo { width: 24px; height: 24px; }
+.brand:hover .logo.intro .you { animation: logo-you 4.8s cubic-bezier(.2,.8,.2,1) infinite; }
+.brand:hover .logo.intro .them { animation: logo-them 4.8s cubic-bezier(.2,.8,.2,1) infinite; }
+.brand:hover .logo.intro .offer { animation: logo-offer 4.8s ease-in-out infinite; }
 nav .links { display: flex; gap: 22px; margin-left: auto; }
 nav .links a { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); text-decoration: none; }
 nav .links a:hover { color: var(--text); }
@@ -112,9 +115,7 @@ nav .btn { padding: 8px 12px; font-size: 11px; }
 .orbit .node.lit { color: var(--talk); border-color: var(--talk); box-shadow: 0 0 0 4px color-mix(in srgb, var(--talk) 18%, transparent), 0 0 24px color-mix(in srgb, var(--talk) 35%, transparent); }
 .orbit .node.lit.deal { color: var(--fresh); border-color: var(--fresh); box-shadow: 0 0 0 4px color-mix(in srgb, var(--fresh) 18%, transparent); }
 .orbit .core { position: absolute; left: 50%; top: 50%; width: 88px; height: 88px; margin: -44px 0 0 -44px; color: var(--text); }
-.orbit .core svg { width: 100%; height: 100%; display: block; }
-.orbit .core .agent { transform-box: fill-box; animation: nudge 3s ease-in-out infinite; }
-@keyframes nudge { 50% { transform: translateX(6px); } }
+.orbit .core .logo { width: 100%; height: 100%; display: block; vertical-align: 0; }
 .orbit .beam { position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; background: var(--accent); box-shadow: 0 0 12px var(--accent); pointer-events: none; }
 .orbit .beam.back { background: var(--talk); box-shadow: 0 0 12px var(--talk); }
 .orbit .chip { position: absolute; font-family: var(--mono); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; padding: 4px 7px; border-radius: 2px; background: var(--inverse); color: var(--on-inverse); white-space: nowrap; transform: translate(-50%, -150%); pointer-events: none; animation: pop .3s both; }
@@ -400,6 +401,27 @@ footer .end { margin-left: auto; }
 
 .reveal { opacity: 0; transform: translateY(14px); transition: opacity .7s ease, transform .7s ease; }
 .reveal.in { opacity: 1; transform: none; }
+/* The Collab mark: two square hooks holding each other across a gap. Yours is brand pink in both themes; theirs is
+   drawn in the text colour, so it is ink on light and white on dark. The small square is an offer crossing the gap.
+   .live loops it (4.8 s), .intro plays it once and stays engaged. */
+:root { --brand: #ff3ea5; }
+.logo { display: inline-block; width: 18px; height: 18px; flex: none; overflow: visible; vertical-align: -3px; }
+.logo .you { stroke: var(--brand); }
+.logo .them { stroke: currentColor; }
+.logo .offer { fill: var(--peri); opacity: 0; }
+.logo.live .you { animation: logo-you 4.8s cubic-bezier(.2,.8,.2,1) infinite; }
+.logo.live .them { animation: logo-them 4.8s cubic-bezier(.2,.8,.2,1) infinite; }
+.logo.live .offer { animation: logo-offer 4.8s ease-in-out infinite; }
+.logo.intro .you { animation: logo-you-in 1.6s cubic-bezier(.2,.8,.2,1) both; }
+.logo.intro .them { animation: logo-them-in 1.6s cubic-bezier(.2,.8,.2,1) both; }
+.logo.intro .offer { animation: logo-offer-in 1.6s ease-in-out both; }
+@keyframes logo-you { 0% { transform: translate(-12px,-12px); opacity: 0 } 12% { opacity: 1 } 32%, 84% { transform: none; opacity: 1 } 100% { transform: translate(-12px,-12px); opacity: 0 } }
+@keyframes logo-them { 0% { transform: translate(12px,12px); opacity: 0 } 12% { opacity: 1 } 32%, 84% { transform: none; opacity: 1 } 100% { transform: translate(12px,12px); opacity: 0 } }
+@keyframes logo-offer { 0%, 38% { transform: none; opacity: 0 } 42% { opacity: 1 } 62% { transform: translateX(24px); opacity: 1 } 68%, 100% { transform: translateX(24px); opacity: 0 } }
+@keyframes logo-you-in { from { transform: translate(-12px,-12px); opacity: 0 } 45%, to { transform: none; opacity: 1 } }
+@keyframes logo-them-in { from { transform: translate(12px,12px); opacity: 0 } 45%, to { transform: none; opacity: 1 } }
+@keyframes logo-offer-in { 0%, 50% { transform: none; opacity: 0 } 58% { opacity: 1 } 88% { transform: translateX(24px); opacity: 1 } to { transform: translateX(24px); opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { html:root .logo .you, html:root .logo .them, html:root .logo .offer { animation: none !important; } html:root .logo .offer { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .reveal { opacity: 1; transform: none; }
@@ -442,7 +464,7 @@ footer .end { margin-left: auto; }
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="#"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M52 13H13v38h39" fill="none" stroke="var(--accent)" stroke-width="11"/><rect x="34" y="26" width="12" height="12" fill="currentColor"/></svg>Collab</a>
+    <a class="brand" href="#"><svg class="logo intro" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>Collab</a>
     <div class="links">
       <a href="#story">How it works</a>
       <a href="#live">Live demo</a>
@@ -470,7 +492,7 @@ footer .end { margin-left: auto; }
       <div class="orbit" id="orbit" aria-hidden="true">
         <svg class="rings" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="var(--hairline)" stroke-width=".3" stroke-dasharray="1 1.5"/><circle cx="50" cy="50" r="24" fill="none" stroke="var(--hairline)" stroke-width=".3"/></svg>
         <div class="spin" id="spin"></div>
-        <div class="core"><svg viewBox="0 0 64 64"><path d="M52 13H13v38h39" fill="none" stroke="var(--accent)" stroke-width="11"/><rect class="agent" x="34" y="26" width="12" height="12" fill="currentColor"/></svg></div>
+        <div class="core"><svg class="logo live" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg></div>
       </div>
     </div>
   </div>
@@ -723,7 +745,7 @@ footer .end { margin-left: auto; }
 
 <footer>
   <div class="wrap">
-    <a class="brand" href="#"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M52 13H13v38h39" fill="none" stroke="var(--accent)" stroke-width="11"/><rect x="34" y="26" width="12" height="12" fill="currentColor"/></svg>Collab</a>
+    <a class="brand" href="#"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>Collab</a>
     <span>Payments in test mode. Examples on this page are illustrative.</span>
     <span class="end"><a href="https://collab-55.web.app">collab-55.web.app</a></span>
   </div>
