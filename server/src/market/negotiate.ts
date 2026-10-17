@@ -74,8 +74,10 @@ function atLeastAsGood(p: Proposal, q: Proposal, ctx: Context): boolean {
 
 /** "₹2,350/bag · Delivery: 4 days" — only the proposal's own numbers. */
 export function describe(p: Proposal, ctx: Pick<Context, "catalog" | "unit">): string {
-  const parts = [moneyText({ amount: p.price, currency: "INR", period: ctx.unit })];
-  for (const [k, v] of Object.entries(p.terms).sort()) {
+  // A proposal for several units says how many and what they come to: "5 × ₹420 (₹2,100 in all)".
+  const n = Number.isInteger(p.terms.quantity) && p.terms.quantity > 1 ? p.terms.quantity : 1;
+  const parts = [n > 1 ? `${n} × ${moneyText({ amount: p.price, currency: "INR" })} (${moneyText({ amount: p.price * n, currency: "INR" })} in all)` : moneyText({ amount: p.price, currency: "INR", period: ctx.unit })];
+  for (const [k, v] of Object.entries(p.terms).filter(([k]) => k !== "quantity").sort()) {
     const unit = ctx.catalog.termUnit(k);
     parts.push(`${ctx.catalog.termLabel(k)}: ${Number.isInteger(v) ? v : v.toFixed(1)}${unit ? ` ${unit}` : ""}`);
   }

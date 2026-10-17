@@ -80,3 +80,17 @@ test("prices are never read as counts", async () => {
   for (const t of ["I'll sell the travel mug for $20", "I'll take it for 500", "€30 final", "I'll pay 20 dollars", "deal at 450"]) assert.equal(offeredQuantity(t), null, t);
   assert.equal(offeredQuantity("2 for 800"), 2);
 });
+
+test("a bare amount or a stated budget is an offer; counts need what they count; each or in all is read from the words, else the price on the table", async () => {
+  const { amountIsTotal, explicitOffer, offeredQuantity } = await import("../src/core/direct.ts");
+  for (const t of ["200rs", "₹200", "Rs 200/-", "200 rupees", "my budget is ₹200", "I can pay up to 200", "40 for ₹7,200", "2 bottles @ ₹400", "₹800 for 2"]) assert.equal(explicitOffer(t), true, t);
+  for (const t of ["200", "Is it ₹400?", "Why ₹400?", "Do you have 40 lamps?"]) assert.equal(explicitOffer(t), false, t);
+  assert.equal(offeredQuantity("I'll take 1 lamp for ₹400"), 1, "one, said with what it is");
+  for (const t of ["the 1 I saw", "1 more lamp", "only 1 left", "₹400"]) assert.equal(offeredQuantity(t), null, t);
+  assert.equal(offeredQuantity("Do you have 40 lamps?"), 40);
+  assert.equal(amountIsTotal("I can do ₹420", null, 420, 5, 450), false, "near the unit price: each");
+  assert.equal(amountIsTotal("2 for ₹800", null, 800, 2, 450), true, "near twice the unit price: in all");
+  assert.equal(amountIsTotal("₹420 each", null, 420, 5, 2000), false, "the words win");
+  assert.equal(amountIsTotal("₹2,000 in all", null, 2000, 5, 2000), true, "the words win");
+  assert.equal(amountIsTotal("I'll pay ₹5000", null, 5000, 10, null), true, "nothing to compare: a total");
+});

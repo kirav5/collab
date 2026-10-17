@@ -368,6 +368,148 @@ test("a seller's own terms are shown and sealed into the receipt; instant bookin
   assert.deepEqual((await as("t-b", `/api/engagements/${e.id}/receipt`)).terms.policies, policies);
 });
 
+test("lamps: a counter keeps the quantity, the seller's agent negotiates a low offer instead of asking yes or no, '200rs' is an offer, and stock is checked up front", async () => {
+  await as("lm-s", "/api/me", { handle: "lm-shop", name: "Lamp Shop", areaName: "Indiranagar" });
+  await as("lm-b", "/api/me", { handle: "lm-buyer", name: "Lamp Buyer", areaName: "Indiranagar" });
+  const listing = async (stock: number, autonomy: string | null, text = "Brass desk lamps for sale in Indiranagar, warm LED, ₹450 each") => {
+    const f = await as("lm-s", "/api/facts", { tier: "public", text });
+    await as("lm-s", "/api/resources", { factId: f.id, type: "quantity", onHand: stock });
+    if (autonomy) await as("lm-s", `/api/facts/${f.id}/limit`, { mandate: { price: { opening: 450, limit: 380 } }, autonomy, days: 7 });
+    return f;
+  };
+  const items = async (uid: string, id: string) => ((await as(uid, "/api/inbox")) as any[]).filter(i => i.engagementId === id);
+  // 5 at ₹300 from the card: the seller's agent counters (5 × something under ₹450), the seller isn't asked yes or no.
+  let f = await listing(15, "negotiate");
+  let e = await as("lm-b", "/api/people/lm-shop/order", { offerFactId: f.id, quantity: 5, price: 300 });
+  assert.equal(e.negotiation.deal.terms.quantity, 5);
+  assert.ok(e.negotiation.deal.price < 450 && e.negotiation.deal.price >= 380, `countered at ₹${e.negotiation.deal.price}`);
+  assert.equal(e.negotiation.dealBy, "provider");
+  assert.deepEqual((await items("lm-s", e.id)).map(i => i.kind), [], "the seller isn't asked about ₹300");
+  const counter = (await items("lm-b", e.id)).find(i => i.kind === "move");
+  assert.equal(counter.counter.quantity, 5); assert.equal(counter.counter.total, counter.counter.price * 5);
+  // The buyer takes it; the seller (who confirms deals) confirms; the cart is for all five.
+  e = await as("lm-b", `/api/engagements/${e.id}/ask`, { text: `I'll buy it for ₹${counter.counter.price}` });
+  assert.equal(e.negotiation.confirmed.requester, true, "taking the counter is a yes");
+  await as("lm-s", `/api/inbox/${(await items("lm-s", e.id)).find(i => i.kind === "confirm").id}`, { confirm: true });
+  e = await as("lm-b", `/api/engagements/${e.id}`);
+  assert.equal(e.phase, "agreed"); assert.equal(e.payment.cart.total.value, counter.counter.price * 5); assert.equal(e.reservation.qty, 5);
+  // The seller counters in chat without saying how many: still five.
+  e = await as("lm-b", "/api/people/lm-shop/order", { offerFactId: (f = await listing(15, null)).id, quantity: 5, price: 300 });
+  e = await as("lm-s", `/api/engagements/${e.id}/ask`, { text: "I can do ₹420" });
+  assert.equal(e.negotiation.deal.terms.quantity, 5); assert.equal(e.negotiation.deal.price, 420, "₹420 each, not ₹420 for five");
+  // A seller whose agent may close: an offer inside the floor is confirmed at once, nobody asked.
+  e = await as("lm-b", "/api/people/lm-shop/order", { offerFactId: (await listing(15, "close")).id, quantity: 3, price: 400 });
+  assert.equal(e.phase, "agreed"); assert.equal(e.payment.cart.total.value, 1200);
+  // Asked a question, the buyer answers "200rs": that's an offer the seller's agent counters, not a question for the seller.
+  f = await listing(15, "negotiate");
+  e = await as("lm-b", "/api/people/lm-shop/ask", { text: "Is it available?", offerFactId: f.id });
+  e = await as("lm-b", `/api/engagements/${e.id}/run`, {});
+  e = await as("lm-b", `/api/engagements/${e.id}/ask`, { text: "200rs" });
+  e = await as("lm-b", `/api/engagements/${e.id}`);
+  assert.equal(e.negotiation.dealBy, "provider", "countered by the seller's agent");
+  assert.ok(!(await items("lm-s", e.id)).some(i => i.kind === "answer" && /200/.test(i.question ?? "")), "never sent to the seller as a question");
+  // 200 lamps when 15 are there: refused at once, with the offer that fits.
+  f = await listing(15, null);
+  e = await as("lm-b", "/api/people/lm-shop/ask", { text: "Do you have them?", offerFactId: f.id });
+  const r = await raw("lm-b", `/api/engagements/${e.id}/ask`, { text: "I'll take 200 lamps at ₹400 each" });
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.available, 15); assert.equal(body.suggest, "I'll take 15 at ₹400 each");
+  e = await as("lm-b", `/api/engagements/${e.id}/ask`, { text: body.suggest });
+  assert.equal(e.negotiation.deal.terms.quantity, 15); assert.equal(e.negotiation.deal.price, 400);
+  // Both agents negotiate when the buyer says "up to" with the offer: no one is asked anything until the deal (the
+  // seller confirms deals themselves; the buyer let their agent agree inside its limit).
+  f = await listing(15, "negotiate");
+  e = await as("lm-b", "/api/people/lm-shop/order", { offerFactId: f.id, quantity: 4, price: 300, max: 420 });
+  assert.equal(e.phase, "deal"); assert.equal(e.negotiation.deal.terms.quantity, 4);
+  assert.ok(e.negotiation.deal.price >= 380 && e.negotiation.deal.price <= 420, `agents met at ₹${e.negotiation.deal.price}`);
+  assert.equal(e.negotiation.confirmed.requester, true, "the buyer's agent agreed inside the limit");
+  assert.deepEqual((await items("lm-b", e.id)).map(i => i.kind), [], "the buyer wasn't asked");
+  assert.deepEqual((await items("lm-s", e.id)).map(i => i.kind), ["confirm"], "the seller gives the final yes they kept");
+  assert.ok(e.events.filter((x: any) => x.who === "requester_agent").length >= 1, "the buyer's agent made moves");
+  // A counter handed to the agent afterwards: "up to ₹420", and the agents finish it.
+  f = await listing(15, "close");
+  e = await as("lm-b", "/api/people/lm-shop/order", { offerFactId: f.id, quantity: 2, price: 250 });
+  assert.ok((await items("lm-b", e.id)).some(i => i.kind === "move" && i.counter), "countered");
+  e = await as("lm-b", `/api/engagements/${e.id}/delegate`, { limit: 420 });
+  assert.equal(e.phase, "agreed", "both agents may close: done without anyone else asked");
+  assert.equal(e.payment.cart.total.value, e.negotiation.deal.price * 2);
+  assert.deepEqual([...(await items("lm-b", e.id)), ...(await items("lm-s", e.id))].map(i => i.kind), []);
+  // The very first message can be the offer: 200 is refused before a conversation opens; 3 at ₹400 is an offer.
+  f = await listing(15, "negotiate");
+  const first = await raw("lm-b", "/api/people/lm-shop/ask", { text: "I'll take 200 lamps at ₹400 each", offerFactId: f.id });
+  assert.equal(first.status, 409); assert.equal((await first.json()).suggest, "I'll take 15 at ₹400 each");
+  e = await as("lm-b", "/api/people/lm-shop/ask", { text: "I'll take 3 lamps at ₹400 each", offerFactId: f.id });
+  assert.equal(e.negotiation.deal.terms.quantity, 3); assert.equal(e.negotiation.deal.price, 400);
+  assert.deepEqual(e.qa, [], "an offer, not a question for the seller to answer");
+  assert.equal((await items("lm-s", e.id)).filter(i => i.kind === "confirm").length, 1, "inside the floor: the seller (who confirms deals) is asked once");
+  // A request for 200 at a shop with 15: the conversation is for 15, and the buyer's closing agent leaves it to them.
+  f = await listing(15, "close", "Ceramic table lamps for sale in Indiranagar, ₹450 each");
+  const d = await as("lm-b", "/api/briefs/draft", { text: "Need 200 ceramic table lamps in Indiranagar, up to ₹460 each" });
+  const s = await as("lm-b", "/api/briefs", { need: d.draft.need, shared: d.draft.shared, delegate: { mandate: { price: { opening: 400, limit: 460 } }, autonomy: "close", days: 7 } });
+  let [x] = await as("lm-b", `/api/briefs/${s.brief.id}/engage`, { providers: [{ factId: f.id }] });
+  assert.equal(x.quantity, 15); assert.equal(x.wanted, 200);
+  for (let k = 0; k < 6 && x.phase !== "agreed"; k++) {
+    for (const i of await items("lm-b", x.id)) await as("lm-b", `/api/inbox/${i.id}`, i.kind === "confirm" ? { confirm: true } : { text: "Tomorrow" });
+    for (const i of await items("lm-s", x.id)) await as("lm-s", `/api/inbox/${i.id}`, i.kind === "confirm" ? { confirm: true } : { text: "Yes" });
+    x = await as("lm-b", `/api/engagements/${x.id}/run`, {});
+  }
+  x = await as("lm-b", `/api/engagements/${x.id}`);
+  assert.equal(x.phase, "agreed"); assert.equal(x.negotiation.deal.terms.quantity, 15);
+  assert.equal(x.payment.cart.total.value, x.negotiation.deal.price * 15);
+  assert.equal(x.negotiation.confirmedBy.requester, "owner", "fewer than asked for: the buyer decided, not their agent");
+});
+
+test("a vague offering: the card asks for the basics, and what buyers would ask comes with tap-to-answer options", async () => {
+  await as("vg-s", "/api/me", { handle: "vague-seller", name: "Vague Seller", areaName: "Koramangala" });
+  const d = await as("vg-s", "/api/offers/draft", { text: "I want to sell my old iphone" });
+  assert.equal(d.offer, null, "no price yet: not a listing");
+  assert.equal(d.basics.category, "goods");
+  assert.match(d.basics.area, /Koramangala/, "the seller's own area is offered");
+  assert.ok(d.missing.length >= 2 && d.missing.every((m: any) => m.label && m.ask.endsWith("?")));
+  assert.ok(!d.missing.some((m: any) => /price|phone|address/i.test(m.ask)), "price has its own field; contact details are never asked");
+  assert.ok(d.missing.some((m: any) => m.options.length >= 2), "tap-to-answer options");
+  // A floor in a vague offering isn't published as a plain note either.
+  const plainNote = await as("vg-s", "/api/facts", { tier: "public", text: "Old sofa, lowest 5000" });
+  assert.ok(!/5000/.test(plainNote.text), "a strong floor word is enough, with or without a price");
+  // With the basics the card adds, it reads as a listing; the answers are part of it.
+  const full = await as("vg-s", "/api/offers/draft", { text: "I want to sell my old iphone. ₹32,000. In Koramangala. Condition: Like new." });
+  assert.equal(full.offer.price.amount, 32000);
+  assert.match(full.offer.place.name, /Koramangala/);
+  // A plain fact made public from the notes stays a plain note — it isn't forced into a listing.
+  const plain = await as("vg-s", "/api/offers/draft", { text: "I have lived in Koramangala for ten years", note: true });
+  assert.equal(plain.offer, null);
+  assert.equal(plain.basics, undefined);
+});
+
+test("a floor written in a note never reaches public text, however it's published; a note made public keeps its id", async () => {
+  const f = await as("vg-s", "/api/facts", { tier: "public", text: "Selling my iPhone 13 in Koramangala for ₹32,000, lowest 29,000." });
+  assert.ok(!/29/.test(f.text), f.text);
+  assert.equal(f.floorKeptPrivate, true);
+  const g = await as("vg-s", "/api/facts", { tier: "public", text: "Guitar lessons in Jayanagar, ₹800 an hour, minimum 2 hours." });
+  assert.match(g.text, /minimum 2 hours/, "small numbers aren't floors");
+  assert.equal(g.floorKeptPrivate, undefined);
+  const p = await as("vg-s", "/api/facts", { tier: "private", text: "Old sofa for sale in Koramangala, ₹6,000, lowest 5,000" });
+  assert.match(p.text, /lowest 5,000/, "a private note keeps every word");
+  const pub = await as("vg-s", "/api/facts", { id: p.id, tier: "public", text: p.text });
+  assert.equal(pub.id, p.id, "made public in place, not copied");
+  assert.ok(!/5,?000/.test(pub.text), pub.text);
+});
+
+test("a service seller states weekly hours once: buyers see free times two weeks ahead, and the agent names the hours", async () => {
+  await as("hr-s", "/api/me", { handle: "hours-barber", name: "Hours Barber", areaName: "Indiranagar" });
+  const f = await as("hr-s", "/api/facts", { tier: "public", text: "Guitar lessons in Indiranagar, ₹800 an hour" });
+  assert.ok(f.offer, "read as an offering");
+  await assert.rejects(as("hr-s", "/api/resources", { factId: f.id, type: "slots", hours: { days: [], from: "10:00", to: "20:00", minutes: 40 } }), /at least one day/);
+  const r = await as("hr-s", "/api/resources", { factId: f.id, type: "slots", hours: { days: [1, 2, 3, 4, 5, 6], from: "10:00", to: "20:00", minutes: 40 }, timezone: "Asia/Kolkata" });
+  assert.ok(r.slots.length >= 150 && r.hours.minutes === 40);
+  await assert.rejects(as("someone", `/api/resources/${r.id}/hours`, { hours: { days: [6], from: "09:00", to: "12:00", minutes: 60 } }), /404|No such/);
+  const r2 = await as("hr-s", `/api/resources/${r.id}/hours`, { hours: { days: [6], from: "09:00", to: "12:00", minutes: 60 } });
+  assert.ok(r2.slots.length <= 6 && r2.slots.every((s: any) => s.end - s.start === 3600));
+  const shop = (await as("buyer-x", "/api/people/hours-barber")).shop;
+  assert.ok(shop[0].slots.length >= 1, "the card offers the free times");
+});
+
 test("a seller's offering draft lists what buyers usually ask; terms are suggested for the seller to accept, never saved by themselves", async () => {
   await as("in-s", "/api/me", { handle: "intake-salon", name: "Intake Salon", areaName: "Indiranagar" });
   const draft = await as("in-s", "/api/offers/draft", { text: "Men's haircut for sale in Indiranagar, ₹400 each" });
@@ -376,4 +518,29 @@ test("a seller's offering draft lists what buyers usually ask; terms are suggest
   assert.ok(sug.terms.length >= 2 && sug.terms.every((t: any) => t.label && t.text));
   const facts = await as("in-s", "/api/facts");
   assert.ok(!facts.some((f: any) => f.offer?.policies?.length), "suggestions aren't saved until the seller saves them");
+});
+
+test("a seller's record grows from signed receipts: public, verifiable, on their card and agent card — no buyers, no prices", async () => {
+  await as("tr-s", "/api/me", { handle: "tr-shop", name: "Record Shop", areaName: "Indiranagar" });
+  await as("tr-b", "/api/me", { handle: "tr-buyer", name: "Record Buyer", areaName: "Indiranagar" });
+  let rec = await (await fetch(`${B}/public/people/tr-shop/record`)).json();
+  assert.equal(rec.sales, 0);
+  const f = await as("tr-s", "/api/facts", { tier: "public", text: "Steel water bottles for sale in Indiranagar, ₹450 each" });
+  await as("tr-s", "/api/resources", { factId: f.id, type: "quantity", onHand: 10 });
+  let e = await as("tr-b", "/api/people/tr-shop/order", { offerFactId: f.id, quantity: 3 });
+  await as("tr-s", `/api/inbox/${((await as("tr-s", "/api/inbox")) as any[]).find(i => i.engagementId === e.id && i.kind === "confirm").id}`, { confirm: true });
+  await as("tr-b", `/api/engagements/${e.id}/paid-outside`, {});
+  const pass = await as("tr-b", `/api/engagements/${e.id}/pickup`);
+  await as("tr-s", `/api/pickup/${e.id}/collect`, { code: pass.path.split(".html#")[1].split(".")[1] });
+  rec = await (await fetch(`${B}/public/people/tr-shop/record`)).json();
+  assert.equal(rec.sales, 1); assert.equal(rec.verified, 1); assert.equal(rec.recent[0].quantity, 3); assert.equal(rec.handedOver, 1, "collected with the pass");
+  assert.match(rec.recent[0].receipt.hash, /^[0-9a-f]{64}$/); assert.ok(rec.recent[0].receipt.signature);
+  const receipt = await as("tr-b", `/api/engagements/${e.id}/receipt`);
+  assert.equal(rec.recent[0].receipt.hash, receipt.hash, "the fingerprint is the receipt's own hash");
+  // (Fingerprints and signatures are random-looking: checked apart, so a "450" inside a hash can't fail this.)
+  const text = JSON.stringify({ ...rec, recent: rec.recent.map(({ receipt: _r, ...x }: any) => x) });
+  assert.ok(!/Record Buyer|tr-buyer|450|1350/.test(text), "no buyer and no price in public");
+  assert.equal((await as("tr-b", "/api/people/tr-shop")).record.sales, 1, "on their card");
+  const card = await (await fetch(`${B}/a2a/tr-shop/.well-known/agent-card.json`)).json();
+  assert.match(card.description, /1 verified sale/, "and on their agent card");
 });

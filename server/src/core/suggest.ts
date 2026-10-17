@@ -24,39 +24,31 @@ const KIND: Record<string, Kind> = {
 };
 export const kindOf = (category: string | null | undefined): Kind => KIND[category ?? ""] ?? (domain(category ?? "")?.family === "goods" ? "goods" : "other");
 
-/** Three questions about one offering: is it there, what does it cost, and the next step. */
+/** What a buyer does with it on the card: buy a number, book a time, ask to see it first. (By what changes hands.) */
+export type ShopAction = "buy" | "book" | "visit" | "ask";
+const ACTION: Record<Kind, ShopAction> = {
+  goods: "buy", food: "buy", supply: "buy", other: "buy",
+  lesson: "book", service: "book", salon: "book", pet: "book", event: "book", stay: "book", equipment: "book", ride: "book", freight: "book",
+  rent: "visit", sale: "visit", vehicle: "visit", job: "visit",
+};
+export const actionOf = (category: string | null | undefined): ShopAction => ACTION[kindOf(category)];
+
+/**
+ * The questions for one offering. Gemini writes them for each listing when it's published, from what that listing
+ * says (offer.questions). Until then, or without the model, they're built from the listing's own data only — whether
+ * its stock or times are tracked, how it's bought, whether it has a price — never canned wording by category.
+ */
 export function forOffer(f: Fact, tracked: Tracked = null): Suggestion[] {
   if (!f.offer) return [];
-  const it = itemName(f.offer.title), priced = f.offer.price?.amount != null, k = kindOf(f.offer.category), id = f.id;
-  const s = (label: string, text: string): Suggestion => ({ label, text, offerId: id });
-  const price = (best: string, ask: string) => s("Price", priced ? best : ask);
-  switch (k) {
-    case "goods": case "food": case "supply": return [
-      s("In stock?", k === "food" ? `Can you make ${it} for tomorrow?` : `Do you have ${it} in stock?`),
-      price(`What's your best price for ${it}?`, `How much is ${it}?`),
-      k === "supply" ? s("Lead time", `What's your lead time for ${it}, and do you give a GST invoice?`) : s("Collect", `Can I order now and collect today?`)];
-    case "vehicle": return [s("Available?", `Is the ${it} still available?`), price(`What's your best price for the ${it}?`, `How much is the ${it}?`),
-      s("Papers", "Are the RC and insurance in order?")];
-    case "lesson": case "service": case "pet": return [
-      s("When free?", tracked === "slots" ? `What times are free this week for ${it}?` : `Are you free this week for ${it}?`),
-      price(`What's your best rate for ${it}?`, `What do you charge for ${it}?`),
-      k === "lesson" ? s("Trial", "Can I book a trial session?") : s("Start", "Can you start this week?")];
-    case "rent": case "sale": case "stay": return [
-      s("Available?", k === "stay" ? `Is ${it} free this weekend?` : `Is ${it} still available?`),
-      price(k === "rent" ? "Is the rent negotiable?" : `What's your best price for ${it}?`, `What's the price for ${it}?`),
-      // (Visiting is the card's main button, so the third question is about what it costs to live there or own it.)
-      k === "rent" ? s("Deposit", "What's the deposit and the monthly maintenance?") : k === "sale" ? s("Papers", "Are the papers clear for registration?") : s("Included", "What's included, and are there extra charges?")];
-    case "salon": return [
-      s("Next slot", tracked === "slots" ? `What's your next free slot for ${it}?` : `Do you have a slot today or tomorrow for ${it}?`),
-      price(`What's your best price for ${it}?`, `How much is ${it}?`),
-      s("Home visit", "Do you do home visits, and what does that cost?")];
-    case "ride": return [s("Pick up?", "Can you pick me up this evening?"), price("Is the fare negotiable?", "What's the fare?"), s("Book", "Can I book a ride for tomorrow morning?")];
-    case "job": return [s("Open?", `Is the ${it} position still open?`), price("What's the salary range?", "What's the salary range?"), s("Process", "What's the interview process?")];
-    case "freight": return [s("Vehicle?", "Is a vehicle free this week?"), price("Is the rate per trip negotiable?", "What's the rate per trip?"), s("Insurance", "Is transit insurance included?")];
-    case "equipment": return [s("Free?", `Is the ${it} free this week?`), price("What's your best daily rate?", "What's the daily rate?"), s("Operator", "Is an operator included?")];
-    case "event": return [s("Date free?", `Is ${it} available this Saturday?`), price(`What's your best price for ${it}?`, `What's the price for ${it}?`), s("Cancel", "What's the cancellation policy?")];
-    default: return [s("Available?", `Is ${it} available?`), price(`What's your best price for ${it}?`, `How much is ${it}?`), s("When", "Can you do it this week?")];
-  }
+  const id = f.id, s = (label: string, text: string): Suggestion => ({ label, text, offerId: id });
+  if (f.offer.questions?.length) return f.offer.questions.slice(0, 3).map(q => s(q.label, q.text));
+  const it = itemName(f.offer.title), priced = f.offer.price?.amount != null, action = actionOf(f.offer.category);
+  const when = tracked === "slots" ? s("Next free", `What's your next free time for ${it}?`)
+    : tracked === "quantity" ? s("In stock?", `Do you have ${it} in stock?`)
+    : action === "book" ? s("When free?", `When are you free for ${it}?`)
+    : action === "visit" ? s("Available?", `Is ${it} still available?`)
+    : s("Available?", `Can I get ${it} now?`);
+  return [when, s("Price", priced ? `What's your best price for ${it}?` : `How much is ${it}?`)];
 }
 
 /**

@@ -57,7 +57,7 @@ const MEASURE = /^(ml|l|ltr|litres?|liters?|kg|kgs|g|gm|gms|grams?|cm|mm|m|inch(
 /**
  * How many a typed offer is for: "2 bottles for ₹800" → 2, "a dozen for ₹500" → 12, "3 hours for ₹2,000" → 3 when the
  * listing is priced per hour. Sizes ("500 ml"), spans ("in 2 days") and prices ("for 500", "$20") aren't counts.
- * null for one.
+ * 1 only when said with what it is ("1 lamp"); null when no count is said.
  */
 export function offeredQuantity(text: string, unit: string | null = null): number | null {
   const t = text.toLowerCase().replace(/(\d),(?=\d)/g, "$1")
@@ -70,12 +70,28 @@ export function offeredQuantity(text: string, unit: string | null = null): numbe
   for (const m of t.matchAll(/\b(\d{1,3}|two|three|four|five|six|seven|eight|nine|ten|a dozen|dozen)\s*(?:x\s*)?([a-z%]+)?/g)) {
     const n = /\d/.test(m[1]) ? Number(m[1]) : COUNT_WORDS[m[1]];
     const next = m[2] ?? "";
-    if (!(n >= 2 && n <= 999)) continue;
+    if (!(n >= 1 && n <= 999)) continue;
+    // "1 lamp" says one; "the 1 I saw", "1 more", "1 left" don't.
+    if (n === 1 && (!/^\d/.test(m[1]) || /^(i|a|an|the|is|it|or|and|to|in|on|at|of|for|more|left|thing|time|day|question|sec|second)$/.test(next))) continue;
     if (!next) continue; // a bare number ("for 500") is a price, not a count
     if (MEASURE.test(next) && !(own && own.test(next))) continue;
     return n;
   }
   return null;
+}
+
+/**
+ * Is an amount typed for `n` units their total, or the price of one? Words decide when they say ("each", "in all");
+ * otherwise the reading closer to the price on the table (`ref`: the pending offer's, else the listed one) wins — "I
+ * can do ₹420" in a deal for 5 lamps at ₹450 is ₹420 each, "2 for ₹800" for ₹450 bottles is ₹800 for both. With
+ * nothing to compare, an amount for several is their total.
+ */
+export function amountIsTotal(text: string, unit: string | null, amount: number, n: number, ref: number | null): boolean {
+  if (n <= 1) return true;
+  if (perUnit(text, unit)) return false;
+  if (/\b(in all|in total|total|altogether|all together|for (?:all|the lot|everything|all of them|both))\b/i.test(text)) return true;
+  if (ref && ref > 0) return Math.abs(amount / n - ref) <= Math.abs(amount - ref);
+  return true;
 }
 
 /** The typed price is per unit ("₹400 each", "₹400 per bottle", "400 ka ek"), not a total. */
@@ -89,6 +105,14 @@ export const perUnit = (text: string, unit: string | null = null) =>
  */
 export function explicitOffer(text: string): boolean {
   const t = text.trim();
+  // An amount on its own with its currency ("200rs", "₹200", "Rs 200/-") or a stated budget ("my budget is ₹200",
+  // "I can pay up to 200") is an offer, not a question for the seller to answer.
+  if (/^(?:(?:my\s+)?(?:budget|max(?:imum)?|best|final|last offer)\s*(?:is|:)?\s*)?(?:₹|rs\.?|inr)\s*\d[\d,]*(?:\.\d+)?\s*(?:k|only|max|each|\/-)?\s*[.!?]?$/i.test(t)
+    || /^(?:(?:my\s+)?(?:budget|max(?:imum)?|best|final|last offer)\s*(?:is|:)?\s*)?\d[\d,]*(?:\.\d+)?\s*(?:k\s*)?(?:rs\.?|rupees?|\/-|inr)\s*(?:only|max|each)?\s*[.!?]?$/i.test(t)
+    || /\b(?:my budget|budget is|budget of|i can (?:only )?(?:pay|spend|afford)|up ?to)\s*(?:is\s*)?(?:₹|rs\.?|inr)?\s*\d/i.test(t)
+    // "40 for ₹7,200", "2 bottles @ ₹400", "₹800 for 2"
+    || /^\d{1,3}\s*(?:x\s*)?(?:[a-z]+\s+){0,2}(?:for|at|@)\s*(?:₹|rs\.?\s*|inr\s*)\d/i.test(t)
+    || /^(?:₹|rs\.?\s*|inr\s*)\d[\d,]*(?:\.\d+)?\s*(?:for|each|per)\b/i.test(t)) return true;
   if (/^(why|is|are|was|does|did|when|where|which|who)\b/i.test(t) || /^(what|how)\b(?!\s+about\b)/i.test(t)) return false;
   return /\b(i'?ll|i will|i can|i'?d|we'?ll|we can|let'?s|ok(ay)?|final|deal|offer|take it|sell|buy|pay|give|can you do|could you do|would you do|how about|what about)\b/i.test(t);
 }

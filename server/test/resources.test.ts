@@ -67,3 +67,43 @@ test("asked about free times, the agent names the next ones, not a count", async
   assert.match(text, /^Next free: .+; .+; .+ \(4 open in all\)\. Each takes about 40 minutes\.$/);
   assert.doesNotMatch(text, /open slots$/);
 });
+
+test("weekly hours: the seller states them once; bookable times are made two weeks ahead in their time zone and topped up", async () => {
+  const { setHours, slotsFromHours, topUpHours, needsTopUp, validHours, hoursText, tzOffset } = await import("../src/core/resources.ts");
+  assert.equal(validHours({ days: [1, 2, 3, 4, 5, 6], from: "10:00", to: "20:00", minutes: 40 })?.minutes, 40);
+  assert.equal(validHours({ days: [], from: "10:00", to: "20:00", minutes: 40 }), null, "at least one day");
+  assert.equal(validHours({ days: [1], from: "10:00", to: "10:30", minutes: 40 }), null, "a booking has to fit");
+  assert.equal(validHours({ days: [1], from: "25:00", to: "26:00", minutes: 40 }), null);
+  assert.equal(hoursText({ days: [1, 2, 3, 4, 5, 6], from: "10:00", to: "20:00", minutes: 40 }), "Open Mon–Sat, 10:00–20:00");
+  assert.equal(hoursText({ days: [0, 3, 4], from: "09:00", to: "13:00", minutes: 60 }), "Open Sun, Wed, Thu, 09:00–13:00");
+  assert.equal(hoursText({ days: [0, 1, 2, 3, 4, 5, 6], from: "10:00", to: "19:00", minutes: 45 }), "Open every day, 10:00–19:00");
+  assert.equal(tzOffset("Asia/Kolkata", 1_760_000_000), 19_800);
+  // Fri 16 Oct 2026, 06:00 IST.
+  const T = Date.UTC(2026, 9, 16, 0, 30) / 1000;
+  const h = { days: [1, 2, 3, 4, 5, 6], from: "10:00", to: "20:00", minutes: 40 };
+  const slots = slotsFromHours(h, "Asia/Kolkata", T);
+  const ist = (t: number) => new Date((t + 19_800) * 1000);
+  assert.equal(ist(slots[0].start).getUTCHours(), 10, "opens at 10:00 IST");
+  assert.ok(slots.every(s => ist(s.start).getUTCDay() !== 0), "never on Sunday");
+  assert.ok(slots.every(s => ist(s.end).getUTCHours() * 60 + ist(s.end).getUTCMinutes() <= 20 * 60), "the last booking ends by 20:00");
+  assert.equal(slots.length, 12 * 15, "12 open days in two weeks × 15 bookings a day");
+  // Created with hours → slots made; a booked time survives a change of hours, free ones are remade.
+  const db = memoryDocs();
+  const r = await createResource(db, "barber", { factId: "f1", type: "slots", title: "Haircut", hours: h, timezone: "Asia/Kolkata" }, T);
+  assert.equal(r.slots.length, 180);
+  assert.ok(!needsTopUp(r, T));
+  const held = await hold(db, r.id, { holder: "buyer", slotId: r.slots[0].id, ttlSec: 3600 }, T);
+  const r2 = await setHours(db, r.id, "barber", { days: [6], from: "09:00", to: "12:00", minutes: 60 }, null, T);
+  assert.ok(r2.slots.some(s => s.id === held.slotId), "the held time stays");
+  assert.equal(r2.slots.filter(s => s.id !== held.slotId).length, 2 * 3, "two Saturdays × 3 hour-long bookings");
+  await assert.rejects(setHours(db, r.id, "someone-else", h, null, T), "only the owner");
+  // A week on, the cron tops it up to two weeks ahead again.
+  const later = T + 7 * 86_400;
+  assert.ok(!needsTopUp(r2, T + 3600), "nothing to add an hour later: no rewrite every run");
+  assert.ok(needsTopUp(r2, later));
+  const r3 = await topUpHours(db, r.id, later);
+  assert.equal(r3.slots.filter(s => s.auto && s.start > later).length, 2 * 3, "Sat 24 and Sat 31 Oct: two weeks ahead again");
+  assert.ok(!r3.slots.some(s => s.id !== held.slotId && s.end < later - 86_400), "free times long past are dropped");
+  assert.ok(!needsTopUp(r3, later));
+  assert.match(availabilityText(r3, later), /^Open Sat, 09:00–12:00\. Next free: /);
+});

@@ -21,10 +21,14 @@ function answer(req: CompleteRequest): object {
   if (ins.startsWith("Read a marketplace message")) {
     const m = quoted(p, "Message");
     const place = AREAS.find(a => m.toLowerCase().includes(a.toLowerCase())) ?? null;
-    const n = m.replace(/(\d),(?=\d)/g, "$1").match(/\d{3,}/)?.[0];
-    const lim = m.replace(/(\d),(?=\d)/g, "$1").match(/lowest[^0-9]*(\d+)/i)?.[1];
+    // A ₹ amount is the price; else the first 3+ digit number. A count before a plural noun ("200 lamps") is a quantity.
+    const flat = m.replace(/(\d),(?=\d)/g, "$1");
+    const n = flat.match(/₹\s*(\d+)/)?.[1] ?? flat.replace(/\b\d+\s+(?:pieces|pcs|units|[a-z]+s)\b/gi, " ").match(/\d{3,}/)?.[0];
+    const lim = flat.match(/lowest[^0-9]*(\d+)/i)?.[1];
     const bhk = m.match(/(\d)\s*bhk/i)?.[1];
-    return { item: m.split(/\s+/).slice(0, 2).join(" "), place, price: n ? Number(n) : null, price_scale: "rupees", limit: lim ? Number(lim) : null, attributes: bhk ? { bedrooms: bhk } : {}, questions: [] };
+    const qty = flat.match(/\b(\d{1,5})\s+(?:[a-z]+\s+){0,2}(?:pieces|pcs|units|lamps|bottles|chairs|tables|boxes|bags|kg)\b/i)?.[1];
+    return { item: m.split(/\s+/).slice(0, 2).join(" "), place, price: n ? Number(n) : null, price_scale: "rupees", limit: lim ? Number(lim) : null,
+      attributes: { ...(bhk ? { bedrooms: bhk } : {}), ...(qty && Number(qty) > 1 ? { quantity: qty } : {}) }, questions: [] };
   }
   if (ins.startsWith("Decide what this marketplace request needs")) return { mode: "none", filters: [] };
   if (ins.startsWith("Write what a person's agent tells providers")) {
@@ -56,6 +60,15 @@ function answer(req: CompleteRequest): object {
     return { intent, tier: intent === "remember" ? "private" : null, reply: intent === "chat" ? "Hello!" : null };
   }
   if (ins.startsWith("Give 1–3 short lowercase topic")) return { topics: ["personal"] };
+  if (ins.startsWith("Someone opens a seller's listing")) {
+    const item = quoted(p, "Item"), how = p.match(/How buyers get it: (.*)/)?.[1] ?? "";
+    return { questions: /book/.test(how) ? [{ label: "When free?", text: `When are you free for ${item}?` }, { label: "Price", text: `What's your best rate for ${item}?` }, { label: "Book", text: "Can I book a time this week?" }]
+      : /visit/.test(how) ? [{ label: "Available?", text: `Is ${item} still available?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Visit", text: "When can I come to see it?" }]
+      : [{ label: "In stock?", text: `Do you have ${item} in stock?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Collect", text: "Can I order now and collect today?" }] };
+  }
+  if (ins.startsWith("Suggest the terms a seller")) return { terms: [{ label: "Cancellation", text: "Free up to 2 hours before the booked time." }, { label: "Payment", text: "In the app, or in cash when you come in." }] };
+  if (ins.startsWith("A person is listing something")) return { asks: [{ label: "Condition", question: "What condition is it in?", options: ["Like new", "Good", "Some wear"] },
+    { label: "Price", question: "What's your best price?", options: ["Fixed", "Negotiable"] }, { label: "Included", question: "What comes with it?", options: ["Box and charger", "Just the item"] }] };
   return {}; // e.g. negotiation: the rules decide
 }
 

@@ -149,6 +149,11 @@ export interface Engagement {
   inboxClosed?: boolean;
   /** A time the buyer picked on the seller's card: held as soon as the deal is agreed (if still free). */
   preferredSlotId?: string | null;
+  /** How many units the buyer wants in this conversation (said on the card, in the request or in chat); every offer in
+   *  it is for this many unless one says otherwise. Absent: one. */
+  quantity?: number;
+  /** What the buyer asked for when the seller has fewer in stock (then `quantity` is what's there). */
+  wanted?: number;
   reservation?: { resourceId: string; holdId: string | null; qty: number; state: "held" | "committed" | "released" | "unavailable" | "choose_slot";
     expiresAt: number | null; reason?: string; slotId?: string | null; slot?: { start: number; end: number } | null };
   /** The requester's goal this conversation is a task of (see core/goals.ts). */
@@ -173,8 +178,10 @@ export interface InboxItem {
   qaId?: string;
   question?: string;
   draft?: string;
-  /** move: the listed price the negotiation is about. */
+  /** move: the listed price the negotiation is about (or, for a counter, the price countered at). */
   listPrice?: number;
+  /** move: the other side's agent countered — what it offered, so the owner can take it, counter or walk away. */
+  counter?: { price: number; quantity: number; total: number; by: string };
   /** move: what similar deals closed at (market data, shown to the owner). */
   hint?: string;
   title: string;

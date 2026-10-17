@@ -14,6 +14,7 @@ import { moneyText, newId } from "../market/types.ts";
 import type { Brief, Fact, Profile, Tier } from "./model.ts";
 import { FACTS, PROFILES } from "./policy.ts";
 import { TopicsTask } from "./tasks.ts";
+import { buyerQuestions } from "./intake.ts";
 
 export const HANDLES = "handles";
 const now = () => Math.floor(Date.now() / 1000);
@@ -76,8 +77,10 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
     // An offering (a price and a place, or something done online) becomes a listing the matcher understands.
     const r = await read(text, "sell", model, now(), owner.area);
     if (r.draft?.kind === "offer") offer = r.draft.offer;
-    const v = await model?.embed?.([offer ? `${offer.title}. ${text}` : text], "document");
+    // The questions buyers can tap are written for this listing, alongside its embedding.
+    const [v, questions] = await Promise.all([model?.embed?.([offer ? `${offer.title}. ${text}` : text], "document"), offer ? buyerQuestions(model, offer, text).catch(() => null) : null]);
     embedding = v?.[0];
+    if (offer && questions) offer = { ...offer, questions };
   }
   // The owner said the price can move (a floor was stated or is delegated): near-budget requests may still match.
   if (offer && input.negotiable) offer = { ...offer, attributes: { ...offer.attributes, negotiable: "yes" } };

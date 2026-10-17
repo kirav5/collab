@@ -29,6 +29,8 @@ export interface Offer {
   policies?: { label: string; text: string }[];
   /** The seller lets an order at the listed price be confirmed by their always-on agent at once (instant booking). */
   instant?: boolean;
+  /** Ready-made questions a buyer can tap, written by Gemini for this listing when it was published. */
+  questions?: { label: string; text: string }[];
   /** The seller's Nostr key (hex), set on listings read from the index. */
   seller?: string;
   /** A Collab account binding is present (listings published by the Collab app). */

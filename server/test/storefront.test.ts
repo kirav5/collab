@@ -27,9 +27,9 @@ test("goods are bought with a quantity bounded by stock; low and out of stock sa
   assert.equal(out.stock!.state, "out"); assert.equal(out.maxQuantity, 0);
   assert.deepEqual(storefront([offer("a", "goods", "B")], [stock("a", 9, 0, T - 7200, "manual")], T)[0].stock, { state: "unknown", available: null });
   assert.equal(storefront([offer("a", "goods", "B")], [], T)[0].stock, null, "untracked: no stock line");
-  assert.equal(storefront([offer("a", "goods", "B")], [], T)[0].maxQuantity, 20);
+  assert.equal(storefront([offer("a", "goods", "B")], [], T)[0].maxQuantity, 99, "untracked: up to 99 at a time");
   assert.equal(storefront([offer("c", "goods", "Decathlon cycle · used")], [], T)[0].maxQuantity, 1, "a used item is one item");
-  assert.equal(storefront([offer("w", "goods", "Water Bottles · items for sale (new or used)")], [], T)[0].maxQuantity, 20, "the category's label isn't a condition");
+  assert.equal(storefront([offer("w", "goods", "Water Bottles · items for sale (new or used)")], [], T)[0].maxQuantity, 99, "the category's label isn't a condition");
 });
 
 test("lessons are booked from the next free times (two weeks, soonest first); flats are visited; no price means ask", () => {

@@ -17,12 +17,12 @@ import { type Context, NegotiateTask, acceptable, describe } from "../market/neg
 import { type Mandate, type Proposal, currencyOf, moneyText, newId } from "../market/types.ts";
 import { type PaymentMandate, cartFor, sellerFrom, sellerOf } from "./pay.ts";
 import { policy, policyHash } from "../config/policy.ts";
-import { CapacityError, availabilityText, hold, resourceFor } from "./resources.ts";
+import { CapacityError, available, availabilityText, certainty, hold, resourceFor } from "./resources.ts";
 import { BudgetError, allocate, deallocate } from "./goals.ts";
 import { linesOf, totalOf } from "./pay.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
-import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats } from "./deals.ts";
+import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, trackRecord } from "./deals.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
@@ -89,6 +89,12 @@ export async function save(db: Docs, e: Engagement) {
   // The outbox flag is derived on every save, so a waiting turn can always be found by the recovery scan.
   e.outboxPending = !!e.outbox;
   e.outboxAt = e.outbox ? (e.outboxAt ?? now()) : null;
+  // An agreed deal leaves no one waiting on a question or move from before it (the pass covers the handover).
+  if (e.phase === "agreed" && !e.dealRecorded) {
+    for (const i of (await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 50)) as InboxItem[])
+      if (i.kind !== "confirm") await db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null));
+    for (const x of ["requester", "provider"] as Side[]) if (e.waiting[x] && e.waiting[x]!.kind !== "confirm") e.waiting[x] = null;
+  }
   if (e.phase === "agreed" && !e.dealRecorded) { e.dealRecorded = true; e.sealedTaskId = e.taskId ?? null; await recordDeal(db, e, now()); await registerReceipt(db, e, now(), signer ?? undefined); await clearStats(db, e); 
     event("deal_agreed", { category: e.offer.category ?? "none", rounds: e.negotiation.requester.length + e.negotiation.provider.length, chat: e.offer.price == null }); }
   // Reservation: a deal on tracked stock holds the units for the policy's hold window (released if the deal ends,
@@ -98,7 +104,7 @@ export async function save(db: Docs, e: Engagement) {
   if (e.phase === "agreed" && !e.payment && signer) {
     if (!e.seller && e.offer.price == null) e.seller = sellerInChat(e) ?? undefined;
     const cart = cartFor(e, signer, now());
-    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; say(e, agentOf(sellerOf(e)), `Ready to pay: ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })} (test payment — no money moves).`, "rules"); }
+    if (cart) { e.payment = { cart, status: "awaiting", mode: "test" }; if (e.reservation?.state !== "unavailable") say(e, agentOf(sellerOf(e)), `Ready to pay: ${moneyText({ amount: cart.total.value, currency: cart.total.currency, period: e.offer.unit })} (test payment — no money moves).`, "rules"); }
   }
   await db.set(ENGAGEMENTS, e.id, e);
 }
@@ -122,7 +128,52 @@ async function limitFor(db: Docs, e: Engagement, s: Side): Promise<DelegatedLimi
   const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
   const l = (await db.get(LIMITS, key)) as DelegatedLimit | null;
   // "ask" rows are stored so the owner's devices share the limit; the agent itself still waits on the owner.
-  return l && l.owner === uidOf(e, s) && l.autonomy !== "ask" && !(l.expires && l.expires < now()) ? l : null;
+  const ok = l && l.owner === uidOf(e, s) && l.autonomy !== "ask" && !(l.expires && l.expires < now()) ? l : null;
+  return ok ? { ...ok, mandate: unitMandate(e, s, ok.mandate) } : null;
+}
+
+// MARK: - How many
+
+/** How many units this conversation is about: what the buyer asked for on the card, in the request or in chat. */
+export const unitsOf = (e: Engagement) => (Number.isInteger(e.quantity) && e.quantity! > 1 ? e.quantity! : 1);
+
+/** A proposal is for the conversation's quantity unless it lists its own items: a counter at a unit price — typed by
+ *  a person or made by an agent — is for as many units as the buyer asked for. */
+function sized(e: Engagement, p: Proposal): Proposal {
+  if (p.items?.length) return p;
+  const { quantity: _, ...terms } = p.terms ?? {};
+  return { ...p, terms: unitsOf(e) > 1 ? { ...terms, quantity: unitsOf(e) } : terms };
+}
+
+/**
+ * Agents negotiate a unit price. A buyer's limit for several units may be their total ("₹80,000 for 200 lamps"): one
+ * that reads as a total — closer to the listed price once divided by the quantity — is divided by it.
+ */
+export function unitMandate(e: Engagement, s: Side, m: Mandate): Mandate {
+  const n = unitsOf(e), list = e.offer.price;
+  if (sellerOf(e) === s || n <= 1 || !list) return m;
+  if (Math.abs(m.price.limit / n - list) >= Math.abs(m.price.limit - list)) return m;
+  return { ...m, price: { opening: Math.round(m.price.opening / n), limit: Math.round(m.price.limit / n) } };
+}
+
+/** An offer for more units than the seller has in tracked, confirmed stock — refused before anyone is asked. */
+export class ShortStock extends Error { available: number; constructor(available: number, message: string) { super(message); this.available = available; } }
+export async function inStock(db: Docs, e: Engagement): Promise<number | null> {
+  if (!e.offer.factId) return null;
+  const r = await resourceFor(db, e.offer.factId);
+  return r?.type === "quantity" && certainty(r, now()) === "confirmed" ? available(r, now()) : null;
+}
+
+/** An owner's open decisions in this conversation that their agent has now taken (a confirm, or a counter to answer):
+ *  closed, and no longer waited on. */
+export async function doneConfirms(db: Docs, e: Engagement, s: Side) {
+  const ids: string[] = [];
+  for (const id of e.waiting[s]?.inbox ?? []) {
+    const i = (await db.get(INBOX, id)) as InboxItem | null;
+    if (i?.kind === "confirm" || (i?.kind === "move" && i.counter)) { ids.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
+  }
+  const left = (e.waiting[s]?.inbox ?? []).filter(id => !ids.includes(id));
+  e.waiting[s] = left.length ? { ...e.waiting[s]!, inbox: left } : null;
 }
 
 /** Whether a side has a device that can be asked (our users and demo people do; an outside A2A agent doesn't). */
@@ -255,6 +306,11 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     }
     if (entry?.fact.offer) facts = [...offerFacts(entry.fact.offer, {}), ...facts];
   }
+  // A seller's record from signed receipts answers "how many have you sold?" or "can I trust you?" without asking them.
+  if (s === sellerOf(e) && owner) {
+    const rec = await trackRecord(db, owner);
+    if (rec.sales) facts = [...facts, { label: "Record on Collab (from signed receipts)", value: `${rec.verified} verified ${rec.verified === 1 ? "sale" : "sales"}, ${rec.handedOver} handed over, ${rec.problems} with problems reported${rec.since ? `, selling here since ${new Date(rec.since * 1000).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}` : ""}.` }];
+  }
   if (s === "requester") {
     const b = e.brief;
     facts = [{ label: "What they need", value: `${b.title}. ${b.summary}` }, ...(b.area ? [{ label: "Area", value: b.area }] : []),
@@ -307,29 +363,41 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
 
 // MARK: - Negotiating
 
-function ctx(e: Engagement, s: Side, mandate: Mandate): Context {
-  const n = e.negotiation;
-  return { side: s === "provider" ? "seller" : "buyer", catalog: catalog(domainOf(e.offer.category ?? "")), mandate, unit: e.offer.unit,
-    mine: s === "provider" ? n.provider : n.requester, theirs: s === "provider" ? n.requester : n.provider };
+/** `listing`: the listed price counts as the seller's opening position (when answering a buyer's typed offer, the
+ *  first counter moves from it instead of repeating it). */
+function ctx(e: Engagement, s: Side, mandate: Mandate, listing = false): Context {
+  const n = e.negotiation, mine = s === "provider" ? n.provider : n.requester;
+  const opened = listing && s === sellerOf(e) && e.offer.price != null && !mine.length
+    ? [{ id: "listing", price: e.offer.price, terms: {}, round: 0 } as Proposal] : mine;
+  return { side: s === sellerOf(e) ? "seller" : "buyer", catalog: catalog(domainOf(e.offer.category ?? "")), mandate, unit: e.offer.unit,
+    mine: opened, theirs: s === "provider" ? n.requester : n.provider };
 }
 
 /** One move with this side's limit (delegated to the cloud agent, or sent by the owner's device for this one move). */
-export async function move(model: Model | null, e: Engagement, s: Side, mandate: Mandate, out: Turn) {
+export async function move(model: Model | null, e: Engagement, s: Side, mandate: Mandate, out: Turn, listing = false) {
   // A requester never opens above the asking price (a little under it instead).
   if (s === "requester" && e.offer.price && mandate.price.opening >= e.offer.price) {
     mandate = { ...mandate, price: { ...mandate.price, opening: Math.round(e.offer.price * 0.92) } };
   }
-  const c = ctx(e, s, mandate);
+  const c = ctx(e, s, mandate, listing);
   const m = await decide(model, NegotiateTask, { ctx: c, listPrice: e.offer.price ?? mandate.price.opening });
   const mv = m.output;
   if (mv.action === "propose") {
+    mv.proposal = sized(e, mv.proposal);
     (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(mv.proposal);
     out.proposal = mv.proposal;
     out.note = mv.message;
     e.phase = "negotiating";
-    say(e, agentOf(s), mv.message, by(m.byModel));
+    // For several units the move says what they come to (the rules' own wording is rewritten; a model's gets a line).
+    if (unitsOf(e) > 1 && !m.byModel) say(e, agentOf(s), `${mv.proposal.round ? "We can do" : "We can offer"} ${describe(mv.proposal, c)}.`, "rules");
+    else {
+      say(e, agentOf(s), mv.message, by(m.byModel));
+      if (unitsOf(e) > 1) say(e, "system", `On the table: ${describe(mv.proposal, c)}.`);
+    }
   } else if (mv.action === "accept") {
     const theirs = c.theirs.at(-1)!;
+    // Older proposals said no quantity: the deal is for the conversation's.
+    if (!theirs.items?.length && theirs.terms.quantity === undefined && unitsOf(e) > 1) theirs.terms = { ...theirs.terms, quantity: unitsOf(e) };
     e.negotiation.deal = theirs;
     e.negotiation.dealBy = other(s);
     e.phase = "deal";
@@ -349,6 +417,11 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
     const i = await insights(db, { category: e.offer.category ?? "", area: e.brief.area, unit: e.offer.unit });
     return i ? (s === "requester" ? forRequester(i, null, e.offer.price) : forProvider(i, e.offer.price)).join(" ") : undefined;
   };
+  // A seller with nothing in stock doesn't negotiate a deal that can't be filled.
+  if (s === sellerOf(e) && (await inStock(db, e)) === 0) {
+    if (!e.events.some(x => x.text.startsWith("Out of stock right now — "))) say(e, agentOf(s), "Out of stock right now — nothing can be sold until more come in.", "rules");
+    return;
+  }
   const l = await limitFor(db, e, s);
   if (l) {
     const r = await move(model, e, s, l.mandate, out);
@@ -365,7 +438,8 @@ const myTurnToMove = (e: Engagement, s: Side) => {
 };
 
 const pendingFor = (e: Engagement, s: Side) => !!e.waiting[s];
-const questionsOpen = (e: Engagement) => e.qa.some(q => q.status === "open" || q.status === "pending");
+/** Questions that hold up the negotiation: the buyer's must-knows. A seller's agent's questions are answered alongside it. */
+const questionsOpen = (e: Engagement) => e.qa.some(q => (q.status === "open" || q.status === "pending") && q.required);
 
 // MARK: - The provider's agent
 
@@ -433,12 +507,17 @@ const hasContent = (t: Turn) => !!(t.answers?.length || t.questions?.length || t
 async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   if (pendingFor(e, s) || e.offer.price == null) return;
   if (e.phase === "deal") {
+    // Their own offer still waiting for the other side's answer (a typed offer, or an agent's counter under "I confirm")
+    // asks nothing of them yet. A tentative deal the other side's agent accepted is confirmed by both, as before.
+    if (e.negotiation.chatOffer && e.negotiation.dealBy === s && !e.negotiation.confirmed[other(s)]) return;
     if (!e.negotiation.confirmed[s]) {
       // A "close" mandate is the owner's confirmation given in advance, while the deal is inside its limit.
       const l = await limitFor(db, e, s);
       const deal = e.negotiation.deal;
       const overBudget = l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate)) ? await budgetCheck(db, e, s) : null;
+      const fewer = s !== sellerOf(e) && e.wanted && unitsOf(e) < e.wanted;
       if (overBudget) { say(e, "system", `${overBudget} The standing mandate can't confirm it — the owner decides.`); if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" }); }
+      else if (fewer && l?.autonomy === "close") { say(e, "system", `This is for ${unitsOf(e)} of the ${e.wanted} asked for — the owner decides.`); if (hasOwner(e, s)) await ask(db, e, s, { kind: "confirm" }); }
       else if (l?.autonomy === "close" && deal && acceptable(deal, ctx(e, s, l.mandate))) {
         e.negotiation.confirmed[s] = true;
         (e.negotiation.confirmedBy ??= {})[s] = "mandate";
@@ -489,6 +568,7 @@ function applyTheirs(e: Engagement, me: Side, t: Turn) {
     if (q && q.status !== "answered") { q.answer = a.answer; q.status = "answered"; q.source ??= "owner"; }
   }
   for (const d of t.declined ?? []) { const q = e.qa.find(x => x.question === d && x.from === me); if (q) { q.status = "declined"; q.answer = "Not shared."; } }
+  if (t.proposal && !t.proposal.items?.length && t.proposal.terms?.quantity === undefined) t.proposal = sized(e, t.proposal);
   if (t.proposal && !(them === "provider" ? e.negotiation.provider : e.negotiation.requester).some(p => p.id === t.proposal!.id)) {
     (them === "provider" ? e.negotiation.provider : e.negotiation.requester).push(t.proposal);
     e.phase = "negotiating";
@@ -568,7 +648,7 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
     else {
       const over = await budgetCheck(db, e, s);
       if (over) throw new Refused(over);
-      e.negotiation.confirmed[s] = true; out.confirm = true; say(e, s, "Confirmed.", "owner"); settle(e);
+      e.negotiation.confirmed[s] = true; (e.negotiation.confirmedBy ??= {})[s] = "owner"; out.confirm = true; say(e, s, "Confirmed.", "owner"); settle(e);
     }
   }
   await db.update(INBOX, item.id, (i: InboxItem | null) => (i ? { ...i, status: "done" } : null));
@@ -598,12 +678,22 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   // A chat that didn't start from a listing names its item from the offer, so the cart, receipt and pickup pass say
   // what is being handed over (not the person's name).
   if (!e.offer.factId || e.offer.price == null) e.offer.title = dealItem(said) ?? e.offer.title;
+  // A count said now becomes the conversation's; otherwise the offer is for as many as were already asked for.
+  if (count != null && count >= 1) e.quantity = count;
+  const units = unitsOf(e);
+  // More than the seller has can't be sold: refused before anyone is asked, with what's there.
+  const free = await inStock(db, e);
+  if (free !== null && free < units) {
+    const mine = s === sellerOf(e);
+    throw new ShortStock(free, free === 0 ? (mine ? "You're out of stock — restock before offering." : "They're out of stock right now.")
+      : mine ? `You have ${free} in stock — offer ${free} or fewer.` : `Only ${free} in stock — they can't sell ${units}. Offer for ${free} instead?`);
+  }
   const p: Proposal = { id: newId(), price, terms: {}, round: (s === "provider" ? e.negotiation.provider : e.negotiation.requester).length + 1 };
-  if (count && count > 1) {
-    const total = isTotal ? price : price * count, unit = Math.floor(total / count);
-    p.terms = { quantity: count };
-    if (total % count === 0) p.price = unit;
-    else { p.price = unit; p.items = [{ id: "item_1", title: e.offer.title, quantity: count - 1, unitPrice: unit }, { id: "item_2", title: e.offer.title, quantity: 1, unitPrice: total - unit * (count - 1) }]; }
+  if (units > 1) {
+    const total = isTotal ? price : price * units, unit = Math.floor(total / units);
+    p.terms = { quantity: units };
+    if (total % units === 0) p.price = unit;
+    else { p.price = unit; p.items = [{ id: "item_1", title: e.offer.title, quantity: units - 1, unitPrice: unit }, { id: "item_2", title: e.offer.title, quantity: 1, unitPrice: total - unit * (units - 1) }]; }
   }
   (s === "provider" ? e.negotiation.provider : e.negotiation.requester).push(p);
   e.negotiation.deal = p; e.negotiation.dealBy = s; e.phase = "deal";
@@ -622,21 +712,111 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   const stale: string[] = [];
   for (const id of e.waiting[o]?.inbox ?? []) {
     const i = (await db.get(INBOX, id)) as InboxItem | null;
-    if (i?.kind === "confirm") { stale.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
+    // An earlier offer to confirm, or a plain "your move", is replaced by this offer to answer.
+    if (i?.kind === "confirm" || (i?.kind === "move" && !i.question) || (i?.kind === "move" && i.counter)) { stale.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
   }
   const keep = (e.waiting[o]?.inbox ?? []).filter(id => !stale.includes(id));
   e.waiting[o] = keep.length ? { ...e.waiting[o]!, inbox: keep } : null;
-  // A counter-offer answers the offer they were asked to confirm: that request is done too.
+  // A counter-offer answers the offer (or the counter) they were asked about: that request is done too.
   const mine: string[] = [];
   for (const id of e.waiting[s]?.inbox ?? []) {
     const i = (await db.get(INBOX, id)) as InboxItem | null;
-    if (i?.kind === "confirm") { mine.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
+    if (i?.kind === "confirm" || i?.kind === "move") { mine.push(id); await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)); }
   }
   const left = (e.waiting[s]?.inbox ?? []).filter(id => !mine.includes(id));
   e.waiting[s] = left.length ? { ...e.waiting[s]!, inbox: left } : null;
   e.negotiation.chatOffer = true;
   await ask(db, e, o, { kind: "confirm" });
   await save(db, e);
+}
+
+/**
+ * A typed offer — from the card or the chat — reaches the other side's agent before its owner. Inside the owner's
+ * delegated limit it's confirmed at once when they let their agent close deals, else put to them to confirm (as
+ * before). Outside it, the agent counters on its own within the limit, exactly as in an agent-to-agent negotiation; if
+ * the other side delegated too, their agent answers, and so on until a deal inside both limits, or a person is
+ * needed. Nobody is asked yes or no about a price their agent can negotiate. Without a delegated limit, the owner
+ * decides, as before.
+ */
+/** Taking the offer on the table at its terms (typed: "I'll buy it for ₹450") is saying yes to it; the other side
+ *  confirms next if it hasn't (its agent, if it may close deals, already has). */
+export async function takeOffer(db: Docs, e: Engagement, s: Side, text: string): Promise<Engagement> {
+  say(e, s, text, "owner");
+  for (const id of e.waiting[s]?.inbox ?? []) await db.update(INBOX, id, (x: InboxItem | null) => (x && (x.kind === "confirm" || x.kind === "move") ? { ...x, status: "done" } : x));
+  const left: string[] = [];
+  for (const id of e.waiting[s]?.inbox ?? []) if (((await db.get(INBOX, id)) as InboxItem | null)?.status === "open") left.push(id);
+  e.waiting[s] = left.length ? { ...e.waiting[s]!, inbox: left } : null;
+  const over = await budgetCheck(db, e, s);
+  if (over) throw new Refused(over);
+  e.negotiation.confirmed[s] = true;
+  (e.negotiation.confirmedBy ??= {})[s] = "owner";
+  say(e, "system", `${e[s].name} took it: ${describeDeal(e)}.`);
+  settle(e);
+  const o = other(s);
+  if (e.phase === "deal" && !e.negotiation.confirmed[o]) {
+    const l = await limitFor(db, e, o);
+    if (l?.autonomy === "close" && e.negotiation.deal && acceptable(e.negotiation.deal, ctx(e, o, l.mandate))) {
+      e.negotiation.confirmed[o] = true; (e.negotiation.confirmedBy ??= {})[o] = "mandate";
+      say(e, agentOf(o), "Confirmed — it's inside the limit my owner set.", "rules"); settle(e);
+    } else if (hasOwner(e, o) && !e.waiting[o]?.inbox.length) await ask(db, e, o, { kind: "confirm" });
+  }
+  await save(db, e);
+  return e;
+}
+const describeDeal = (e: Engagement) => {
+  const d = e.negotiation.deal!, n = d.items?.length ? d.items.reduce((t, l) => t + l.quantity, 0) : unitsOf(e);
+  const total = d.items?.length ? d.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) : d.price * n;
+  return n > 1 ? `${n} for ${moneyText({ amount: total, currency: currencyOf(e) })} (${moneyText({ amount: Math.round((total / n) * 100) / 100, currency: currencyOf(e) })} each)` : moneyText({ amount: d.price, currency: currencyOf(e), period: e.offer.unit });
+};
+
+export async function respondToOffer(db: Docs, model: Model | null, e: Engagement): Promise<Engagement> {
+  let agreed = false;
+  for (let round = 0; round < 12 && e.phase === "deal" && e.negotiation.deal && e.negotiation.dealBy; round++) {
+    const s = other(e.negotiation.dealBy), l = await limitFor(db, e, s), deal = e.negotiation.deal;
+    if (!l || e.negotiation.confirmed[s]) break; // no delegated limit: the owner decides (they've been asked)
+    const c = ctx(e, s, l.mandate);
+    if (acceptable(deal, c)) {
+      agreed = true;
+      const fewer = s !== sellerOf(e) && e.wanted && unitsOf(e) < e.wanted;
+      if (l.autonomy === "close" && !fewer && !(await budgetCheck(db, e, s))) {
+        await doneConfirms(db, e, s);
+        e.negotiation.confirmed[s] = true;
+        (e.negotiation.confirmedBy ??= {})[s] = "mandate";
+        say(e, agentOf(s), "Confirmed — it's inside the limit my owner set.", "rules");
+        settle(e);
+      } else say(e, agentOf(s), `${describe(deal, c)} works for us — ${s === sellerOf(e) ? e[s].name : "my owner"} gives the final yes.`, "rules");
+      break;
+    }
+    // Outside the limit: the agent negotiates instead of asking its owner yes or no.
+    await doneConfirms(db, e, s);
+    e.negotiation.deal = null; e.negotiation.dealBy = null; e.negotiation.chatOffer = false;
+    e.negotiation.confirmed = { requester: false, provider: false };
+    const out: Turn = { kind: "collab.turn/v1", from: s, engagementId: e.id };
+    const r = await move(model, e, s, l.mandate, out, true);
+    if (r?.escalate) {
+      if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined });
+      say(e, "system", s === sellerOf(e) ? "The seller's agent is checking with the seller." : "Your agent needs you: no deal inside your limit yet.");
+      break;
+    }
+    if (!out.proposal) break;
+    // The counter is the offer on the table now. It's this side's confirmation only if its owner lets it close deals.
+    e.negotiation.deal = out.proposal; e.negotiation.dealBy = s; e.phase = "deal"; e.negotiation.chatOffer = true;
+    e.negotiation.confirmed = { requester: s === "requester" && l.autonomy === "close", provider: s === "provider" && l.autonomy === "close" };
+    if (e.negotiation.confirmed[s]) (e.negotiation.confirmedBy ??= {})[s] = "mandate";
+    const o = other(s);
+    if (await limitFor(db, e, o)) continue; // their agent answers the counter
+    if (hasOwner(e, o)) {
+      const n = unitsOf(e);
+      await ask(db, e, o, { kind: "move", question: `${e[s].name} counters: ${describe(out.proposal, c)}. Take it, offer another price, or walk away.`,
+        listPrice: out.proposal.price, counter: { price: out.proposal.price, quantity: n, total: out.proposal.price * n, by: e[s].name } });
+    }
+    break;
+  }
+  // Terms both agents accept: whoever still has to confirm them (owners who confirm deals themselves) is asked once.
+  if (agreed && e.phase === "deal") for (const x of ["requester", "provider"] as Side[])
+    if (!e.negotiation.confirmed[x] && !e.waiting[x]?.inbox.length && hasOwner(e, x)) await ask(db, e, x, { kind: "confirm" });
+  await save(db, e);
+  return e;
 }
 
 export function summary(e: Engagement): string {

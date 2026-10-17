@@ -29,6 +29,8 @@ export interface Model {
   /** One embedding per text (for search by meaning), or null on failure. */
   embed?(texts: string[], kind: "query" | "document"): Promise<number[][] | null>;
   grounded?(item: string, area: string, per?: string): Promise<GroundedResult | null>;
+  /** A Google-Search-grounded answer to any prompt (with its sources and which sentences they support). */
+  search?(prompt: string, task: string): Promise<GroundedResult | null>;
   /** Grounding with Google Maps: real places near a point that fit the request. */
   nearby?(item: string, area: string, at: { lat: number; lon: number } | null): Promise<MapsResult | null>;
 }
@@ -119,6 +121,24 @@ export function geminiFromEnv(env = process.env): (Model & { status(): ModelStat
         meter.record({ task: "price-check", model: selected, ms: Date.now() - started, usage: null, ok: false });
         lastError = `${selected}: grounded search failed`; log.warn("grounding failed", { model: selected, ms: Date.now() - started, error: String(err).slice(0, 200) });
       }
+      }
+      return null;
+    },
+    async search(prompt, task) {
+      for (const [selected, timeout] of [[policy().models.grounding, 25_000], [models[0], 15_000]] as const) {
+        const started = Date.now();
+        try {
+          const res = await ai.models.generateContent({ model: selected, contents: prompt,
+            config: { httpOptions: { timeout }, tools: [{ googleSearch: {} }], temperature: 0.1, maxOutputTokens: 2048, thinkingConfig: { thinkingLevel: "low" as any } } });
+          const u = res.usageMetadata, g = res.candidates?.[0]?.groundingMetadata;
+          meter.record({ task, model: selected, ms: Date.now() - started, ok: true, usage: { input: u?.promptTokenCount ?? 0, output: u?.candidatesTokenCount ?? 0, thinking: u?.thoughtsTokenCount ?? 0 } });
+          groundingCalls++; groundingQueries += g?.webSearchQueries?.length ?? 0;
+          return { text: res.text ?? "", sources: (g?.groundingChunks ?? []).map(c => ({ title: c.web?.title ?? "", url: c.web?.uri ?? "" })),
+            supports: (g?.groundingSupports ?? []).map(s => ({ text: s.segment?.text ?? "", indices: s.groundingChunkIndices ?? [] })), searchEntryPoint: g?.searchEntryPoint?.renderedContent ?? "" };
+        } catch (err) {
+          meter.record({ task, model: selected, ms: Date.now() - started, usage: null, ok: false });
+          log.warn("grounded search failed", { task, model: selected, error: String(err).slice(0, 200) });
+        }
       }
       return null;
     },

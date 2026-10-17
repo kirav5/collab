@@ -168,7 +168,37 @@ export function receipt(e: Engagement, sign: (uid: string, hash: string) => stri
 /** A person's track record: deals agreed, and what the other side said afterwards. */
 const STATS = "stats", STATS_TTL = 600;
 /** Forgets both parties' cached records (a deal was agreed, or what became of it changed). */
-export async function clearStats(db: Docs, e: Engagement) { for (const uid of [e.requester.uid, e.provider.uid]) if (uid) await db.delete(STATS, uid).catch(() => {}); }
+export async function clearStats(db: Docs, e: Engagement) { for (const uid of [e.requester.uid, e.provider.uid]) if (uid) { await db.delete(STATS, uid).catch(() => {}); await db.delete(RECORDS, uid).catch(() => {}); } }
+
+/**
+ * A seller's record, from the receipts registered at each agreement: sales, how many were handed over, any problems,
+ * and for each recent sale what it was, how many, the month, and its receipt's fingerprint with the seller-side
+ * signature over it — anyone can check that against Collab's public keys (/public/keys), while the receipt itself
+ * (who bought, the price) stays with the two people. Public: what the next buyer, or their agent, weighs before trusting
+ * a seller; it grows with every sale.
+ */
+const RECORDS = "records";
+export interface SaleRecord { item: string; quantity: number; month: string; handedOver: boolean; problem: boolean; receipt: { hash: string; signature: string | null } | null }
+export interface TrackRecord { sales: number; verified: number; handedOver: number; problems: number; since: number | null; recent: SaleRecord[] }
+export async function trackRecord(db: Docs, uid: string, now = Math.floor(Date.now() / 1000)): Promise<TrackRecord> {
+  const cached = (await db.get(RECORDS, uid)) as (TrackRecord & { at: number }) | null;
+  if (cached && now - cached.at < STATS_TTL) { const { at: _a, ...rest } = cached; return rest; }
+  const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
+  const sold = es.filter(e => e.phase === "agreed" && e.negotiation.deal && e[e.seller ?? "provider"].uid === uid);
+  const rows = await Promise.all(sold.map(async e => {
+    const seller = e.seller ?? "provider", buyer = seller === "provider" ? "requester" : "provider", d = e.negotiation.deal!;
+    const r = (await db.get(RECEIPTS, e.id)) as { hash: string; receipt?: Receipt } | null;
+    const at = e.agreedAt ?? e.updatedAt;
+    return { at, item: e.offer.title.split(" · ")[0].slice(0, 80), quantity: d.items?.length ? d.items.reduce((n, l) => n + l.quantity, 0) : d.terms?.quantity > 1 ? d.terms.quantity : 1,
+      month: new Date(at * 1000).toISOString().slice(0, 7), handedOver: ["delivered", "accepted"].includes(e.fulfilment?.state ?? ""),
+      problem: e.fulfilment?.state === "disputed" || e.outcome?.[buyer] === "fell_through", receipt: r ? { hash: r.hash, signature: r.receipt?.signatures?.[seller] ?? null } : null };
+  }));
+  rows.sort((a, b) => b.at - a.at);
+  const out: TrackRecord = { sales: rows.length, verified: rows.filter(x => x.receipt).length, handedOver: rows.filter(x => x.handedOver).length,
+    problems: rows.filter(x => x.problem).length, since: rows.length ? rows.at(-1)!.at : null, recent: rows.slice(0, 8).map(({ at: _a, ...x }) => x) };
+  await db.set(RECORDS, uid, { ...out, at: now });
+  return out;
+}
 export async function stats(db: Docs, uid: string, now = Math.floor(Date.now() / 1000)) {
   // Cached for ten minutes: search asks for every candidate's record, and each one is a scan of their conversations.
   const cached = (await db.get(STATS, uid)) as { deals: number; kept: number; fellThrough: number; at: number } | null;

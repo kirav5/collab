@@ -5,11 +5,14 @@ import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
 import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
-import { engagementCard, passKind } from "./cards.js";
+import { defaultHours, engagementCard, hoursOk, hoursText } from "./cards.js";
 import { local } from "./local.js";
 import { live } from "./live.js";
 import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
 import { pendingWrites, saveNote } from "./outbox.js";
+
+/** One of a seller's terms, editable: its name and what it says, in their words. */
+const termRow = (id, l = "", t = "") => `<div class="row small" style="flex-wrap:nowrap" data-term-row="${esc(id)}"><input class="field compact" data-term-label value="${esc(l)}" placeholder="Term" maxlength="40" style="max-width:130px" aria-label="Term"><input class="field" data-term-text value="${esc(t)}" placeholder="In your own words" maxlength="240" aria-label="What it says"></div>`;
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
 
@@ -81,23 +84,26 @@ export const screens = {
         }
         const open = r.slots.filter(sl => sl.start > now_);
         const taken = sl => r.holds.filter(h => h.slotId === sl.id && (h.state === "committed" || (h.state === "held" && h.expiresAt > now_))).reduce((n, h) => n + h.qty, 0);
-        return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
+        const hrs = r.hours ?? defaultHours(f.offer), rid = esc(r.id);
+        const hoursForm = `<details class="more"${r.hours || open.length ? "" : " open"}><summary>${r.hours ? `${esc(hoursText(r.hours))} · ${r.hours.minutes} min each · change` : "Set weekly hours — free times then refill on their own"}</summary>
+          <div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip"><input type="checkbox" data-hours-day="${rid}" value="${d}" ${hrs.days.includes(d) ? "checked" : ""}> ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label>`).join("")}</div>
+          <div class="row"><input class="field compact" type="time" data-hours-from="${rid}" value="${esc(hrs.from)}" style="max-width:120px"><span>to</span><input class="field compact" type="time" data-hours-to="${rid}" value="${esc(hrs.to)}" style="max-width:120px">
+            <input class="field compact" type="number" min="10" max="480" step="5" data-hours-mins="${rid}" value="${hrs.minutes}" style="max-width:80px"><span>min each</span></div>
+          <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div></details>`;
+        return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${hoursForm}${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
           <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div>
           ${connected(r) || `<div class="row small"><input class="field" type="url" placeholder="Calendar iCal URL (https)" data-ical="${esc(r.id)}"><button class="btn quiet compact" data-act="conn-ical" data-id="${esc(r.id)}">Connect calendar</button></div><span class="faint small">Only busy times are read — event titles stay with your calendar.</span>`}</div>`;
       };
-      // The seller's own terms for an offering, and instant booking. Headings are suggestions by kind; the words are theirs.
-      const HEADINGS = { booking: ["Cancellation", "Late arrival", "Re-service", "Hygiene", "Payment"], pickup: ["Returns", "Warranty", "Payment", "Delivery"], handover: ["Deposit", "Cancellation", "Documents", "Payment"] };
-      const EXAMPLE = { Cancellation: "e.g. Free up to 2 hours before", "Late arrival": "e.g. Slot held 10 minutes", "Re-service": "e.g. Free touch-up within 7 days", Hygiene: "e.g. Tools sterilised after every client",
-        Returns: "e.g. Unused items within 7 days", Warranty: "e.g. 6 months from the brand", Payment: "e.g. In the app or cash on pickup", Delivery: "e.g. Free within 3 km", Deposit: "e.g. Two months, refundable", Documents: "e.g. Rental agreement on move-in" };
+      // The seller's own terms for an offering, and instant booking: their words, a row to add one, and Gemini's
+      // suggestions for this listing on request. No headings or examples are put in front of them.
       const termsRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
-        const ps = f.offer.policies ?? [], kind = passKind({ offer: { category: f.offer.category } });
-        const heads = [...new Set([...ps.map(p => p.label), ...(HEADINGS[kind] ?? [])])].slice(0, 8);
+        const ps = f.offer.policies ?? [];
         return `<details class="more"><summary>Your terms for buyers${ps.length ? ` · ${ps.length} set` : ""}${f.offer.instant ? " · instant booking on" : ""}</summary>
-          <p class="small muted">Shown on your card and sealed into each deal's receipt exactly as you write them. Leave any blank — Collab never writes terms for you. Don't put a phone number or home address here unless you want every buyer to see it.</p>
-          ${heads.map(l => `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:104px">${esc(l)}</span><input class="field" data-policy="${esc(f.id)}" data-label="${esc(l)}" maxlength="240" value="${esc(ps.find(p => p.label === l)?.text ?? "")}" placeholder="${esc(EXAMPLE[l] ?? "")}"></div>`).join("")}
+          <p class="small muted">Shown on your card and sealed into each deal's receipt exactly as you write them. Collab never writes terms for you. Don't put a phone number or home address here unless you want every buyer to see it.</p>
+          ${ps.map(p => termRow(f.id, p.label, p.text)).join("")}${termRow(f.id)}
           <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
-          <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}">Suggest terms for this kind of offering</button></div></details>`;
+          <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}">Suggest terms for this offering</button></div></details>`;
       };
       return frame("Context", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
@@ -117,6 +123,8 @@ export const screens = {
         const text = String(f.get("text") ?? "").trim(), tier = String(f.get("tier"));
         if (!text) return true;
         busy(el, true);
+        // Something offered, added as Public, opens as an offering card first (what buyers would ask, floor kept private).
+        if (tier === "public" && await h.publicIntake(text)) { form.reset(); return true; }
         const saved = await saveNote(api, { text, tier });
         if (saved.queued) h.toast("Saved on this device — it syncs to your account when you're back online.");
         h.paint(); return true;
@@ -124,6 +132,7 @@ export const screens = {
       if (a === "fact-tier") {
         busy(el, true);
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
+        if (f && el.dataset.tier === "public" && await h.publicIntake(f.text, f.id)) return true;
         if (f) await saveNote(api, { id: f.id, text: f.text, tier: el.dataset.tier });
         h.paint(); return true;
       }
@@ -134,18 +143,22 @@ export const screens = {
         const r = await api("/api/terms/suggest", { category: el.dataset.category, text: f?.text ?? "" }).catch(err => { h.toast(err.message); return null; });
         busy(el, false);
         if (!r) return true;
-        const panel = el.closest("details");
+        if (!r.terms.length) { h.toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own."); return true; }
+        const panel = el.closest("details"), id = el.dataset.id;
+        const rows = () => [...panel.querySelectorAll(`[data-term-row="${CSS.escape(id)}"]`)];
         for (const t of r.terms) {
-          let input = panel.querySelector(`[data-policy][data-label="${CSS.escape(t.label)}"]`);
-          if (!input) { const row = document.createElement("div"); row.className = "row small"; row.style.flexWrap = "nowrap"; row.innerHTML = `<span style="min-width:104px">${esc(t.label)}</span><input class="field" data-policy="${esc(el.dataset.id)}" data-label="${esc(t.label)}" maxlength="240">`; panel.querySelector("label.row")?.before(row); input = row.querySelector("input"); }
-          if (!input.value.trim()) input.value = t.text;
+          // A term the seller already wrote under the same name is left as it is; a new one gets its own row.
+          const same = rows().find(x => x.querySelector("[data-term-label]").value.trim().toLowerCase() === t.label.toLowerCase());
+          if (same) { const input = same.querySelector("[data-term-text]"); if (!input.value.trim()) input.value = t.text; continue; }
+          const blank = rows().find(x => !x.querySelector("[data-term-label]").value.trim() && !x.querySelector("[data-term-text]").value.trim());
+          (blank ?? rows().at(-1)).insertAdjacentHTML("beforebegin", termRow(id, t.label, t.text) + (t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""));
         }
         h.toast("Suggested — edit anything, then Save terms. Nothing is saved yet.");
         return true;
       }
       if (a === "terms-save") {
         const id = el.dataset.id;
-        const policies = [...document.querySelectorAll(`[data-policy="${CSS.escape(id)}"]`)].map(i => ({ label: i.dataset.label, text: i.value.trim() })).filter(p => p.text);
+        const policies = [...document.querySelectorAll(`[data-term-row="${CSS.escape(id)}"]`)].map(r => ({ label: r.querySelector("[data-term-label]").value.trim(), text: r.querySelector("[data-term-text]").value.trim() })).filter(p => p.label && p.text);
         busy(el, true, "Saving");
         try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast("Saved — buyers see these terms on your card and receipts."); }
         catch (err) { h.toast(err.message); }
@@ -185,6 +198,15 @@ export const screens = {
         const qty = Number(document.querySelector(`[data-stock="${CSS.escape(el.dataset.id)}"]`)?.value);
         busy(el, true);
         try { await api(`/api/resources/${el.dataset.id}/stock`, { onHand: qty }); h.toast("Stock updated."); } catch (err) { h.toast(err.message); }
+        h.paint(); return true;
+      }
+      if (a === "hours-save" || a === "hours-stop") {
+        const id = el.dataset.id, val = k => document.querySelector(`[data-hours-${k}="${CSS.escape(id)}"]`)?.value;
+        const hours = a === "hours-stop" ? null : { days: [...document.querySelectorAll(`[data-hours-day="${CSS.escape(id)}"]:checked`)].map(i => Number(i.value)), from: val("from"), to: val("to"), minutes: Number(val("mins")) };
+        if (hours && !hoursOk(hours)) { h.toast("Pick at least one day, and leave room for one booking between opening and closing."); return true; }
+        busy(el, true);
+        try { await api(`/api/resources/${id}/hours`, { hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }); h.toast(hours ? "Saved — free times are ready two weeks ahead and refill on their own." : "Weekly hours stopped. Booked times stay."); }
+        catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
       if (a === "slot-add") {

@@ -205,6 +205,10 @@ function termBounds(attributes: Record<string, string>, d: Domain, side: "buyer"
 
 /** `transaction`: the owner's agent already knows this is a request or an offer (the router said so), so a message
  *  no listed category fits goes to "other" instead of being turned away. */
+// "haircuts and beard trims" → "Haircuts and Beard Trims"; a word that already has a capital (iPhone, MacBook) stays.
+const SMALL = new Set(["a", "an", "and", "at", "by", "for", "in", "of", "on", "or", "the", "to", "with"]);
+export const titleCase = (t: string) => t.replace(/\p{L}[\p{L}\p{N}'’-]*/gu, (w, at: number) => (/\p{Lu}/u.test(w) || (at > 0 && SMALL.has(w)) ? w : w[0].toUpperCase() + w.slice(1)));
+
 export async function read(text: string, side: ReadSide, model: Model | null, now: number, here?: Place | null, category?: string | null, transaction = false): Promise<ReadResult> {
   const byModel: Record<string, boolean> = {};
   if (!model) return { draft: null, category: null, byModel, problem: "The model isn't configured on this server." };
@@ -264,7 +268,7 @@ export function build(f: Fields, text: string, d: Domain, side: ReadSide, now: n
     const mandate: Mandate = { price: { opening: f.price, limit: f.limit !== null && f.limit < f.price ? f.limit : f.price }, terms: termBounds(attributes, d, "seller"), maxRounds: policy().negotiation.maxRounds };
     const title = isProperty
       ? `${attributes.bedrooms ? `${attributes.bedrooms}BHK` : "Home"} ${rent ? "for rent" : "for sale"} in ${place.name}`
-      : `${f.item.replace(/\b\p{L}/gu, c => c.toUpperCase())} · ${d.label.toLowerCase()} · ${shortPlace}`;
+      : `${titleCase(f.item)} · ${d.label.toLowerCase()} · ${shortPlace}`;
     if (mandate.price.opening !== mandate.price.limit || Object.keys(mandate.terms).length) attributes.negotiable = "yes";
     if (plan.mode) attributes.mode = plan.mode;
     const offer: Offer = { id: newId(), category: d.id, title, details: text, price: { amount: f.price, currency: "INR", period },

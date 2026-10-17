@@ -22,17 +22,18 @@ import { area, resolve, suggest } from "./market/places.ts";
 import type { Mandate, Need, Place } from "./market/types.ts";
 import { Problem, byHandle, saveFact, saveProfile, search } from "./core/directory.ts";
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, LIMITS, Refused, fresh, load, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
 import { getSafe } from "./a2a/webhooks.ts";
-import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty } from "./core/resources.ts";
+import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
-import { TermsTask } from "./core/terms.ts";
+import { suggestTerms } from "./core/terms.ts";
+import { SellerAsksTask, buyerQuestions } from "./core/intake.ts";
 import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
@@ -47,9 +48,9 @@ import { appCheckDecision, appCheckMode, appCheckOutcome, appCheckRequired, free
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
 import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
-import { offeredMoney, explicitOffer, offeredQuantity, perUnit } from "./core/direct.ts";
+import { offeredMoney, explicitOffer, offeredQuantity, amountIsTotal } from "./core/direct.ts";
 import { currencyOf, moneyText } from "./market/types.ts";
-import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats } from "./core/deals.ts";
+import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats, trackRecord } from "./core/deals.ts";
 import type { Brief, Contact, Engagement, Fact, InboxItem, Profile, Rule, SharedBrief } from "./core/model.ts";
 import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
@@ -107,7 +108,7 @@ initPush(db, env.STORE !== "memory");
 // Stable error codes (AUTHORITY_REQUIRED, VERSION_CONFLICT, …) let clients act on routine failures without reading prose;
 // the message stays for people. Codes default from the status when a route doesn't name one.
 const CODE_BY_STATUS: Record<number, string> = { 400: "INVALID_INPUT", 401: "AUTHENTICATION_REQUIRED", 403: "AUTHORITY_REQUIRED", 404: "NOT_FOUND", 409: "VERSION_CONFLICT", 413: "TOO_LARGE", 429: "RATE_LIMITED", 503: "UNAVAILABLE" };
-class HttpError extends Error { status: number; code: string; constructor(status: number, message: string, code?: string) { super(message); this.status = status; this.code = code ?? CODE_BY_STATUS[status] ?? "ERROR"; } }
+class HttpError extends Error { status: number; code: string; extra?: Record<string, unknown>; constructor(status: number, message: string, code?: string, extra?: Record<string, unknown>) { super(message); this.status = status; this.code = code ?? CODE_BY_STATUS[status] ?? "ERROR"; this.extra = extra; } }
 type Handler = (req: Request & { uid: string }, res: Response) => Promise<unknown>;
 
 async function uidOf(req: Request): Promise<string> {
@@ -360,12 +361,20 @@ app.get("/api/people/:handle", route(async req => {
   if (!p) throw new HttpError(404, "no one by that handle");
   const [all, resources, record] = await Promise.all([db.find(FACTS, [["owner", "==", p.uid]], 200) as Promise<Fact[]>,
     db.find(RESOURCES, [["owner", "==", p.uid]], 100) as Promise<Resource[]>, stats(db, p.uid)]);
+  const sales = await trackRecord(db, p.uid);
   const facts = all.filter(f => f.tier === "public").map(publicFact);
   const tracked = Object.fromEntries(resources.filter(r => r.factId).map(r => [r.factId!, r.type])) as Record<string, Tracked>;
   return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: record, facts,
     offers: facts.filter(f => f.offer).length, suggestions: suggestionsFor(p.name, facts as Fact[], tracked),
-    shop: storefront(all, resources, now(), !!p.paused), paused: !!p.paused, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
+    shop: storefront(all, resources, now(), !!p.paused), paused: !!p.paused, record: sales, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
 }));
+// A seller's record, for anyone and any agent (no sign-in): verified sales, handovers, problems, receipt fingerprints.
+app.get("/public/people/:handle/record", route(async req => {
+  const p = await byHandle(db, String(req.params.handle));
+  if (!p) throw new HttpError(404, "no one by that handle");
+  return { handle: p.handle, ...(await trackRecord(db, p.uid)), verifyWith: `${cfg.publicUrl}/public/keys`,
+    note: "Each receipt fingerprint is the SHA-256 of the sealed deal, signed for the seller. The receipt itself stays with the buyer and seller." };
+}, false));
 // Direct: a QR code (or a link) opens a conversation with one person's or shop's agent — no search. Questions go over
 // A2A like any engagement; their agent answers from what they share and can quote, negotiate and close.
 app.post("/api/people/:handle/ask", route(async req => {
@@ -378,6 +387,20 @@ app.post("/api/people/:handle/ask", route(async req => {
   if (t.length < 2) throw new HttpError(400, "Ask something.");
   // The offering this is about: named, or the only match. Otherwise no price yet — the shop's agent asks which.
   const f = (await chooseOffering(db, p.uid, typeof req.body?.offerFactId === "string" ? req.body.offerFactId : null, t)).fact;
+  // A first message that's an offer ("I'll take 12 at ₹400 each", "₹380") is handled as one, like any later one.
+  const offered = (f?.offer?.price == null || explicitOffer(t)) ? offeredMoney(t, f?.offer?.price.currency ?? policy().money.defaultCurrency) : null;
+  if (offered && f?.offer && !p.paused) {
+    const count = offeredQuantity(t, f.offer.price.period ?? null), n = count ?? 1;
+    const isTotal = amountIsTotal(t, f.offer.price.period ?? null, offered.amount, n, f.offer.price.amount ?? null);
+    // More than they have is refused before a conversation is opened.
+    const r = await resourceFor(db, f.id), at = now();
+    if (r?.type === "quantity" && certainty(r, at) === "confirmed" && availableIn(r, at) < n)
+      throw shortStock(availableIn(r, at) ? `Only ${availableIn(r, at)} in stock — they can't sell ${n}. Offer for ${availableIn(r, at)} instead?` : "They're out of stock right now.", availableIn(r, at), offered.amount, n, isTotal);
+    const { e } = await directConversation(me_, p, f, t, "question");
+    e.qa = []; // the offer is the message, not a question waiting for an answer
+    await typedOffer(e, "requester", t, offered, count, isTotal, req.uid);
+    return load(db, e.id);
+  }
   const { e, brief } = await directConversation(me_, p, f, t, "question");
   e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief, offerFactId: f?.id ?? null };
   await saveEngagement(db, e);
@@ -411,13 +434,13 @@ app.post("/api/people/:handle/order", route(async req => {
   const f = (await db.get(FACTS, text(req.body?.offerFactId, 60))) as Fact | null;
   if (!f || f.owner !== p.uid || f.tier !== "public" || !f.offer || f.offer.status === "sold") throw new HttpError(404, "That isn't on offer any more.");
   const quantity = Number(req.body?.quantity ?? 1);
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) throw new HttpError(400, "Choose how many: 1 to 99.");
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw new HttpError(400, "Choose how many: 1 to 999.");
   const listed = f.offer.price?.amount ?? null;
   const each = req.body?.price == null ? listed : Number(req.body.price);
   if (each == null || !Number.isFinite(each) || each <= 0 || each > 1e9) throw new HttpError(400, "Name a price.");
   const r = await resourceFor(db, f.id), t = now();
   if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity)
-    throw new HttpError(409, availableIn(r, t) ? `Only ${availableIn(r, t)} left.` : "Out of stock right now.", "CAPACITY_UNAVAILABLE");
+    throw new HttpError(409, availableIn(r, t) ? `Only ${availableIn(r, t)} left.` : "Out of stock right now.", "CAPACITY_UNAVAILABLE", { available: availableIn(r, t) });
   let slotLabel: string | null = null, slotId: string | null = null;
   if (req.body?.slotId) {
     slotId = text(req.body.slotId, 40);
@@ -429,13 +452,47 @@ app.post("/api/people/:handle/order", route(async req => {
   const said = orderText(item, quantity, each, listed, slotLabel);
   const { e } = await directConversation(me_, p, f, said, "order");
   e.preferredSlotId = slotId;
-  try { await offerDeal(db, e, "requester", each, said, said, quantity > 1 ? quantity : null, false); }
-  catch (err) { if (err instanceof Refused) throw new HttpError(409, err.message); throw err; }
+  try { await offerDeal(db, e, "requester", each, said, said, quantity, false); }
+  catch (err) {
+    if (err instanceof ShortStock) throw new HttpError(409, err.message, "CAPACITY_UNAVAILABLE", { available: err.available });
+    if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
+  }
+  // "Up to ₹X" with the offer: the buyer's agent negotiates against the seller's from here (never shown to them).
+  const max = num(req.body?.max, 1, 1e9);
+  if (max !== null && max >= each) await db.set(LIMITS, `brief:${e.briefId}`, { key: `brief:${e.briefId}`, owner: req.uid, mandate: { price: { opening: each, limit: max }, terms: {}, maxRounds: 5 }, autonomy: "close", expires: now() + 7 * 86_400, createdAt: now() });
   // Instant booking: at the listed price, on an offering whose seller turned it on, their agent confirms at once.
   if (f.offer.instant && each === listed) await autoConfirm(db, await load(db, e.id), "provider");
+  // An offer below the listed price goes to the seller's agent first: inside their limit it's confirmed or put to
+  // them; below it, the agent counters on its own.
+  else await respondToOffer(db, model, await load(db, e.id));
   event("order_sent", { category: f.offer.category, quantity, offer: each !== listed, slot: !!slotId });
   return load(db, e.id);
 }));
+/**
+ * "Let my agent handle it, up to ₹X" — said once, privately, by either side of a conversation: their agent gets that
+ * limit (a buyer's for this conversation; a seller's for the offering) and takes it from there, against the other
+ * side's agent, until a deal inside both limits. `close`: it may also agree for them (the default when they name the
+ * limit themselves); `negotiate`: they give the final yes. Never shown to the other side.
+ */
+async function delegate(e: Engagement, uid: string, limit: number, autonomy: "close" | "negotiate") {
+  const side = e.requester.uid === uid ? "requester" : "provider", selling = (e.seller ?? "provider") === side;
+  if (side === "provider" && !e.offer.factId) throw new HttpError(400, "Name a price in the chat instead.");
+  const key = side === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
+  const mine = side === "provider" ? e.negotiation.provider : e.negotiation.requester, last = mine.at(-1)?.price;
+  const opening = selling ? Math.max(limit, e.offer.price ?? limit, last ?? 0) : Math.min(limit, last ?? Math.round(limit * 0.85));
+  await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening, limit }, terms: {}, maxRounds: 5 }, autonomy, expires: now() + 7 * 86_400, createdAt: now() });
+  await doneConfirms(db, e, side); await saveEngagement(db, e);
+  return respondToOffer(db, model, await load(db, e.id));
+}
+app.post("/api/engagements/:id/delegate", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended.");
+  const limit = num(req.body?.limit, 1, 1e9);
+  if (limit === null) throw new HttpError(400, "Name the most you'd pay (or least you'd take).");
+  await delegate(e, req.uid, limit, req.body?.autonomy === "negotiate" ? "negotiate" : "close");
+  return load(db, e.id);
+}));
+
 // A follow-up in an open conversation, from either side: it goes over A2A like any turn, and the other agent answers
 // from what its owner shares or asks its owner (who gets a notification).
 app.post("/api/engagements/:id/ask", route(async req => {
@@ -451,27 +508,35 @@ app.post("/api/engagements/:id/ask", route(async req => {
   // same price again is just chat. A replaced offer's pending confirmation goes stale (offerDeal).
   const canOffer = e.phase === "deal" ? explicitOffer(q) : e.offer.price == null || explicitOffer(q);
   let offered = canOffer ? offeredMoney(q, e.offer.currency ?? policy().money.defaultCurrency) : null;
-  const count = offeredQuantity(q, e.offer.unit), isTotal = !perUnit(q, e.offer.unit);
+  // How many it's for: a count said now, else what the conversation is already about. Whether the amount is each or
+  // in all: the words, else the reading closer to the price on the table.
+  const count = offeredQuantity(q, e.offer.unit), n = count ?? unitsOf(e), table = e.negotiation.deal;
+  const ref = table ? (table.items?.length ? table.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) / table.items.reduce((t, l) => t + l.quantity, 0) : table.price) : e.offer.price;
+  const isTotal = offered ? amountIsTotal(q, e.offer.unit, offered.amount, n, ref ?? null) : true;
+  // A count the buyer says ("do you have 40 lamps?") is what the conversation is about from now on, offer or not.
+  if (count && !offered && side !== (e.seller ?? "provider") && count !== unitsOf(e)) {
+    e.quantity = count;
+    await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, quantity: count } : null));
+  }
   if (offered && e.phase === "deal" && e.negotiation.deal) {
     // The same offer again (same number of items, same total) is chat; a different count or total replaces it.
-    const n = count ?? 1, total = isTotal || n === 1 ? offered.amount : offered.amount * n;
-    const pending = e.negotiation.deal, pn = pending.terms?.quantity > 1 ? pending.terms.quantity : 1;
+    const total = isTotal || n === 1 ? offered.amount : offered.amount * n;
+    const pending = e.negotiation.deal, pn = pending.items?.length ? pending.items.reduce((t, l) => t + l.quantity, 0) : pending.terms?.quantity > 1 ? pending.terms.quantity : 1;
     const ptotal = pending.items?.length ? pending.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) : pending.price * pn;
-    if (n === pn && total === ptotal) offered = null;
-  }
-  if (offered) {
-    if (!policy().money.currencies.includes(offered.currency))
-      throw new HttpError(400, `Payments in ${offered.currency} aren't supported yet — use ${policy().money.currencies.join(" or ")}.`, "UNSUPPORTED_CURRENCY");
-    if (e.offer.currency && e.offer.currency !== offered.currency)
-      throw new HttpError(400, `This conversation is in ${e.offer.currency}; offer in ${e.offer.currency}.`, "UNSUPPORTED_CURRENCY");
-    e.offer.currency = offered.currency;
-    await offerDeal(db, e, side, offered.amount, q, q, count, isTotal);
-    // A buyer taking an instant-booking seller's listed price is booked at once, as from the seller's card.
-    if (side === "requester" && e.offer.factId && e.offer.price != null && !count && offered.amount === e.offer.price) {
-      const f = (await db.get(FACTS, e.offer.factId)) as Fact | null;
-      if (f?.offer?.instant) await autoConfirm(db, await load(db, e.id), "provider");
+    if (n === pn && total === ptotal) {
+      // The other side's offer at its own terms: that's a yes. One's own offer again is just chat.
+      if (e.negotiation.dealBy && e.negotiation.dealBy !== side && !e.negotiation.confirmed[side]) {
+        try { await takeOffer(db, e, side, q); } catch (err) { if (err instanceof Refused) throw new HttpError(409, err.message); throw err; }
+        return load(db, e.id);
+      }
+      offered = null;
     }
-    return load(db, e.id);
+  }
+  if (offered) { await typedOffer(e, side, q, offered, count, isTotal, req.uid); return load(db, e.id); }
+  // A reply typed while their agent waits on them for an answer is that answer — not a new question for the other side.
+  if (!/\?\s*$/.test(q) && !/^(why|is|are|was|does|did|do|can|could|will|would|when|where|which|who|what|how)\b/i.test(q)) {
+    const waiting = await openAnswer(e.id, req.uid);
+    if (waiting) { await answerWith(waiting, q); return load(db, e.id); }
   }
   e.events.push({ at: now(), who: side, text: q, by: "owner" });
   await saveEngagement(db, e);
@@ -520,9 +585,14 @@ app.post("/api/facts", route(async req => {
   const b = req.body ?? {};
   if (!["private", "protected", "public"].includes(b.tier)) throw new HttpError(400, "Tier must be private, protected or public.");
   await spend(req.uid, 2);
-  return publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: text(b.text, 1000), tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true,
+  // A written floor ("lowest 29,000") never reaches public text, however it's published — the offering card keeps it
+  // as the private limit; here it's simply left out. Small numbers ("minimum 2 hours") aren't floors.
+  const raw = text(b.text, 1000), floor = b.tier === "public" && b.source !== "chat" ? statedFloor(raw) : null;
+  const body = floor !== null && floor >= 50 && (numbers(raw).some(n => n > floor) || STRONG_FLOOR.test(raw)) ? withoutAmount(raw, floor) : raw;
+  const fact = publicFact(await saveFact(db, model, await me(req.uid), { id: b.id ? text(b.id, 40) : undefined, text: body, tier: b.tier, topics: Array.isArray(b.topics) ? b.topics.map((t: unknown) => text(t, 24)) : undefined, negotiable: b.negotiable === true,
     // A chat memory is always Private: sharing it means rewriting it as a fact of its own.
     ...(b.source === "chat" ? { source: "chat" as const, tier: "private" as const } : {}) }));
+  return body === raw ? fact : { ...fact, floorKeptPrivate: true };
 }));
 app.post("/api/facts/:id/delete", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
@@ -602,8 +672,23 @@ app.post("/api/offers/draft", route(async req => {
   const t = text(req.body?.text, 1000).trim();
   if (t.length < 4) throw new HttpError(400, "Say a bit more.");
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
-  const r = await read(t, "sell", model, now(), here, null, true);
-  if (r.draft?.kind !== "offer") return { offer: null, floor: null, publicText: t };
+  // Something being made public from the notes is read strictly (a plain fact stays a plain note); something the
+  // owner said they're selling is read as an offering even when it's vague.
+  const r = await read(t, "sell", model, now(), here, null, req.body?.note !== true);
+  const dom = domainOf(r.draft?.kind === "offer" ? r.draft.offer.category : r.category ?? "");
+  // What buyers of this kind would otherwise ask, picked by Gemini for this offering, with tap-to-answer options.
+  const asks = async (attrs: Record<string, unknown>) => {
+    const hints = (dom?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).map(x => ({ label: x.label, ask: x.ask! }));
+    return (await decide(model, SellerAsksTask, { text: t, category: dom?.label ?? "", known: Object.entries(attrs).map(([k, v]) => `${k}: ${v}`), hints })).output;
+  };
+  if (r.draft?.kind !== "offer") {
+    if (!dom) return { offer: null, floor: null, publicText: t, problem: r.problem ?? null };
+    // An offering too vague to list (no price, or no place): the card asks for the basics, then reads it again. A
+    // written floor is kept for the card, never in the text.
+    const written = statedFloor(t);
+    return { offer: null, floor: written, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing: await asks({}),
+      basics: { category: dom.id, label: dom.label, unit: dom.priceUnit ?? null, area: here?.name ?? null } };
+  }
   // The model reads a stated floor; a written one ("lowest 600", "won't go below 600") is caught either way, so the
   // directory never shows it whatever the model does.
   const written = statedFloor(t);
@@ -611,18 +696,18 @@ app.post("/api/offers/draft", route(async req => {
   const floor = read_ ?? (written !== null && written < r.draft.offer.price.amount ? written : null);
   const publicText = floor ? withoutAmount(t, floor) : t;
   // What buyers of this kind usually ask that the offering doesn't say yet — the seller can answer now, publicly.
-  const attrs = r.draft.offer.attributes, dom = domainOf(r.draft.offer.category);
-  const missing = (dom?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).slice(0, 4).map(x => ({ key: x.key, label: x.label, ask: x.ask }));
-  return { offer: { ...r.draft.offer, details: publicText }, floor, publicText, missing };
+  return { offer: { ...r.draft.offer, details: publicText }, floor, publicText, missing: await asks(r.draft.offer.attributes) };
 }));
 
 // Terms a seller might state, suggested for their kind of offering — returned for them to edit; nothing is saved here.
 app.post("/api/terms/suggest", route(async req => {
   await spend(req.uid, 2);
-  const out = await decide(model, TermsTask, { category: text(req.body?.category, 40), offering: text(req.body?.text, 600) });
-  return { terms: out.output.terms, byModel: out.byModel };
+  const out = await suggestTerms(model, text(req.body?.category, 40), text(req.body?.text, 600));
+  return { terms: out.terms, byModel: out.byModel, grounded: out.grounded };
 }));
 
+/** Words that only ever mean a floor ("minimum" or "at least" can mean a quantity). */
+const STRONG_FLOOR = /\b(lowest|won'?t go below|not (?:go )?below|can go (?:down )?to|floor|bottom line)\b/i;
 function statedFloor(t: string): number | null {
   const m = t.replace(/(\d),(?=\d)/g, "$1").match(/\b(?:lowest|minimum|min\.?|at least|won'?t go below|not (?:go )?below|can go (?:down )?to|floor(?: is)?|bottom line)\s*(?:is\s*)?(?:₹|rs\.?\s*|inr\s*)?(\d+(?:\.\d+)?)\s*(k|thousand|lakh|l)?\b/i);
   if (!m) return null;
@@ -686,6 +771,12 @@ app.post("/api/briefs", route(async req => {
   event("request_sent", { category: b.shared.category || "none", found: found.found.length });
   return { brief: b, goal, ...found };
 }));
+/** How many a request asks for ("200 lamps"), as read from it: its quantity, else 1. */
+function wantedUnits(n: Need): number {
+  const raw = n.attributes?.quantity ?? n.filters?.find(f => f.id === "quantity")?.value;
+  const v = Number(String(raw ?? "").replace(/,/g, "").match(/\d+/)?.[0]);
+  return Number.isInteger(v) && v > 1 && v <= 100_000 ? v : 1;
+}
 app.post("/api/briefs/:id/engage", route(async req => {
   const owner = await me(req.uid);
   const brief = (await db.get(BRIEFS, String(req.params.id))) as Brief | null;
@@ -699,6 +790,15 @@ app.post("/api/briefs/:id/engage", route(async req => {
     const e = fresh({ briefId: brief.id, brief: brief.shared, requester: { uid: owner.uid, handle: owner.handle, name: owner.name }, provider: { uid: p.uid, handle: p.handle, name: p.name },
       offer: f.offer ? { factId: f.id, title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, category: f.offer.category, ...(f.offer.policies?.length ? { policies: f.offer.policies } : {}) } : { factId: f.id, title: f.text.slice(0, 80), price: null, unit: null, category: null } });
     e.events.push({ at: now(), who: "system", text: `Your agent is contacting ${p.name}'s agent over A2A.` });
+    // How many the request is for: every offer in this conversation is for that many. A seller with fewer in stock
+    // can sell what they have — the buyer is told, and decides (their agent never closes a smaller deal for them).
+    const want = wantedUnits(brief.need);
+    if (want > 1) e.quantity = want;
+    const free = want > 1 && f.offer ? await inStock(db, e) : null;
+    if (free !== null && free < want) {
+      if (free > 0) { e.quantity = free; e.wanted = want; e.events.push({ at: now(), who: "system", text: `${p.name} has ${free} in stock — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
+      else e.events.push({ at: now(), who: "system", text: `${p.name} is out of stock right now — you can still ask when more come in.` });
+    }
     if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
     // The first turn waits in the outbox; the device starts it with /run (each run is one bounded request).
     e.outbox = { kind: TURN, from: "requester", engagementId: e.id, brief: brief.shared, offerFactId: f.id };
@@ -994,9 +1094,18 @@ app.post("/api/resources", route(async req => {
   if (!f || f.owner !== req.uid || f.tier !== "public" || !f.offer) throw new HttpError(404, "Track stock for one of your public offerings.", "NOT_FOUND");
   if (await resourceFor(db, factId)) throw new HttpError(409, "This offering already has a ledger — update it instead.", "VERSION_CONFLICT");
   const type = req.body?.type === "slots" ? "slots" : "quantity";
+  // Weekly opening hours: bookable times are made from them and kept two weeks ahead — the seller states them once.
+  const hours = req.body?.hours != null ? validHours(req.body.hours) : null;
+  if (req.body?.hours != null && !hours) throw new HttpError(400, "Opening hours need at least one day, and a booking has to fit between opening and closing.", "INVALID_INPUT");
   const slots = Array.isArray(req.body?.slots) ? req.body.slots.slice(0, 100).map((x: any) => ({ start: num(x?.start, 0, 4e9) ?? 0, end: num(x?.end, 0, 4e9) ?? 0, capacity: num(x?.capacity, 1, 1000) ?? 1 })) : [];
-  try { return await createResource(db, req.uid, { factId, type, title: f.offer.title, onHand: type === "quantity" ? Number(req.body?.onHand) : 0, slots, timezone: text(req.body?.timezone, 60) || undefined }, now()); }
+  try { return await createResource(db, req.uid, { factId, type, title: f.offer.title, onHand: type === "quantity" ? Number(req.body?.onHand) : 0, slots, timezone: text(req.body?.timezone, 60) || undefined, hours: type === "slots" ? hours : null }, now()); }
   catch (err) { if (err instanceof CapacityError) throw new HttpError(400, err.message, "INVALID_INPUT"); throw err; }
+}));
+app.post("/api/resources/:id/hours", route(async req => {
+  const hours = req.body?.hours === null ? null : validHours(req.body?.hours);
+  if (req.body?.hours !== null && !hours) throw new HttpError(400, "Opening hours need at least one day, and a booking has to fit between opening and closing.", "INVALID_INPUT");
+  try { return await setHours(db, String(req.params.id), req.uid, hours, typeof req.body?.timezone === "string" ? req.body.timezone : null, now()); }
+  catch (err) { if (err instanceof CapacityError) throw new HttpError(404, err.message, "NOT_FOUND"); throw err; }
 }));
 app.post("/api/resources/:id/stock", route(async req => {
   try { return await setStock(db, String(req.params.id), req.uid, Number(req.body?.onHand), now()); }
@@ -1130,23 +1239,85 @@ app.post("/api/inbox/:id", route(async req => {
   const item = { ...found, status: "open" as const };
   const b = req.body ?? {};
   const reopen = () => db.update(INBOX, item.id, (cur: InboxItem | null) => (cur?.status === "working" ? { ...cur, status: "open" } : null));
+  // An answer that states an amount is also an offer: made first, so the other side's agent answers the offer, not a
+  // stale position.
+  await offerFromAnswer(item, typeof b.text === "string" ? b.text : "");
   const r = await resolveItem(db, model, item, { text: typeof b.text === "string" ? b.text : undefined, share: b.share, decline: !!b.decline, confirm: !!b.confirm,
     mandate: item.kind === "move" ? mandateFrom(b.mandate) ?? undefined : undefined }).catch(async err => { await reopen(); throw err; });
   if (r.turn) {
     if (item.side === "requester") await sendTurn(cfg, e.id, r.turn);
     else await deliverProviderTurn(cfg, a2a.store, e.id, r.turn);
   }
-  // An answer that names a price ("ok, I'll take it for 80rs") in a chat with no listed price offers that deal.
-  const named = item.kind === "answer" && typeof b.text === "string" ? offeredMoney(b.text, e.offer.currency ?? policy().money.defaultCurrency) : null;
-  if (named && policy().money.currencies.includes(named.currency)) {
-    const now_ = await load(db, e.id);
-    if (now_.offer.price == null && ["asking", "negotiating"].includes(now_.phase) && (!now_.offer.currency || now_.offer.currency === named.currency)) {
-      now_.offer.currency = named.currency;
-      await offerDeal(db, now_, item.side, named.amount, null, b.text);
-    }
-  }
   return load(db, e.id);
 }));
+
+/**
+ * A typed offer in a conversation — the first message or a later one. More than the seller has is refused with the
+ * offer that fits; an instant-booking seller's listed price is booked at once; otherwise the other side's agent
+ * answers it within its owner's limit (or the owner decides).
+ */
+async function typedOffer(e: Engagement, side: "requester" | "provider", q: string, offered: { amount: number; currency: string }, count: number | null, isTotal: boolean, uid: string) {
+  if (!policy().money.currencies.includes(offered.currency))
+    throw new HttpError(400, `Payments in ${offered.currency} aren't supported yet — use ${policy().money.currencies.join(" or ")}.`, "UNSUPPORTED_CURRENCY");
+  if (e.offer.currency && e.offer.currency !== offered.currency)
+    throw new HttpError(400, `This conversation is in ${e.offer.currency}; offer in ${e.offer.currency}.`, "UNSUPPORTED_CURRENCY");
+  e.offer.currency = offered.currency;
+  const n = count ?? unitsOf(e);
+  try { await offerDeal(db, e, side, offered.amount, q, q, count, isTotal); }
+  catch (err) {
+    if (err instanceof ShortStock) throw shortStock(err.message, err.available, offered.amount, n, isTotal);
+    if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
+  }
+  // A buyer taking an instant-booking seller's listed price is booked at once, as from the seller's card.
+  const d = (await load(db, e.id)).negotiation.deal;
+  if (side === "requester" && e.offer.factId && e.offer.price != null && d && !d.items?.length && d.price === e.offer.price) {
+    const f = (await db.get(FACTS, e.offer.factId)) as Fact | null;
+    if (f?.offer?.instant) await autoConfirm(db, await load(db, e.id), "provider");
+  }
+  // A question about money they were waiting to answer ("what's your budget?") is answered by the offer itself.
+  const waiting = await openAnswer(e.id, uid);
+  if (waiting && /budget|price|pay|spend|offer|rate|cost|how much/i.test(waiting.question ?? "")) await answerWith(waiting, q).catch(() => {});
+  await respondToOffer(db, model, await load(db, e.id));
+}
+/** "Only 15 in stock" — with the offer that fits, at the same price each, ready to send. */
+const shortStock = (message: string, available: number, amount: number, n: number, isTotal: boolean) =>
+  new HttpError(409, message, "CAPACITY_UNAVAILABLE", { available, ...(available > 0 ? { suggest: `I'll take ${available} at ₹${Math.round(isTotal ? amount / n : amount).toLocaleString("en-IN")} each` } : {}) });
+
+/** The open question this person's agent is waiting on them to answer in a conversation, if any. */
+async function openAnswer(engagementId: string, uid: string): Promise<InboxItem | null> {
+  const open = (await db.find(INBOX, [["engagementId", "==", engagementId], ["status", "==", "open"]], 20)) as InboxItem[];
+  return open.find(i => i.owner === uid && i.kind === "answer") ?? null;
+}
+/** Answers it with what they typed (claimed first, so two devices can't both answer), and sends the turn on. */
+async function answerWith(item: InboxItem, text: string) {
+  let claimed = false;
+  await db.update(INBOX, item.id, (cur: InboxItem | null) => { claimed = cur?.status === "open"; return claimed ? { ...cur!, status: "working" } : null; });
+  if (!claimed) return;
+  await offerFromAnswer(item, text);
+  const r = await resolveItem(db, model, { ...item, status: "open" }, { text })
+    .catch(async err => { await db.update(INBOX, item.id, (cur: InboxItem | null) => (cur?.status === "working" ? { ...cur, status: "open" } : null)); throw err; });
+  if (r.turn) {
+    if (item.side === "requester") await sendTurn(cfg, item.engagementId, r.turn);
+    else await deliverProviderTurn(cfg, a2a.store, item.engagementId, r.turn);
+  }
+}
+/**
+ * An answer that states an amount ("200rs", "my budget is ₹200", or any price in a chat with no listed price) is also
+ * that person's offer: it goes into the negotiation, where the other side's agent counters or accepts within its
+ * limit — not to the other side as text to read.
+ */
+async function offerFromAnswer(item: InboxItem, text: string) {
+  if (item.kind !== "answer" || !text) return;
+  const cur = await load(db, item.engagementId);
+  const named = offeredMoney(text, cur.offer.currency ?? policy().money.defaultCurrency);
+  if (!named || !policy().money.currencies.includes(named.currency) || (cur.offer.currency && cur.offer.currency !== named.currency)) return;
+  if (!["asking", "negotiating", "deal"].includes(cur.phase) || (cur.offer.price != null && !explicitOffer(text))) return;
+  cur.offer.currency = named.currency;
+  const count = offeredQuantity(text, cur.offer.unit);
+  try { await offerDeal(db, cur, item.side, named.amount, null, text, count, amountIsTotal(text, cur.offer.unit, named.amount, count ?? unitsOf(cur), cur.negotiation.deal?.price ?? cur.offer.price ?? null)); }
+  catch (err) { if (err instanceof ShortStock || err instanceof Refused) return; throw err; }
+  await respondToOffer(db, model, await load(db, cur.id));
+}
 
 // Cloud Scheduler runs the due watches every 15 minutes. Outside /api (no App Check — it's not the web app);
 // it must carry the cron token derived from the agent secret.
@@ -1182,6 +1353,15 @@ app.post("/cron/run", async (req, res, next) => {
     // Connected calendars refresh every run; a feed that fails leaves its grant degraded and its data going stale.
     const calendars = ((await db.find(GRANTS, [["provider", "==", "ical"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked");
     const synced = (await Promise.all(calendars.map(g => syncIcal(db, g, url => getSafe(url), now())))).filter(x => x.synced).length;
+    // Listings published before buyer questions were written for them (or while Gemini was away) get theirs.
+    const unasked = ((await db.find(FACTS, [["tier", "==", "public"]], 300)) as Fact[]).filter(f => f.offer && !f.offer.questions?.length).slice(0, 10);
+    for (const f of unasked) {
+      const questions = await buyerQuestions(model, f.offer!, f.text).catch(() => null);
+      if (questions) await db.update(FACTS, f.id, (cur: Fact | null) => (cur?.offer && cur.text === f.text ? { ...cur, offer: { ...cur.offer, questions } } : null));
+    }
+    // Weekly hours keep making bookable times two weeks ahead.
+    const schedules = ((await db.find(RESOURCES, [["type", "==", "slots"]], 300)) as Resource[]).filter(x => needsTopUp(x, now()));
+    for (const x of schedules) await topUpHours(db, x.id, now()).catch(err => log.warn("hours top-up failed", { resource: x.id, error: String(err).slice(0, 120) }));
     // Planned goals move on when a step's dependency is done (searching only — nothing is committed).
     const planned = ((await db.find(GOALS, [["closed", "==", null]], 100)) as Goal[]).filter(g => g.plan?.some(st => st.state !== "done" && st.state !== "failed")).slice(0, 25);
     for (const g of planned) await advancePlan(db, model, g, ((await db.get(PROFILES, g.owner)) as Profile | null)?.area ?? null, now()).catch(err => log.warn("plan advance failed", { goal: g.id, error: String(err).slice(0, 120) }));
@@ -1195,7 +1375,7 @@ app.post("/cron/run", async (req, res, next) => {
       }
       if (g.allOrNothing && !g.compensation && (await compensate(db, g, now()))) compensated++;
     }
-    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, plans: planned.length, rounds, compensated });
+    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, schedules: schedules.length, questioned: unasked.length, plans: planned.length, rounds, compensated });
     res.json({ ...r, recovered, calendars: { total: calendars.length, synced } });
   } catch (e) { next(e); }
 });
@@ -1220,7 +1400,7 @@ app.use(express.static(WEB_DIR, { setHeaders: res => res.set("cache-control", "n
 app.get(/^\/(?!api\/|a2a\/).*/, (_, res) => res.sendFile(`${WEB_DIR}/index.html`));
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code });
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, code: err.code, ...(err.extra ?? {}) });
   if (err instanceof Problem) return res.status(400).json({ error: err.message, code: "INVALID_INPUT" });
   if (err instanceof Refused) return res.status(403).json({ error: err.message, code: "AUTHORITY_REQUIRED" });
   if (err instanceof Stale) return res.status(409).json({ error: err.message, code: "VERSION_CONFLICT" });

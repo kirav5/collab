@@ -21,27 +21,25 @@ test("item names read naturally: plain words lower-cased, brands and sizes kept"
   assert.equal(itemName("Guitar lessons"), "guitar lessons");
 });
 
-test("a shop with tracked stock is asked about stock, price and pickup; a tutor about times, rate and a trial", () => {
-  const bottles = forOffer(offer("f1", "goods", "Water Bottles · items for sale"), "quantity").map(s => s.text);
-  assert.deepEqual(bottles, ["Do you have water bottles in stock?", "What's your best price for water bottles?", "Can I order now and collect today?"]);
-  const guitar = forOffer(offer("f2", "lessons", "Guitar lessons"), "slots").map(s => s.text);
-  assert.equal(guitar[0], "What times are free this week for guitar lessons?");
-  assert.equal(guitar[2], "Can I book a trial session?");
-  assert.equal(forOffer(offer("f3", "lessons", "Guitar lessons"), null)[0].text, "Are you free this week for guitar lessons?", "no slots: ask, don't promise a booking");
-  assert.equal(forOffer(offer("f4", "goods", "Old cycle", null))[1].text, "How much is old cycle?", "no price listed: ask it");
-  assert.equal(forOffer(offer("f5", "property-rent", "2BHK in Indiranagar"))[1].text, "Is the rent negotiable?");
-  assert.equal(forOffer(offer("f6", "food", "Birthday cakes"))[0].text, "Can you make birthday cakes for tomorrow?");
+test("a listing's own questions (written by Gemini when it was published) come first", () => {
+  const f = offer("q", "beauty", "Haircuts and Beard Trims · Koramangala");
+  f.offer!.questions = [{ label: "Next free", text: "Any free time this evening?" }, { label: "Price", text: "Is ₹450 your best price?" }, { label: "Fade", text: "Do you do skin fades?" }];
+  assert.deepEqual(forOffer(f, "slots").map(s => s.text), ["Any free time this evening?", "Is ₹450 your best price?", "Do you do skin fades?"]);
 });
 
-test("every category gets three distinct, specific questions with no unexplained 'then' or 'that'", () => {
-  const cats = ["property-sale", "property-rent", "wholesale", "freight", "services", "equipment-rental", "commercial-lease", "manufacturing", "rides", "food", "lessons", "tasks", "goods", "vehicles", "stays", "jobs", "events", "pets", "other", "unknown-category"];
-  for (const c of cats) {
-    const s = forOffer(offer("x", c, "Thing"));
-    assert.equal(s.length, 3, c);
-    assert.equal(new Set(s.map(x => x.text)).size, 3, `${c}: distinct`);
+test("without them, questions come only from the listing's data — what's tracked, how it's bought, its price — never canned wording by category", () => {
+  assert.deepEqual(forOffer(offer("f1", "goods", "Water Bottles · items for sale"), "quantity").map(s => s.text), ["Do you have water bottles in stock?", "What's your best price for water bottles?"]);
+  assert.equal(forOffer(offer("f2", "lessons", "Guitar lessons"), "slots")[0].text, "What's your next free time for guitar lessons?");
+  assert.equal(forOffer(offer("f3", "lessons", "Guitar lessons"), null)[0].text, "When are you free for guitar lessons?", "no times tracked: ask, don't promise a booking");
+  assert.equal(forOffer(offer("f4", "goods", "Old cycle", null))[1].text, "How much is old cycle?", "no price listed: ask it");
+  assert.equal(forOffer(offer("f5", "property-rent", "2BHK in Indiranagar"))[0].text, "Is 2BHK in Indiranagar still available?");
+  const cats = ["property-sale", "property-rent", "wholesale", "freight", "services", "equipment-rental", "commercial-lease", "manufacturing", "rides", "food", "lessons", "tasks", "goods", "vehicles", "stays", "jobs", "events", "pets", "beauty", "other", "unknown-category"];
+  for (const c of cats) for (const tracked of [null, "quantity", "slots"] as const) {
+    const s = forOffer(offer("x", c, "Thing"), tracked);
+    assert.equal(new Set(s.map(x => x.text)).size, s.length, `${c}: distinct`);
     for (const x of s) {
-      assert.match(x.text, /\?$|\.$/, `${c}: a question`);
-      assert.ok(!/\b(by then|that time|that date|my dates)\b/i.test(x.text), `${c}: "${x.text}" refers to nothing`);
+      assert.match(x.text, /\bthing\b/i, `${c}: about the listing itself — "${x.text}"`);
+      assert.ok(!/\b(RC|insurance|GST|deposit|trial|home visits?|salary|fare|operator|papers|cancellation)\b/i.test(x.text), `${c}: "${x.text}" is category wording`);
     }
   }
   assert.equal(kindOf("unknown-category"), "other");
@@ -49,7 +47,7 @@ test("every category gets three distinct, specific questions with no unexplained
 
 test("several offerings: the first two, a price, and what else; a person with nothing on offer is asked about themselves", () => {
   const two = suggestionsFor("Shop", [offer("a", "goods", "Steel bottles", 400, 5), offer("b", "goods", "Lunch boxes", 300, 9)]);
-  assert.deepEqual(two.map(s => s.text), ["Do you have lunch boxes in stock?", "Do you have steel bottles in stock?", "What's your best price for lunch boxes?", "What else do you have?"], "newest first");
+  assert.deepEqual(two.map(s => s.text), ["Can I get lunch boxes now?", "Can I get steel bottles now?", "What's your best price for lunch boxes?", "What else do you have?"], "newest first");
   const anu = suggestionsFor("Anu Sharma", []).map(s => s.text);
   assert.deepEqual(anu, ["What are you looking for right now?", "Are you free this weekend?", "What do you do, Anu?"]);
   assert.ok(!anu.some(t => /stock|price|order|pick/i.test(t)), "no shop questions for a person who sells nothing");
@@ -108,10 +106,19 @@ test("fair prices for services are read per hour (or night, order…), not per i
   assert.equal(priceEvidence(g, "item").status, "insufficient_evidence", "per-hour prices aren't read as per item");
 });
 
-test("a salon or barber is asked about its next slot, price and home visits; its deals get a booking pass", async () => {
-  const cut = forOffer(offer("b", "beauty", "Men's haircut & styling · Indiranagar"), "slots").map(s => s.text);
-  assert.deepEqual(cut, ["What's your next free slot for men's haircut & styling?", "What's your best price for men's haircut & styling?", "Do you do home visits, and what does that cost?"]);
+test("a salon or barber's deals get a booking pass; titles keep brand capitals and small words", async () => {
   assert.equal(passKind(paidDeal("beauty", "paid")), "booking");
+  const { titleCase } = await import("../src/market/read.ts");
+  assert.equal(titleCase("haircuts and beard trims"), "Haircuts and Beard Trims");
+  assert.equal(titleCase("old iPhone 13 pro max"), "Old iPhone 13 Pro Max", "a word with its own capitals keeps them");
+});
+
+test("buyer questions from Gemini are kept only when they're questions without contact details", async () => {
+  const { BuyerQuestionsTask } = await import("../src/core/intake.ts");
+  const i = { item: "haircuts", title: "Haircuts", text: "Haircuts at my studio", attributes: {}, price: "₹450", action: "book a time" };
+  assert.equal(BuyerQuestionsTask.validate([{ label: "Free", text: "Any free time today?" }, { label: "Phone", text: "What's your phone number?" }], i), null, "one real question isn't enough");
+  assert.equal(BuyerQuestionsTask.validate([{ label: "Free", text: "Any free time today?" }, { label: "Price", text: "Is ₹450 your best price?" }, { label: "Fade", text: "Do you do fades" }], i)?.length, 2, "not a question: dropped");
+  assert.deepEqual(BuyerQuestionsTask.fallback(i), [], "no canned questions");
 });
 
 test("suggested terms are short, carry no contact details or invented amounts, and fall back by kind of offering", async () => {
@@ -120,12 +127,26 @@ test("suggested terms are short, carry no contact details or invented amounts, a
   const ok = TermsTask.validate({ terms: [{ label: "Late arrival", text: "Your slot is held for 10 minutes." }, { label: "Home visits", text: "Home visits cost ₹200 extra within 5 km." }] }, input);
   assert.equal(ok?.terms.length, 2, "an amount the offering states is fine");
   assert.equal(TermsTask.validate({ terms: [{ label: "Cancellation", text: "Cancel late and pay ₹999 as a fee." }, { label: "Contact", text: "Call 98765 43210 to reschedule." }] }, input), null, "invented amounts and phone numbers are dropped");
-  assert.deepEqual(TermsTask.fallback(input).terms.map(t => t.label), ["Cancellation", "Late arrival", "Re-service", "Hygiene & safety"]);
-  assert.deepEqual(TermsTask.fallback({ category: "goods", offering: "x" }).terms[0].label, "Returns");
+  assert.deepEqual(TermsTask.fallback(input).terms, [], "no canned terms: without the model the seller writes their own")
 });
 
 test("time questions are recognised (so a seller with bookable slots doesn't ask them)", async () => {
   const { isTimeQuestion } = await import("../src/core/engage.ts");
   for (const q of ["What time suits you?", "When would you like to come in?", "Which day works for you?", "What's your preferred time?"]) assert.equal(isTimeQuestion(q), true, q);
   for (const q of ["Which style would you like?", "Any reference photo?", "How long is your hair now?"]) assert.equal(isTimeQuestion(q), false, q);
+});
+
+test("terms suggested from the web keep their sources, and go through the same checks", async () => {
+  const { termsFromSearch, suggestTerms } = await import("../src/core/terms.ts");
+  const g = { text: "**Warranty:** One year manufacturer warranty on the LED and the arm.\n- Returns: Unused lamps can be returned within 7 days in original packaging.\nCall: 98765 43210 to reschedule.\nsome prose without a label",
+    sources: [{ title: "Brand warranty page", url: "https://brand.example/warranty" }, { title: "Shop returns", url: "https://shop.example/returns" }],
+    supports: [{ text: "One year manufacturer warranty on the LED and the arm.", indices: [0] }, { text: "Unused lamps can be returned within 7 days", indices: [1] }], searchEntryPoint: "" };
+  const found = termsFromSearch(g);
+  assert.deepEqual(found.slice(0, 2).map(t => [t.label, t.sources[0]?.url]), [["Warranty", "https://brand.example/warranty"], ["Returns", "https://shop.example/returns"]]);
+  // With a model that searches: the contact line is dropped; sources come back with the terms.
+  const model: any = { name: "t", complete: async () => null, search: async () => g };
+  const r = await suggestTerms(model, "goods", "Brass desk lamps, ₹450 each");
+  assert.equal(r.grounded, true);
+  assert.deepEqual(r.terms.map(t => t.label), ["Warranty", "Returns"]);
+  assert.ok(r.terms.every(t => t.sources.length === 1));
 });

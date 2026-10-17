@@ -207,7 +207,7 @@ export async function api(path, body) {
   let data = await res.json().catch(() => ({}));
   // Refused by the browser check (before the request was handled, so nothing ran): once more with a fresh token.
   if (res.status === 401 && data.code === "APP_CHECK" && !plainRead) { res = await send(true); data = await res.json().catch(() => ({})); }
-  if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; e.code = data.code; throw e; }
+  if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; e.code = data.code; e.data = data; throw e; }
   return data;
 }
 

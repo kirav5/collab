@@ -131,18 +131,14 @@ export async function chat(text, recent, area, open = null) {
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
       return { text: "Here's what your agent will ask for. Adjust it, then send.", cards: [{ type: "brief", text, draft: d.draft, insights, step: "review" }] };
     }
-    case "offer": {
-      const d = await api("/api/offers/draft", { text, here: area });
-      const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }) : [];
-      return { text: d.offer ? "Here's how your offering will look in the directory." : "I'll keep this as a public note others' agents can find.", cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, insights, step: "review" }] };
-    }
+    case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
     case "refine": {
       // Change the open request and search again — for real; the reply says exactly what changed and what was found.
       const d = open.draft;
       const r = await api("/api/briefs/refine", { need: d.need, shared: d.shared, text, limit: d.mandate?.price.limit ?? null });
       const mandate = r.limit ? { price: { opening: Math.round(r.limit * 0.9), limit: r.limit }, terms: {}, maxRounds: d.mandate?.maxRounds ?? 5 } : d.mandate;
       const draft = { ...d, need: { ...r.need, mandate }, shared: r.shared, mandate };
-      const s = await api("/api/briefs", { need: draft.need, shared: draft.shared, delegate: mandate && open.autonomy ? { mandate, autonomy: open.autonomy, days: open.days ?? 7 } : null });
+      const s = await api("/api/briefs", { need: draft.need, shared: draft.shared, delegate: mandate && autonomyOf(open) ? { mandate, autonomy: autonomyOf(open), days: open.days ?? 7 } : null });
       const found = [...s.found, ...(s.overBudget ?? []).map(f => ({ ...f, over: true }))];
       const what = r.changes.length ? `Searched again — ${r.changes.join(", ")}.` : "Searched again with the same request.";
       const result = s.found.length ? `${s.found.length} ${s.found.length === 1 ? "match" : "matches"}.` : s.overBudget?.length ? "Still no exact match." : "Still no one — try a different area, or fewer requirements.";
@@ -157,6 +153,29 @@ export async function chat(text, recent, area, open = null) {
     default:
       return { text: route.reply ?? "I can remember things for you, answer from your notes, find people for anything you need, or publish what you offer.", cards: [] };
   }
+}
+
+/**
+ * The seller's offering card from Gemini's reading of what they wrote — in chat, or a note being made public. A clear
+ * offering is ready to review; a vague one ("selling my bike") asks for the price and where first; either way the
+ * details buyers would otherwise ask come with tap-to-answer options. `extra`: e.g. the note it publishes in place.
+ */
+/**
+ * How far an owner's agent may go: what they picked, else — once they've set a private limit — negotiate inside it
+ * and leave the final yes to them (the least asking that still leaves every deal theirs). "" is "ask me every move".
+ */
+export function autonomyOf(c) {
+  if (c.autonomy !== undefined && c.autonomy !== null) return c.autonomy;
+  const limited = c.type === "offer" ? c.offer && c.floor != null && c.floor < c.offer.price.amount : !!c.draft?.mandate;
+  return limited ? "negotiate" : "";
+}
+
+export async function offerReply(text, d, extra = {}) {
+  const insights = d.offer ? await insightsLines({ side: "provider", category: d.offer.category, area: d.offer.place.name, price: d.offer.price.amount, unit: d.offer.price.period, item: d.offer.title }).catch(() => []) : [];
+  const said = d.offer ? "Here's how your offering will look in the directory. Every detail you answer below is a question your agent handles without you."
+    : d.basics ? `That reads as ${d.basics.label.toLowerCase()}. Add your price and where, and I'll make it a listing buyers' agents can find — the questions below are what buyers usually ask.`
+    : "I'll keep this as a public note others' agents can find.";
+  return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, insights, step: "review", ...extra }] };
 }
 
 // MARK: - What only this device can do

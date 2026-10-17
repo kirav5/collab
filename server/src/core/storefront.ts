@@ -3,16 +3,16 @@
 // Built only from Public offerings and their ledgers; a paused owner shows their offerings but takes no requests.
 import type { Fact } from "./model.ts";
 import { type Resource, available, certainty } from "./resources.ts";
-import { type Suggestion, type Tracked, forOffer, itemName, kindOf } from "./suggest.ts";
+import { type ShopAction, type Suggestion, type Tracked, actionOf, forOffer, itemName } from "./suggest.ts";
 
-export type ShopAction = "buy" | "book" | "visit" | "ask";
+export type { ShopAction };
 export interface ShopItem {
   factId: string; title: string; name: string; details: string; category: string;
   price: number | null; currency: string; unit: string | null;
   /** buy: pick how many; book: pick a time (or request one); visit: ask to see it first; ask: no price yet. */
   action: ShopAction;
   stock: { state: "in" | "low" | "out" | "unknown"; available: number | null } | null;
-  /** The most anyone can order in one go (what's in stock, or 20 when stock isn't tracked). */
+  /** The most anyone can order in one go (what's in stock, or 99 when stock isn't tracked). */
   maxQuantity: number;
   slots: { id: string; start: number; end: number }[] | null;
   /** The seller's own stated terms, and whether an order at the listed price is confirmed at once. */
@@ -21,11 +21,6 @@ export interface ShopItem {
   questions: Suggestion[];
 }
 
-const ACTION: Record<string, ShopAction> = {
-  goods: "buy", food: "buy", supply: "buy", other: "buy",
-  lesson: "book", service: "book", salon: "book", pet: "book", event: "book", stay: "book", equipment: "book", ride: "book", freight: "book",
-  rent: "visit", sale: "visit", vehicle: "visit", job: "visit",
-};
 
 export function storefront(facts: Fact[], resources: Resource[], now: number, paused = false): ShopItem[] {
   const ledger = new Map(resources.filter(r => r.factId).map(r => [r.factId!, r]));
@@ -33,12 +28,12 @@ export function storefront(facts: Fact[], resources: Resource[], now: number, pa
     .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8)
     .map(f => {
       const o = f.offer!, r = ledger.get(f.id) ?? null, price = o.price?.amount ?? null;
-      let action = ACTION[kindOf(o.category)] ?? "buy";
+      let action = actionOf(o.category);
       if (price == null && action === "buy") action = "ask";
-      let stock: ShopItem["stock"] = null, slots: ShopItem["slots"] = null, max = 20;
+      let stock: ShopItem["stock"] = null, slots: ShopItem["slots"] = null, max = 99;
       if (!paused && r?.type === "quantity") {
         if (certainty(r, now) === "stale") stock = { state: "unknown", available: null };
-        else { const n = available(r, now); stock = { state: n === 0 ? "out" : n <= 3 ? "low" : "in", available: n }; max = Math.min(20, n); }
+        else { const n = available(r, now); stock = { state: n === 0 ? "out" : n <= 3 ? "low" : "in", available: n }; max = Math.min(999, n); }
       }
       if (!paused && r?.type === "slots") {
         slots = r.slots.filter(s => s.start > now && s.start < now + 14 * 86_400 && available(r, now, s.id) > 0)

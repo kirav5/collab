@@ -62,6 +62,11 @@ its own three questions. Saved cards refresh whenever their chat opens. Owners c
 | K13 | Owner: People › "See your card as customers do" (or scanning their own QR) | Preview with buttons off | Live | ✅ |
 | K14 | Names in sentences | "waiting for Steel Bottle Store" (not "Steel"); "Riya" for a person | Live | ✅ |
 | K15 | Ended or finished conversations | Ask nobody anything; "needs you" count drops | scenarios › mid-conversation, cash pass; Live | ✅ (closed chats kept asking) |
+| K16 | **Seller says something vague** ("I am selling my old iPhone 13") | Card reads the kind; asks only price and where; Gemini's buyer-style questions for this listing with tap answers (condition, storage, battery); "Make the listing" reads it again with the answers | scenarios › vague offering; Live (₹32,000, 4 questions answered by tapping) | ✅ |
+| K17 | **"Make public" on a note, or a new Public note in Context** | Opens the same offering card in chat; publishes in place of the note (same id); plain facts stay plain notes | scenarios › floor never public; Live (barber note → listing, no private copy) | ✅ (used to publish raw text) |
+| K18 | **A floor written in a note** ("lowest 300") | Kept as the private limit; never in public text, also when published as a plain note | scenarios › floor never public; Live | ✅ (raw note would have published it) |
+| K19 | Seller readiness checklist | Counts price, private floor, negotiation, answered questions, terms, stock (things) or weekly hours (services), instant orders | Live (1 → 6 of 7) | ✅ |
+| K20 | **Buyer questions per listing** | Written by Gemini when published (e.g. a table's dimensions); without the model only data-built ones (tracked stock/times, price) — no category templates; older listings backfilled by the 15-minute job | suggest › listing's own questions, data only; Live | ✅ |
 
 ## 3. Questions and answers (privacy, language, abuse)
 
@@ -115,6 +120,18 @@ its own three questions. Saved cards refresh whenever their chat opens. Owners c
 | R6 | POS events | Applied once; bad signatures ignored; revocation stops | connectors; e2e › POS | ✅ |
 | R7 | Calendar busy time | Blocks overlapping slots | connectors › calendar | ✅ |
 | R8 | **Cash/UPI payment** | Commits the stock like an in-app payment | scenarios › cash pass; Live (2 bottles committed) | ✅ (stayed "held", would return to stock) |
+| R10 | **Quantity above stock** ("200 lamps", 15 in stock) | Refused before anyone is asked, with "Only 15 in stock" and a one-tap "I'll take 15 at ₹400 each"; a request for 200 talks about 15 and the buyer decides | scenarios › lamps; agents-ask (random) | ✅ (was agreed for 200, then "can't be paid") |
+| N16 | **Quantity through a counter** | A counter typed ("I can do ₹420") or made by an agent is for the same quantity; ₹420 read as each or in all from the words, else the price on the table; cart = quantity × price | scenarios › lamps; agents-ask | ✅ (counter dropped to 1, paid for one lamp) |
+| N17 | **Low offer to a seller who delegated** | Their agent counters within the floor (first counter moves off the listed price); "close" confirms inside the floor; the seller is never asked yes or no about a price their agent can negotiate | scenarios › lamps; agents-ask | ✅ (seller only got "sell or not") |
+| N18 | **"200rs" as an answer or in chat** | An offer, never a question for the seller; typed replies answer the question waiting on them | scenarios › lamps; agents-ask | ✅ (sent to the seller as a question) |
+| N19 | **Taking a counter** ("I'll buy it for ₹443") | A yes to the offer on the table; the other side confirms if it hasn't | scenarios › lamps | ✅ (was ignored as a repeat) |
+| N21 | **Both agents negotiate** (card offer with a private "up to") | The buyer's agent and the seller's agent bargain to a price inside both limits; the buyer isn't asked; the seller gives only the final yes they kept | scenarios › lamps | ✅ |
+| N22 | **"Hand it over"** on a counter or a confirm | A private limit given once; that side's agent takes over and finishes against the other agent | scenarios › lamps; agents-ask | ✅ |
+| N23 | **Seller's record** | Built from signed receipts: verified sales, handed over, problems, each sale's receipt fingerprint + seller-side signature; on their card, their A2A agent card and `/public/people/:handle/record`; no buyers, no prices; their agent answers "how many have you sold?" from it | scenarios › record | ✅ |
+| N24 | **Terms from the web** | Suggested terms come from Google Search per offering, each with its sources; only terms that apply; nothing saved until the seller saves it | suggest › web terms; live check below | ✅ |
+| P8 | **Google Pay sheet** | Opens inside the tap (nothing awaited first — Safari and installed apps block a payment window opened later); button hidden where Google Pay can't open | Live (popup attempted inside the tap) | ✅ (opened after awaits: blocked on Safari/PWA) |
+| N20 | **Random conversations: who gets asked** | 700 seeded conversations over card, chat, answer and request paths: no ask an agent could have handled; every deal's quantity, stock, cart and pass add up | agents-ask (10 seeds) | ✅ 0 unneeded asks |
+| R9 | **Weekly hours** | Seller states days, hours and minutes per booking once; times made two weeks ahead in their time zone; booked times survive a change; the 15-minute job tops up without rewriting unchanged schedules; agent says "Open Mon–Sat, 10:00–20:00. Next free: …" | resources › weekly hours; scenarios › weekly hours; Live (168 times, 45 min, every day) | ✅ |
 
 ## 6. Payment (test mode only — no money moves)
 
