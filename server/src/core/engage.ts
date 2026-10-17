@@ -385,7 +385,7 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
 
 // A note that mentions money — a budget, a floor, what something cost them, a supplier's rate — is never used to
 // answer: prices others see come from listings and offers, never from private notes.
-const MONEY = /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|limit|lowest|floor|at most|max(?:imum)?|min(?:imum)?|go below|go above|won'?t (?:go|pay|take)|can'?t (?:go|pay)|afford|kam se kam|best price|cost(?:s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b/i;
+export const MONEY = /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|price limit|lowest|floor price|price floor|at most|max(?:imum)? (?:price|budget)|go below|go above|won'?t (?:go|pay|take)|can'?t (?:go|pay)|afford|kam se kam|best price|cost(?:s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b|\b(?:limit|budget|max|min)\b[^.]{0,12}\d|\b(?:up ?to|under|below|above|over|at least)\s*\d/i;
 
 /**
  * What else the owner has told their agent — private notes, answers they gave before, things remembered from chat,

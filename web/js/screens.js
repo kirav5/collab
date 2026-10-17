@@ -203,7 +203,7 @@ export const screens = {
   context: {
     async html() {
       const facts = await allFacts();
-      const n = t => facts.filter(f => f.tier === t).length;
+      const n = t => facts.filter(f => f.tier === t && f.source !== "chat" && f.source !== "answer").length;
       // Stock and time slots for public offerings: what reservations hold and payments commit.
       const ledgers = new Map((await api("/api/resources").catch(() => [])).map(r => [r.factId, r]));
       const grants = await api("/api/connectors").catch(() => []);
@@ -279,21 +279,21 @@ export const screens = {
           ${L.pays ? "" : `<label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>`}
           <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}" data-owner-pays="${f.offer.ownerPays ? "1" : ""}">Suggest terms for this offering</button></div></details>`;
       };
-      const remembered = facts.filter(f => f.source === "answer" && f.question && f.answer);
+      // Your context is what you told your agent on purpose; what it picked up from chats and answers is kept apart.
+      const learned = facts.filter(f => f.source === "chat" || (f.source === "answer" && f.question && f.answer)), own = facts.filter(f => !learned.includes(f));
       return frame("About me", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
           <textarea class="field" name="text" rows="2" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
           <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Private (not listed — your agent may use it)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
-        ${remembered.length ? `<details class="card slim memory" open><summary>${label(`Answers your agent remembers · ${remembered.length}`, "sq peri")}</summary>
-          <span class="small faint">Everything you've answered, so you're never asked twice. When it comes up again, your agent answers on its own — it shows in Privacy › What your agent shared.</span>
-          ${remembered.map(f => `<div class="mem-row"><div class="stack" style="gap:2px;min-width:0;flex:1"><span class="small muted">${esc(f.question)}${f.about ? ` · ${esc(f.about)}` : ""}</span><b class="small">${esc(f.answer)}</b></div>
-            <div class="seg compact" role="group" aria-label="When it's asked again"><button class="${f.reuse ? "on" : ""}" data-act="fact-reuse" data-id="${esc(f.id)}" data-reuse="1">Answers</button><button class="${f.reuse ? "" : "on"}" data-act="fact-reuse" data-id="${esc(f.id)}" data-reuse="0">Asks me</button></div>
-            <button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this answer">✕</button></div>`).join("")}</details>` : ""}
-        <div class="stack">${facts.filter(f => f.source !== "answer").map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
+        ${learned.length ? `<details class="card slim memory"><summary class="row"><span class="small"><b>${learned.length}</b> thing${learned.length === 1 ? "" : "s"} your agent learned from your chats and answers</span><span class="small faint end">Review ›</span></summary>
+          <span class="small faint">Kept so you're never asked twice — used to answer others within your limits, never listed publicly.</span>
+          ${learned.map(f => `<div class="mem-row"><div class="stack" style="gap:2px;min-width:0;flex:1"><span class="small">${esc(f.source === "answer" ? f.answer : String(f.text).replace(/^Asked: “[^”]*” — answer:\s*/, ""))}</span>${f.source === "answer" ? `<span class="small faint">${esc(f.question)}</span>` : ""}</div>
+            <button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this">Forget</button></div>`).join("")}</details>` : ""}
+        <div class="stack">${own.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           ${factText(f)}
-          ${f.tier !== "public" ? `<div class="row small"><span class="faint">Your agent ${f.noShare ? "never uses this" : /₹|\brs\.?\s?\d|\brupees?\b|budget|lowest|floor|cost|charge|salary|lakh/i.test(f.text) ? "never repeats this (it mentions money)" : "answers others from this"}</span>
+          ${f.tier !== "public" ? `<div class="row small"><span class="faint">Your agent ${f.noShare ? "never uses this" : /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|price limit|lowest|floor price|price floor|at most|go below|go above|won'?t (go|pay|take)|can'?t (go|pay)|afford|kam se kam|best price|cost(s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b|\b(limit|budget|max|min)\b[^.]{0,12}\d|\b(up ?to|under|below|above|over|at least)\s*\d/i.test(f.text) ? "never repeats this (it mentions money)" : "answers others from this"}</span>
             <div class="seg compact end" role="group" aria-label="May your agent use this to answer others?"><button class="${f.noShare ? "" : "on"}" data-act="fact-use" data-id="${esc(f.id)}" data-use="1">Use</button><button class="${f.noShare ? "on" : ""}" data-act="fact-use" data-id="${esc(f.id)}" data-use="0">Never</button></div></div>` : ""}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}

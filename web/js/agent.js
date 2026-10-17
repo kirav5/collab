@@ -119,10 +119,12 @@ export async function chat(text, recent, area, open = null) {
   switch (route.intent) {
     case "remember": {
       if (session.incognito) return { text: "“Don't keep history” is on, so I didn't save that. Turn it off in Settings to keep notes.", cards: [] };
-      const fact = await saveNote(api, { text, tier: "private" });
+      // Kept as the fact itself: "Remember that I prefer evenings" → "I prefer evenings".
+      const said = text.replace(/^\s*(please\s+)?(remember|note|save|keep in mind)( that|:)?\s+/i, "").trim();
+      const fact = await saveNote(api, { text: said ? said[0].toUpperCase() + said.slice(1) : text, tier: "private" });
       if (fact.queued) return { text: "Saved on this device — the connection dropped; it syncs to your account when you're back online.", cards: [] };
       await cacheNotes([...(await cachedNotes()), fact]); // at once on this device too, so the next matches can use it
-      return { text: "Saved to your context — your agent uses it to answer for you; it's never listed publicly.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
+      return { text: "Got it — I'll remember that.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {
       const facts = await api("/api/facts").catch(() => null) ?? await cachedNotes();

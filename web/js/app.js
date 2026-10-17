@@ -1178,6 +1178,7 @@ async function onClick(e) {
 }
 
 async function cardAction(a, el, { s, m, c }) {
+  if (a === "saved-tiers") { c.showTiers = true; await saveSession(s); return paint(); }
   // The owner chose to have Gemini answer this one question from the notes shown (nothing else is sent).
   if (a === "notes-cloud") {
     busy(el, true, "Asking");

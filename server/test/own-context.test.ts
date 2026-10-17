@@ -19,8 +19,9 @@ test("private notes, earlier answers and unnamed Protected facts answer by defau
   await db.set(FACTS, "g", fact("g", "Public listing", { tier: "public" }));
   await db.set(FACTS, "h", { ...fact("h", "Bob's note"), owner: "bob" });
   await db.set(FACTS, "i", fact("i", "My supplier charges me ₹170 a bottle; never go below ₹250"));
+  await db.set(FACTS, "j", fact("j", "I live on the 3rd floor with a lift"));
   const ids = (await ownContext(db, "amy", new Set(["c"]))).map(a => a.fact.id).sort();
-  assert.deepEqual(ids, ["a", "b"], "a rule already covers c; d and i mention money; e has a phone number; f is never used; g is public; h isn't hers");
+  assert.deepEqual(ids, ["a", "b", "j"], "a rule already covers c; d and i mention money; e has a phone number; f is never used; g is public; h isn't hers");
 });
 
 test("an answer that names the owner's limit for this conversation is held back", async () => {
@@ -32,4 +33,13 @@ test("an answer that names the owner's limit for this conversation is held back"
   assert.equal(await namesLimit(db, e, "requester", "She can pay 3k."), true);
   assert.equal(await namesLimit(db, e, "requester", "Notice period is 3 months."), false, "3 isn't ₹3,000");
   assert.equal(await namesLimit(db, e, "provider", "₹3,000"), false, "the other side's limit isn't this side's");
+});
+
+test("a note with a limit in plain numbers is never used; a floor of a building is fine", async () => {
+  const { MONEY } = await import("../src/core/engage.ts");
+  assert.ok(MONEY.test("My limit is 3000 for this"));
+  assert.ok(MONEY.test("I'd pay up to 2500"));
+  assert.ok(MONEY.test("Nothing under 400 please"));
+  assert.ok(!MONEY.test("I live on the 3rd floor with a lift"));
+  assert.ok(!MONEY.test("Home after 6 pm on weekdays"));
 });

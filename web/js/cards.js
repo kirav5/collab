@@ -243,7 +243,7 @@ function briefCard(c, at) {
     ${d.profile?.length ? profileBlock(d, s, providers, at) : ""}
     ${shown.length ? `<div class="stack" style="gap:6px"><span class="small faint">What matters · tap one to make it optional</span><div class="row">${shown.map(({ r, j }) => `<span class="chip req ${r.strength === "required" ? "on" : ""}"><button class="linkish" data-act="brief-strength" data-j="${j}" ${at} title="${r.strength === "required" ? "Make it optional" : "Make it a must"}">${esc(r.value)}${r.strength === "required" ? "" : " · optional"}</button><button class="linkish x" data-act="brief-drop" data-j="${j}" ${at} aria-label="Remove ${esc(r.label)}">×</button></span>`).join("")}</div></div>` : ""}
     <div class="privacy-split">
-      <div>${label(`I'll tell ${who}`, "fresh")}<span class="small">What you need, ${esc(need.place.name)}${mode ? ` · ${esc(mode.toLowerCase())}` : ""}${s.requirements.length ? " · your must-haves" : ""}${s.about?.length ? " · your profile" : ""}${s.budget ? ` · a ${esc(R.price)} range (${esc(s.budget)})` : ` · no ${esc(R.price)}`}</span></div>
+      <div>${label(`I'll tell ${who}`, "fresh")}<span class="small">What you need, ${esc(need.place.name)}${mode ? ` · ${esc(mode.toLowerCase())}` : ""}${s.requirements.length ? " · what matters to you" : ""}${s.about?.length ? " · your profile" : ""}${s.budget ? ` · a ${esc(R.price)} range (${esc(s.budget)})` : ` · no ${esc(R.price)}`}</span></div>
       <div>${label("I keep private", "peri")}<span class="small">${cap(limitWords(paid))}, and your exact address and phone</span></div>
     </div>
     <details class="more"><summary>Exactly what I'll send</summary><dl class="kv small">
@@ -515,6 +515,9 @@ function requirementsBlock(c, at) {
 function savedCard(c, at) {
   const f = c.fact;
   if (!f) return "";
+  // Saved quietly: one line, and a small way to share it. The full controls are in About me.
+  if (!c.showTiers) return `<div class="saved-line" ${at}><span class="small faint">✓ Saved to your context · ${f.tier === "public" ? "public" : f.tier === "protected" ? "shared by your rules" : "your agent uses it to answer for you"}</span>
+    ${f.tier === "private" ? `<button class="linkish small" data-act="saved-tiers" ${at}>${c.suggestPublic ? "Make it public" : "Change"}</button>` : ""}</div>`;
   return `<div class="card slim" ${at}>
     <div class="row">${tierTag(f.tier, f.topics)}<span class="small">${esc(f.text)}</span></div>
     <div class="row">${label("Who sees it")}
