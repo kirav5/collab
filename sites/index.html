@@ -6,6 +6,10 @@
 <title>Collab</title>
 <meta name="description" content="Collab gives every person and business an agent that represents them, shares only what they permit, and works things out with other people's agents.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230a0a0a'/%3E%3Cpath d='M52 13H13v38h39' fill='none' stroke='%23ff3ea5' stroke-width='11'/%3E%3Crect x='34' y='26' width='12' height='12' fill='%23f4f4f4'/%3E%3C/svg%3E">
+<script>
+  // A remembered light/dark choice; without one the page follows the device.
+  try { const t = localStorage.getItem('collab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <style>
 /* Same visual language as the app (web/styles.css): near-black canvas, hairlines instead of shadows,
    two-tone grotesk headlines, mono uppercase labels, square controls, one magenta accent.
@@ -73,7 +77,14 @@ nav .links { display: flex; gap: 22px; margin-left: auto; }
 nav .links a { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text2); text-decoration: none; }
 nav .links a:hover { color: var(--text); }
 nav .btn { padding: 8px 12px; font-size: 11px; }
-@media (max-width: 760px) { nav .links { display: none; } nav .btn { margin-left: auto; } }
+.theme-btn { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--hairline); border-radius: 3px; background: transparent; color: var(--text); cursor: pointer; flex: none; }
+.theme-btn:hover { border-color: var(--text3); }
+.theme-btn .ic { width: 17px; height: 17px; }
+.theme-btn .moon { display: none; }
+:root[data-theme="light"] .theme-btn .sun { display: none; }
+:root[data-theme="light"] .theme-btn .moon { display: block; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .theme-btn .sun { display: none; } :root:not([data-theme="dark"]) .theme-btn .moon { display: block; } }
+@media (max-width: 760px) { nav .links { display: none; } .theme-btn { margin-left: auto; } }
 
 /* Hero */
 .hero { padding: 72px 0 40px; position: relative; overflow-x: clip; }
@@ -453,6 +464,8 @@ footer .end { margin-left: auto; }
   <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
   <symbol id="i-rupee" viewBox="0 0 24 24"><path d="M6 4h12M6 9h12M6 4h3a5 5 0 0 1 0 10H6l8 7"/></symbol>
   <symbol id="i-store" viewBox="0 0 24 24"><path d="M3 9 5 4h14l2 5M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0zM5 13v8h14v-8M10 21v-5h4v5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
 </svg>
 
 <nav>
@@ -465,6 +478,7 @@ footer .end { margin-left: auto; }
       <a href="#insights">Insights</a>
       <a href="#theme">Retail &amp; Commerce</a>
     </div>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch to light theme"><svg class="ic sun"><use href="#i-sun"/></svg><svg class="ic moon"><use href="#i-moon"/></svg></button>
     <a class="btn accent" href="https://collab-55.web.app">Open Collab</a>
   </div>
 </nav>
@@ -732,6 +746,17 @@ footer .end { margin-left: auto; }
   const P = (v) => '<span class="price">' + rupee(v) + '</span>';
   const icon = (id, cls) => '<svg class="ic' + (cls ? ' ' + cls : '') + '"><use href="#i-' + id + '"/></svg>';
   const onView = (node, fn, threshold = .3) => new IntersectionObserver((es, ob) => { if (es[0].isIntersecting) { ob.disconnect(); fn(); } }, { threshold }).observe(node);
+
+  /* ---------- Light / dark toggle ---------- */
+  const root = document.documentElement, themeBtn = $('themeBtn');
+  const isLight = () => root.dataset.theme ? root.dataset.theme === 'light' : matchMedia('(prefers-color-scheme: light)').matches;
+  const labelTheme = () => themeBtn.setAttribute('aria-label', isLight() ? 'Switch to dark theme' : 'Switch to light theme');
+  labelTheme();
+  themeBtn.addEventListener('click', () => {
+    root.dataset.theme = isLight() ? 'dark' : 'light';
+    try { localStorage.setItem('collab-theme', root.dataset.theme); } catch (e) {}
+    labelTheme();
+  });
 
   /* ---------- Use cases: each is one two-agent conversation ---------- */
   const SCENARIOS = [
