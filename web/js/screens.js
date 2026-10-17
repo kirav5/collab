@@ -187,6 +187,14 @@ function draftCard(d) {
     <div class="row"><button class="btn accent" data-act="cm-post">Post to members</button><button class="btn quiet" data-act="cm-draft-cancel">Edit the words</button></div></div>`;
 }
 
+/** A listing's text: what it says, then the "Label: value." details it carries as a list (plain notes stay as they are). */
+function factText(f) {
+  if (!f.offer) return `<span>${esc(f.text)}</span>`;
+  const parts = f.text.split(/(?<=[.!?])\s+(?=[A-Z])/), head = [], kv = [];
+  for (const p of parts) { const m = p.match(/^([A-Z][^.:?!]{1,40}):\s+(.{1,160}?)\.?$/); if (m && kv.length + head.length) kv.push([m[1], m[2]]); else head.push(p); }
+  return `<span>${esc(head.join(" "))}</span>${kv.length ? `<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}`;
+}
+
 export const screens = {
   context: {
     async html() {
@@ -196,7 +204,7 @@ export const screens = {
       const ledgers = new Map((await api("/api/resources").catch(() => [])).map(r => [r.factId, r]));
       const grants = await api("/api/connectors").catch(() => []);
       const connected = r => grants.filter(g => g.resourceId === r.id && g.status !== "revoked").map(g => `<div class="row small"><span class="faint">${esc(g.title)} · ${g.status === "degraded" ? `<span style="color:var(--danger)">not reporting${g.lastError ? `: ${esc(g.lastError)}` : ""}</span>` : `connected${g.lastEventAt ? `, last ${new Date(g.lastEventAt * 1000).toLocaleString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}</span>
-        ${g.provider === "ical" ? `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>` : ""}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">Revoke</button></div>`).join("");
+        ${g.provider !== "inventory-webhook" ? `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>` : ""}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">${g.provider === "inventory-webhook" ? "Revoke" : "Unlink"}</button></div>`).join("");
       const now_ = Date.now() / 1000;
       const stockRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
@@ -213,25 +221,28 @@ export const screens = {
         }
         const open = r.slots.filter(sl => sl.start > now_);
         const taken = sl => r.holds.filter(h => h.slotId === sl.id && (h.state === "committed" || (h.state === "held" && h.expiresAt > now_))).reduce((n, h) => n + h.qty, 0);
+        const free = open.filter(sl => taken(sl) < sl.capacity), booked = open.length - free.length;
         const hrs = r.hours ?? defaultHours(f.offer), rid = esc(r.id);
-        const hoursForm = `<details class="more"${r.hours || open.length ? "" : " open"}><summary>${r.hours ? `${esc(hoursText(r.hours))} · ${r.hours.minutes} min each · change` : "Set weekly hours — free times then refill on their own"}</summary>
+        const fmt = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+        // One line says it all: the hours, how many free times are open, when the next one is, and how many are booked.
+        const line = r.hours ? `${esc(hoursText(r.hours))} · ${r.hours.minutes} min each` : `${open.length} times set by hand`;
+        const summary = `<span class="faint">${line}${free.length ? ` · next free ${esc(fmt(free[0].start))}` : open.length ? " · all booked" : ""}${booked ? ` · ${booked} booked` : ""}</span>`;
+        return `<div class="stack small stock"><div class="row"><b>Bookable times</b>${summary}</div>
+          <details class="more"><summary>${r.hours ? "Change hours" : "Set weekly hours"} or add a one-off time</summary>
           <div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip"><input type="checkbox" data-hours-day="${rid}" value="${d}" ${hrs.days.includes(d) ? "checked" : ""}> ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label>`).join("")}</div>
           <div class="row"><input class="field compact" type="time" data-hours-from="${rid}" value="${esc(hrs.from)}" style="max-width:120px"><span>to</span><input class="field compact" type="time" data-hours-to="${rid}" value="${esc(hrs.to)}" style="max-width:120px">
             <input class="field compact" type="number" min="10" max="480" step="5" data-hours-mins="${rid}" value="${hrs.minutes}" style="max-width:80px"><span>min each</span></div>
-          <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div></details>`;
-        return `<div class="stack small stock"><b>Time slots · ${open.length} upcoming</b>${hoursForm}${open.slice(0, 6).map(sl => `<span class="faint">${new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })} · ${taken(sl)}/${sl.capacity} booked</span>`).join("")}
-          <div class="row"><input class="field" type="datetime-local" data-slot-start="${esc(r.id)}"><input class="field" type="number" min="15" step="15" style="max-width:90px" data-slot-mins="${esc(r.id)}" value="60" title="Minutes"><button class="btn secondary compact" data-act="slot-add" data-id="${esc(r.id)}">Add slot</button></div>
+          <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div>
+          <div class="row" style="margin-top:6px"><span class="faint" style="min-width:110px">One-off time</span><input class="field compact" type="datetime-local" data-slot-start="${rid}" style="max-width:230px"><input class="field compact" type="number" min="15" step="15" style="max-width:80px" data-slot-mins="${rid}" value="60" title="Minutes"><button class="btn quiet compact" data-act="slot-add" data-id="${rid}">Add</button></div></details>
           ${connected(r) || calendarLink(r.id)}</div>`;
       };
-      // Linking a calendar so its busy times block bookings. Google, Apple and Outlook calendars all give a private
-      // iCal address; Google's is the "Secret address in iCal format" under the calendar's settings.
-      const calendarLink = rid => `<details class="more" data-cal-link="${esc(rid)}"><summary><b>Link Google Calendar</b> <span class="faint">or any calendar — busy times then block bookings</span></summary>
-          <ol class="small stack" style="gap:4px;margin:6px 0 0;padding-left:18px">
-            <li>Open <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener noreferrer">Google Calendar settings</a> and pick the calendar you use for work.</li>
-            <li>Under <b>Integrate calendar</b>, copy the <b>Secret address in iCal format</b>.</li>
-            <li>Paste it here.</li></ol>
-          <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link calendar</button></div>
-          <span class="faint small">Only busy times are read — event titles and guests stay with your calendar. Unlink any time.</span></details>`;
+      // Linking a calendar so its busy times block bookings: Google through its own sign-in (when the server has an
+      // OAuth client); any calendar through its private iCal address (Google's "Secret address in iCal format").
+      const calendarLink = rid => `<div class="row small"><button class="btn secondary compact" data-act="gcal-link" data-id="${esc(rid)}">Link Google Calendar</button><button class="btn quiet compact" data-act="cal-other" data-id="${esc(rid)}">Other calendar</button><span class="faint">busy times then block bookings</span></div>
+        <div class="card slim stack" data-cal-other="${esc(rid)}" hidden style="gap:6px">
+          <span class="small muted">Any calendar can share busy times through its private iCal address. In Google Calendar: Settings → your calendar → <b>Integrate calendar</b> → <b>Secret address in iCal format</b>.</span>
+          <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link</button></div>
+          <span class="faint small">Only busy times are read — titles and guests stay with your calendar.</span></div>`;
       // The seller's own terms for an offering, and instant booking: their words, a row to add one, and Gemini's
       // suggestions for this listing on request. No headings or examples are put in front of them.
       // The seller's rules for their agent, in their words: what's in force, and a box to change them.
@@ -262,7 +273,7 @@ export const screens = {
           <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Only me (never shared)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
         <div class="stack">${facts.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
-          <span>${esc(f.text)}</span>
+          ${factText(f)}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
@@ -355,9 +366,15 @@ export const screens = {
         return true;
       }
       if (a === "copy") { try { await navigator.clipboard.writeText(el.dataset.value); h.toast("Copied."); } catch { h.toast("Couldn't copy — select it under “For your developer”."); } return true; }
+      if (a === "gcal-link") {
+        busy(el, true, "Opening Google");
+        try { const r = await api(`/api/google/calendar/start?resourceId=${encodeURIComponent(el.dataset.id)}`); location.href = r.url; return true; }
+        catch (err) { busy(el, false); h.toast(err.message); document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`)?.removeAttribute("hidden"); return true; }
+      }
+      if (a === "cal-other") { const box = document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`); if (box) box.hidden = !box.hidden; return true; }
       if (a === "conn-ical") {
         const url = document.querySelector(`[data-ical="${CSS.escape(el.dataset.id)}"]`)?.value.trim();
-        if (!url) { h.toast("Paste your calendar's secret iCal address first (step 2 above)."); return true; }
+        if (!url) { h.toast("Paste your calendar's secret iCal address first."); return true; }
         // Google's public address only works for calendars made public; the secret one carries "/private-".
         if (/calendar\.google\.com/.test(url) && !/\/private-/.test(url)) { h.toast("That's the public address. Copy the “Secret address in iCal format” instead — it's a bit lower on the same settings page."); return true; }
         busy(el, true);

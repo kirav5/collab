@@ -84,6 +84,13 @@ RUN_URL_NOW=$(gcloud run services describe "$SERVICE" --region "$REGION" --proje
 
 # Request-based billing (CPU only while a request runs); one instance kept warm so the app never waits ~3 s for a cold
 # start (MIN_INSTANCES=0 turns that off), startup CPU boost for when a second one starts, MAX_INSTANCES caps cost.
+# Google Calendar linking: an OAuth client (Web application) whose redirect URI is $SITE/api/google/calendar/callback,
+# kept in Secret Manager as google-oauth-client-id and google-oauth-client-secret. Absent, the app falls back to iCal.
+GCAL_SECRETS=""
+if gcloud secrets describe google-oauth-client-id >/dev/null 2>&1 && gcloud secrets describe google-oauth-client-secret >/dev/null 2>&1; then
+  for s in google-oauth-client-id google-oauth-client-secret; do gcloud secrets add-iam-policy-binding "$s" --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor >/dev/null; done
+  GCAL_SECRETS=",GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest"
+fi
 gcloud run deploy "$SERVICE" --quiet \
   --source . \
   --region "$REGION" \
@@ -92,7 +99,7 @@ gcloud run deploy "$SERVICE" --quiet \
   --memory 1Gi --cpu 1 --concurrency 40 \
   --min-instances "${MIN_INSTANCES:-1}" --max-instances "${MAX_INSTANCES:-2}" --cpu-boost \
   --timeout 60 \
-  --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest" \
+  --set-secrets "AGENT_SECRET=agent-secret:latest,RECEIPT_KEY=receipt-key:latest${GCAL_SECRETS}" \
   --set-env-vars "^##^GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##GEMINI_MODELS=$MODELS##SEED_DEMO=$SEED_DEMO##PUBLIC_URL=$SITE##FIREBASE_WEB_CONFIG=$FIREBASE_WEB_CONFIG##RECAPTCHA_SITE_KEY=$RECAPTCHA_SITE_KEY##APPCHECK=$APPCHECK##MODEL_ARMOR_LOCATION=$ARMOR_LOCATION##MODEL_ARMOR_INCOMING=collab-incoming##MODEL_ARMOR_OUTGOING=collab-outgoing##MODEL_ARMOR_FAIL_MODE=${MODEL_ARMOR_FAIL_MODE:-open}##POLICY_JSON=${POLICY_JSON:-{\}}##TASKS_QUEUE=projects/$PROJECT/locations/$REGION/queues/collab-turns##TASKS_SERVICE_ACCOUNT=$SA##RUN_URL=$RUN_URL_NOW##BQ_DATASET=${BQ_DATASET:-}##PHOTO_BUCKET=${PHOTO_BUCKET:-}##BUILD_ID=$BUILD_ID"
 
 # The version open apps compare against when they come back to the front (they reload into a new one).

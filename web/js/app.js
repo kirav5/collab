@@ -169,7 +169,7 @@ function paintSidebar() {
       <button class="btn" data-act="new-chat">+ New chat</button>
       ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
         ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}
-        ${!session.pushOn && session.push ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
+        ${!session.pushOn && session.push && !("Notification" in window && Notification.permission === "denied") ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
         ${navRow("requests", "⇄", "Deals", n ? String(n) : "")}
@@ -1263,6 +1263,10 @@ timing("app");
   else if (qp.get("engagement")) openScreen("requests", qp.get("engagement"));
   else if (qp.get("alerts")) openScreen("requests");
   else if (qp.get("screen") && screens[qp.get("screen")]) openScreen(qp.get("screen"));
+  if (qp.get("calendar")) {
+    toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
+    history.replaceState(null, "", location.pathname);
+  }
 }
 
 } catch (err) {

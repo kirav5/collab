@@ -27,6 +27,7 @@ import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
+import { finishLink, gcalConfig, startLink, syncGcal, unlink } from "./core/gcal.ts";
 import { getSafe } from "./a2a/webhooks.ts";
 import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, lowStock, moveHold, cancelBooking, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
@@ -106,6 +107,8 @@ const queue = turnQueue(env.TASKS_QUEUE, env.RUN_URL, env.TASKS_SERVICE_ACCOUNT)
 const cfg = { db, model, directUrl: env.RUN_URL || undefined, enqueue: queue ? queue.enqueue : undefined, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },
   screen: armor ? armor.incoming : undefined, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
+// Google Calendar linking (OAuth, free/busy only): on when the OAuth client is configured.
+const gcal = gcalConfig(env, cfg.publicUrl, cfg.secret);
 // Commerce events copied to BigQuery (anonymous rows) and the demand forecast — only when BQ_DATASET is set.
 const bq = analytics(env.GOOGLE_CLOUD_PROJECT, env.BQ_DATASET, cfg.secret);
 setSigner(signing.sign);
@@ -1411,14 +1414,32 @@ app.post("/api/connectors", route(async req => {
   } catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
 }));
 app.post("/api/connectors/:id/revoke", route(async req => {
-  try { return await revokeGrant(db, req.uid, String(req.params.id), now()); }
-  catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
+  try {
+    const g = await revokeGrant(db, req.uid, String(req.params.id), now());
+    if (g.provider === "google-calendar") await unlink(db, g, now());
+    return g;
+  } catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
 }));
 app.post("/api/connectors/:id/sync", route(async req => {
   const g = (await db.get(GRANTS, String(req.params.id))) as ConnectorGrant | null;
   if (!g || g.owner !== req.uid) throw new HttpError(404, "No such connector.", "NOT_FOUND");
+  if (g.provider === "google-calendar") return gcal ? syncGcal(db, gcal, g, now()) : { synced: false, reason: "Google Calendar linking isn't set up on this server" };
   return syncIcal(db, g, url => getSafe(url), now());
 }));
+
+// Google Calendar: the owner says yes on Google's page, comes back here, and their busy times block their slots.
+app.get("/api/google/calendar/start", route(async req => {
+  if (!gcal) throw new HttpError(503, "Google Calendar linking isn't set up on this server yet — paste your calendar's iCal address instead.", "UNSUPPORTED_CAPABILITY");
+  try { return { url: await startLink(db, gcal, req.uid, text(req.query.resourceId, 60), now()) }; }
+  catch (err) { if (err instanceof ConnectorError) throw new HttpError(err.status, err.message, err.code); throw err; }
+}));
+app.get("/api/google/calendar/callback", async (req, res) => {
+  const back = (q: string) => res.redirect(`${cfg.publicUrl}/?screen=context&calendar=${q}`);
+  if (!gcal) return back("failed");
+  if (typeof req.query.error === "string") return back("declined");
+  try { await finishLink(db, gcal, text(req.query.code, 400), text(req.query.state, 600), now()); return back("linked"); }
+  catch (err) { log.warn("google calendar link failed", { error: String((err as Error).message ?? err).slice(0, 200) }); return back("failed"); }
+});
 
 // Stock and slots for an owner's offerings (the ledger the reservations come from).
 app.get("/api/resources", route(async req => db.find(RESOURCES, [["owner", "==", req.uid]], 100)));
@@ -1694,7 +1715,8 @@ app.post("/cron/run", async (req, res, next) => {
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
     // Connected calendars refresh every run; a feed that fails leaves its grant degraded and its data going stale.
     const calendars = ((await db.find(GRANTS, [["provider", "==", "ical"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked");
-    const synced = (await Promise.all(calendars.map(g => syncIcal(db, g, url => getSafe(url), now())))).filter(x => x.synced).length;
+    const linked = gcal ? ((await db.find(GRANTS, [["provider", "==", "google-calendar"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked") : [];
+    const synced = (await Promise.all([...calendars.map(g => syncIcal(db, g, url => getSafe(url), now())), ...linked.map(g => syncGcal(db, gcal!, g, now()))])).filter(x => x.synced).length;
     // Listings published before buyer questions were written for them (or while Gemini was away) get theirs.
     const unasked = ((await db.find(FACTS, [["tier", "==", "public"]], 300)) as Fact[]).filter(f => f.offer && !f.offer.questions?.length).slice(0, 10);
     for (const f of unasked) {
