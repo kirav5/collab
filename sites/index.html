@@ -90,7 +90,7 @@ nav .btn { padding: 8px 12px; font-size: 11px; }
 @media (max-width: 760px) { nav .links { display: none; } .theme-btn { margin-left: auto; } }
 
 /* Hero */
-.hero { padding: 64px 0 48px; position: relative; overflow-x: clip; }
+.hero { padding: 72px 0 40px; position: relative; overflow-x: clip; }
 .hero h1 { font-size: clamp(40px, 7.2vw, 88px); line-height: 1.0; letter-spacing: -.045em; font-weight: 650; margin: 18px 0 22px; max-width: 13ch; }
 .hero p.lede { font-size: clamp(17px, 2vw, 20px); color: var(--text2); max-width: 46ch; margin: 0 0 30px; }
 .hero .ctas { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -181,8 +181,6 @@ span.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; 
 .steps i.on { background: var(--accent); }
 .replay { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text2); background: none; border: 1px solid var(--hairline); border-radius: 3px; padding: 6px 10px; cursor: pointer; }
 .replay:hover { color: var(--text); border-color: var(--text3); }
-.replay[aria-pressed="true"] { color: var(--accent-ink); border-color: var(--accent); }
-.nextbtn { padding: 10px 16px; min-width: 150px; justify-content: center; animation: callme 1.6s ease-in-out infinite; }
 
 @media (max-width: 900px) {
   .stage-body { grid-template-columns: 1fr 1fr; min-height: 0; }
@@ -192,6 +190,7 @@ span.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; 
   .channel { grid-column: 1 / -1; grid-row: 2; }
   .feed { height: 380px; }
   .status { margin-top: 0; }
+  .ctx .optional { display: none; }
 }
 @media (max-width: 520px) {
   .who > div:not(.avatar) > span { display: none; }
@@ -201,8 +200,8 @@ span.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; 
 
 /* Sections */
 section { padding: 96px 0; border-top: 1px solid var(--hairline); }
-.sec-head { margin-bottom: 40px; }
-.sec-head h2 { font-size: clamp(32px, 5vw, 60px); line-height: 1.04; letter-spacing: -.035em; font-weight: 650; margin: 12px 0 0; }
+.sec-head { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: end; margin-bottom: 48px; }
+.sec-head h2 { font-size: clamp(30px, 4.4vw, 52px); line-height: 1.04; letter-spacing: -.035em; font-weight: 650; margin: 12px 0 0; }
 .sec-head p { color: var(--text2); margin: 0; max-width: 48ch; font-size: 17px; }
 @media (max-width: 820px) { .sec-head { grid-template-columns: 1fr; gap: 16px; } section { padding: 72px 0; } }
 
@@ -230,7 +229,7 @@ footer a { color: var(--text2); text-decoration: none; }
 footer .end { margin-left: auto; }
 
 /* Scenario tabs above the stage */
-.scen { display: flex; gap: 6px; flex-wrap: wrap; }
+.scen { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 56px; }
 .scen button { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 9px 12px; border: 1px solid var(--hairline); background: var(--surface); color: var(--text2); border-radius: 3px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; position: relative; overflow: hidden; }
 .scen button .n { color: var(--text3); }
 .scen button[aria-selected="true"] { color: var(--text); border-color: var(--accent); }
@@ -365,6 +364,19 @@ footer .end { margin-left: auto; }
 @keyframes done { 0%, 80% { opacity: 0; } 90%, 100% { opacity: 1; } }
 @media (max-width: 900px) { .cases { grid-template-columns: repeat(2, 1fr); } }
 
+/* Flow: five steps with a travelling token */
+.flow2 { position: relative; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); padding: 46px 28px 36px; }
+.flow2 .line { position: absolute; left: 10%; right: 10%; top: 78px; height: 2px; background: var(--hairline); }
+.flow2 .fill { position: absolute; left: 10%; top: 78px; height: 2px; background: var(--accent); width: 0; }
+.flow2 .steps2 { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); }
+.flow2 .st { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.flow2 .st .c { width: 64px; height: 64px; border-radius: 50%; border: 1px solid var(--hairline); background: var(--bg); display: grid; place-items: center; color: var(--text3); transition: all .35s; position: relative; z-index: 1; }
+.flow2 .st .c .ic { width: 26px; height: 26px; }
+.flow2 .st.on .c { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 14%, transparent); transform: scale(1.06); }
+.flow2 .st b { font-size: 15px; }
+.flow2 .st span { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text3); }
+@media (max-width: 600px) { .flow2 { padding: 34px 8px 26px; } .flow2 .st .c { width: 46px; height: 46px; } .flow2 .st .c .ic { width: 20px; height: 20px; } .flow2 .line, .flow2 .fill { top: 57px; } .flow2 .st b { font-size: 13px; } .flow2 .st span { display: none; } }
+
 /* Privacy wall sorter */
 .sorter { position: relative; height: 340px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); overflow: hidden; }
 .sorter .side-l, .sorter .side-r { position: absolute; top: 14px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); display: flex; gap: 8px; align-items: center; }
@@ -407,77 +419,6 @@ footer .end { margin-left: auto; }
 .theme .ico2 { width: 36px; height: 36px; border-radius: 6px; display: grid; place-items: center; background: var(--surface2); color: var(--accent-ink); margin-bottom: 4px; }
 .theme > div { transition: background .3s; }
 .theme > div:hover { background: var(--surface2); }
-
-/* Story: three big panels, played in turn */
-section.tight { padding: 8px 0 88px; border-top: 0; }
-.story { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 12px; align-items: center; }
-.scard { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); padding: 14px; display: grid; gap: 14px; transition: border-color .4s, opacity .4s, transform .4s; opacity: .55; }
-.scard.on { border-color: var(--accent); opacity: 1; transform: translateY(-4px); }
-.scard .ill { height: 200px; border-radius: 8px; background: var(--bg); position: relative; overflow: hidden; display: grid; place-items: center; }
-.cap2 { display: flex; align-items: center; gap: 10px; padding: 0 4px 4px; }
-.cap2 h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
-.cap2 .num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; font-weight: 700; background: var(--surface2); color: var(--text2); transition: all .4s; }
-.scard.on .cap2 .num { background: var(--accent); color: var(--on-accent); }
-.arrow2 { width: 22px; height: 22px; color: var(--text3); }
-.say { display: grid; justify-items: center; gap: 16px; width: 88%; }
-.sbub { min-height: 46px; width: 100%; padding: 12px 14px; border-radius: 14px 14px 14px 4px; background: var(--surface); border: 1px solid var(--hairline); font-size: 16px; font-weight: 500; }
-.caret2 { display: inline-block; width: 2px; height: 17px; background: var(--accent); vertical-align: -3px; margin-left: 2px; animation: blink 1s infinite; }
-.duo { position: absolute; inset: 0; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; gap: 8px; padding: 0 12px; }
-.ava { width: 44px; height: 44px; border-radius: 8px; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; font-weight: 700; z-index: 1; }
-.ava.a { background: var(--accent); color: var(--on-accent); }
-.ava.b { background: var(--inverse); color: var(--on-inverse); }
-.wall3 { position: absolute; left: 50%; top: 14px; bottom: 14px; width: 2px; margin-left: -1px; background: var(--peri); opacity: .45; transition: opacity .2s, box-shadow .2s; }
-.wall3.hit { opacity: 1; box-shadow: 0 0 14px var(--peri); }
-.talkcol { display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; height: 176px; overflow: hidden; position: relative; z-index: 1; }
-.talkcol span { font-family: var(--mono); font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 10px; max-width: 70%; animation: pop .3s both; }
-.talkcol span.y { align-self: flex-start; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent-ink); border-bottom-left-radius: 2px; }
-.talkcol span.t { align-self: flex-end; background: var(--talk-fill); color: var(--talk); border-bottom-right-radius: 2px; }
-.talkcol span.ok { align-self: center; background: var(--done-fill); color: var(--fresh); }
-.tap { position: absolute; inset: 0; display: grid; place-items: center; }
-.bigbtn { font-family: var(--mono); font-size: 14px; font-weight: 700; letter-spacing: .04em; padding: 16px 20px; border: 0; border-radius: 6px; background: var(--accent); color: var(--on-accent); transition: transform .15s, opacity .3s; }
-.bigbtn.press { transform: scale(.92); }
-.bigbtn.gone { opacity: 0; transform: scale(.8); }
-.minipass { position: absolute; display: grid; grid-template-columns: 64px auto; gap: 12px; align-items: center; padding: 12px 16px 12px 12px; border-radius: 8px; background: var(--done-fill); border: 1px solid color-mix(in srgb, var(--fresh) 45%, transparent); opacity: 0; transform: scale(.8); transition: opacity .35s, transform .35s cubic-bezier(.2,.8,.2,1.3); }
-.minipass:not(.show) { pointer-events: none; }
-.minipass.show { opacity: 1; transform: none; }
-.minipass b { display: block; color: var(--fresh); font-size: 20px; }
-.minipass span { font-size: 13px; color: var(--text2); }
-.sbtn { margin-left: auto; font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 10px 14px; border-radius: 3px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer; white-space: nowrap; }
-.sbtn:disabled { background: transparent; border-color: var(--hairline); color: var(--text3); cursor: default; }
-.sbtn.ghost2 { background: transparent; border-color: var(--hairline); color: var(--text); }
-.sbtn:not(:disabled):hover { opacity: .88; }
-.pick { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
-.pick button { font-size: 13px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--hairline); background: var(--surface); color: var(--text2); cursor: pointer; }
-.pick button.on { border-color: var(--accent); color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
-.pick button:disabled { cursor: default; }
-.bigbtn { cursor: pointer; pointer-events: auto; }
-.bigbtn:disabled { opacity: .35; cursor: default; }
-.bigbtn.ready { animation: callme 1.2s ease-in-out infinite; }
-@keyframes callme { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent); } }
-@media (max-width: 900px) { .story { grid-template-columns: 1fr; } .arrow2 { transform: rotate(90deg); justify-self: center; } .scard { opacity: 1; } }
-
-/* Before / after */
-.ba { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.bacard { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); padding: 20px; display: grid; gap: 14px; }
-.bacard.good { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-.baart { width: 100%; height: auto; display: block; overflow: visible; }
-.baline { font-size: clamp(22px, 2.6vw, 30px); letter-spacing: -.03em; font-weight: 650; }
-.tangle path { fill: none; stroke: var(--text3); stroke-width: 1.4; stroke-dasharray: 5 5; opacity: .7; animation: dashmove 1.4s linear infinite; }
-.tangle path:nth-child(2n) { animation-duration: 2.1s; animation-direction: reverse; }
-@keyframes dashmove { to { stroke-dashoffset: -20; } }
-.icg rect { fill: var(--bg); stroke: var(--hairline); }
-.icg use { fill: none; stroke: var(--text2); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.me { fill: var(--accent); }
-.meic { fill: none; stroke: var(--on-accent); stroke-width: 1.8; }
-.qmarks text { font: 700 18px var(--sans); fill: var(--danger); animation: qm 1.8s ease-in-out infinite; }
-.qmarks text:nth-child(2) { animation-delay: .45s; } .qmarks text:nth-child(3) { animation-delay: .9s; } .qmarks text:nth-child(4) { animation-delay: 1.35s; }
-@keyframes qm { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
-.clean path { fill: none; stroke: var(--accent); stroke-width: 2; opacity: .55; }
-.agentbox { fill: var(--surface); stroke: var(--accent); }
-.ticks2 circle { fill: var(--fresh); }
-.ticks2 path { fill: none; stroke: var(--surface); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.pk { fill: var(--talk); } .pk.a { fill: var(--accent); }
-@media (max-width: 760px) { .ba { grid-template-columns: 1fr; } }
 
 .reveal { opacity: 0; transform: translateY(14px); transition: opacity .7s ease, transform .7s ease; }
 .reveal.in { opacity: 1; transform: none; }
@@ -545,7 +486,6 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
   <symbol id="i-rupee" viewBox="0 0 24 24"><path d="M6 4h12M6 9h12M6 4h3a5 5 0 0 1 0 10H6l8 7"/></symbol>
   <symbol id="i-store" viewBox="0 0 24 24"><path d="M3 9 5 4h14l2 5M3 9h18v2a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0zM5 13v8h14v-8M10 21v-5h4v5"/></symbol>
-  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16M14 6l6 6-6 6"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
 </svg>
@@ -554,7 +494,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <div class="wrap">
     <a class="brand" href="#"><svg class="logo intro" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>Collab</a>
     <div class="links">
-      <a href="#live">Live demo</a>
+      <a href="#how">Agents</a>
       <a href="#cases">Use cases</a>
       <a href="#discovery">Discovery</a>
       <a href="#insights">Insights</a>
@@ -574,7 +514,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         <p class="lede">Say what you need. Agents find, talk and agree, inside your limits.</p>
         <div class="ctas">
           <a class="btn accent" href="https://collab-55.web.app">Try it now →</a>
-          <a class="btn ghost" href="#story">How it works</a>
+          <a class="btn ghost" href="#how">Watch</a>
         </div>
       </div>
       <div class="orbit" id="orbit" aria-hidden="true">
@@ -583,101 +523,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         <div class="core"><svg class="logo live" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg></div>
       </div>
     </div>
-  </div>
-</header>
 
-<section id="story" class="tight">
-  <div class="wrap">
-    <div class="story" id="storyRow">
-      <div class="scard">
-        <div class="ill">
-          <div class="say"><div class="pick" id="pick"><button type="button" data-k="kurta" class="on">Kurta</button><button type="button" data-k="repair">AC repair</button><button type="button" data-k="cake">Cake</button></div><div class="sbub"><span id="sayText"></span><span class="caret2"></span></div></div>
-        </div>
-        <div class="cap2"><span class="num">1</span><h3>You say it</h3><button class="sbtn" id="sendBtn" type="button">Send →</button></div>
-      </div>
-      <svg class="ic arrow2"><use href="#i-arrow"/></svg>
-      <div class="scard">
-        <div class="ill">
-          <div class="duo">
-            <span class="ava a">You</span>
-            <div class="talkcol" id="talkCol"></div>
-            <span class="ava b"><svg class="ic"><use href="#i-store"/></svg></span>
-            <i class="wall3" id="wall3"></i>
-          </div>
-        </div>
-        <div class="cap2"><span class="num">2</span><h3>Agents talk</h3><button class="sbtn" id="talkBtn" type="button">Let them talk →</button></div>
-      </div>
-      <svg class="ic arrow2"><use href="#i-arrow"/></svg>
-      <div class="scard">
-        <div class="ill">
-          <div class="tap" id="tap">
-            <button class="bigbtn" id="bigBtn" type="button">✓ Confirm ₹1,350</button>
-            <div class="minipass" id="miniPass"><div class="qr" id="miniQr"></div><div><b>Done</b><span id="passText">Pickup pass</span></div></div>
-          </div>
-        </div>
-        <div class="cap2"><span class="num">3</span><h3>You tap ✓</h3><button class="sbtn ghost2" id="againBtn" type="button" hidden>↺ Again</button></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="ba">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div><span class="label sq">Why</span><h2>Less chasing. <span class="soft">More done.</span></h2></div>
-    </div>
-    <div class="ba">
-      <div class="bacard reveal">
-        <span class="label">Today</span>
-        <svg viewBox="0 0 300 200" class="baart" aria-label="You at the centre of a tangle of calls, chats and follow-ups">
-          <g class="tangle">
-            <path d="M150 100 C 110 40, 70 120, 40 40"/><path d="M150 100 C 200 20, 230 120, 262 38"/><path d="M150 100 C 90 160, 120 60, 34 150"/>
-            <path d="M150 100 C 220 170, 180 60, 266 160"/><path d="M150 100 C 140 10, 190 190, 150 182"/><path d="M40 40 C 120 90, 180 20, 262 38"/>
-            <path d="M34 150 C 120 120, 200 200, 266 160"/><path d="M150 18 C 100 80, 220 90, 266 160"/>
-          </g>
-          <g class="icg">
-            <rect x="26" y="26" width="28" height="28" rx="6"/><use href="#i-phone" x="30" y="30" width="20" height="20"/>
-            <rect x="248" y="24" width="28" height="28" rx="6"/><use href="#i-chat" x="252" y="28" width="20" height="20"/>
-            <rect x="20" y="136" width="28" height="28" rx="6"/><use href="#i-store" x="24" y="140" width="20" height="20"/>
-            <rect x="252" y="146" width="28" height="28" rx="6"/><use href="#i-mail" x="256" y="150" width="20" height="20"/>
-            <rect x="136" y="4" width="28" height="28" rx="6"/><use href="#i-search" x="140" y="8" width="20" height="20"/>
-            <rect x="136" y="168" width="28" height="28" rx="6"/><use href="#i-rupee" x="140" y="172" width="20" height="20"/>
-          </g>
-          <circle cx="150" cy="100" r="17" class="me"/><use href="#i-user" x="140" y="90" width="20" height="20" class="meic"/>
-          <g class="qmarks"><text x="92" y="76">?</text><text x="206" y="74">?</text><text x="94" y="140">?</text><text x="212" y="136">!</text></g>
-        </svg>
-        <b class="baline">Calls. Chats. <span class="soft">Chasing.</span></b>
-      </div>
-      <div class="bacard good reveal">
-        <span class="label" style="color:var(--accent-ink)">With Collab</span>
-        <svg viewBox="0 0 300 200" class="baart" aria-label="You send one line to your agent, which reaches three matches cleanly">
-          <g class="clean">
-            <path id="ln0" d="M48 100 H 128"/><path id="ln1" d="M172 100 C 210 100, 215 46, 252 46"/><path id="ln2" d="M172 100 H 252"/><path id="ln3" d="M172 100 C 210 100, 215 154, 252 154"/>
-          </g>
-          <circle cx="32" cy="100" r="17" class="me"/><use href="#i-user" x="22" y="90" width="20" height="20" class="meic"/>
-          <g transform="translate(128 78)"><rect width="44" height="44" rx="8" class="agentbox"/><g transform="translate(7 7) scale(.47)" fill="none" stroke-width="8"><path d="M42 12H12V40H42" stroke="var(--brand)"/><path d="M22 24H52V52H22" stroke="var(--text)"/></g></g>
-          <g class="icg">
-            <rect x="252" y="32" width="28" height="28" rx="6"/><use href="#i-store" x="256" y="36" width="20" height="20"/>
-            <rect x="252" y="86" width="28" height="28" rx="6"/><use href="#i-wrench" x="256" y="90" width="20" height="20"/>
-            <rect x="252" y="140" width="28" height="28" rx="6"/><use href="#i-box" x="256" y="144" width="20" height="20"/>
-          </g>
-          <g class="ticks2"><circle cx="280" cy="32" r="7"/><circle cx="280" cy="86" r="7"/><circle cx="280" cy="140" r="7"/><path d="M277 32l2 2 4-4M277 86l2 2 4-4M277 140l2 2 4-4"/></g>
-          <rect width="7" height="7" x="-3.5" y="-3.5" class="pk a"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#ln0"/></animateMotion></rect>
-          <rect width="7" height="7" x="-3.5" y="-3.5" class="pk"><animateMotion dur="1.6s" begin=".5s" repeatCount="indefinite"><mpath href="#ln1"/></animateMotion></rect>
-          <rect width="7" height="7" x="-3.5" y="-3.5" class="pk"><animateMotion dur="1.6s" begin=".9s" repeatCount="indefinite"><mpath href="#ln2"/></animateMotion></rect>
-          <rect width="7" height="7" x="-3.5" y="-3.5" class="pk"><animateMotion dur="1.6s" begin="1.3s" repeatCount="indefinite"><mpath href="#ln3"/></animateMotion></rect>
-        </svg>
-        <b class="baline">One sentence. <span class="soft">One tap.</span></b>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="live">
-  <div class="wrap">
-    <div class="sec-head reveal">
-      <div><span class="label sq">Live</span><h2>Watch two agents <span class="soft">make a deal.</span></h2></div>
-    </div>
     <div class="scen" id="scen" role="tablist" aria-label="Use cases"></div>
 
     <!-- Agent-to-agent stage -->
@@ -686,10 +532,12 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         <span class="live"></span>
         <span class="label" style="color:var(--text)">Live</span>
         <span class="label" id="sTitle"></span>
-              </div>
+        <div class="proto"><span class="tag talk">A2A</span><span class="tag">Gemini</span><span class="tag">AP2 · test</span></div>
+      </div>
       <div class="stage-body">
         <aside class="side left">
           <div class="who"><div class="avatar you" id="avYou"><span id="avYouT"></span><span class="ring"></span></div><div><b id="nYou"></b><span id="rYou"></span></div></div>
+          <div class="ctx" id="ctxYou"></div>
           <div class="ctx private">
             <span class="lock">● Private</span>
             <div class="row"><span class="k" id="lkYou"></span><span class="v" id="lvYou"></span></div>
@@ -707,6 +555,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         </div>
         <aside class="side right">
           <div class="who"><div class="avatar them" id="avThem"><span id="avThemT"></span><span class="ring"></span></div><div><b id="nThem"></b><span id="rThem"></span></div></div>
+          <div class="ctx" id="ctxThem"></div>
           <div class="ctx private">
             <span class="lock">● Private</span>
             <div class="row"><span class="k" id="lkThem"></span><span class="v" id="lvThem"></span></div>
@@ -725,13 +574,11 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
       </div>
       <div class="stage-foot">
         <div class="steps" id="steps"></div>
-        <button class="replay" id="autoBtn" type="button" aria-pressed="false">▶ Auto</button>
-        <button class="replay" id="replay" type="button" aria-label="Restart this case">↺</button>
-        <button class="btn accent nextbtn" id="nextBtn" type="button">Start →</button>
+        <button class="replay" id="replay" type="button">↺ Replay</button>
       </div>
     </div>
   </div>
-</section>
+</header>
 
 <div class="uses" aria-label="Things people get done with Collab">
   <div class="belt" id="belt"></div>
@@ -741,16 +588,36 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <div class="wrap">
     <div class="sec-head reveal">
       <div><span class="label sq">Use cases</span><h2>One agent. <span class="soft">Every deal.</span></h2></div>
+      <p>Buy, sell, book, rent, restock. Tap one to watch it.</p>
     </div>
     <div class="cases" id="caseGrid"></div>
   </div>
 </section>
 
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div><span class="label sq">The flow</span><h2>A sentence <span class="soft">to done.</span></h2></div>
+      <p>Five steps. You only tap at the end.</p>
+    </div>
+    <div class="flow2 reveal" id="flow2">
+      <div class="line"></div><div class="fill" id="flowFill"></div>
+      <div class="steps2">
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-mic"/></svg></div><b>Say it</b><span>Text · voice · QR</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-search"/></svg></div><b>Discover</b><span>Vector search</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-swap"/></svg></div><b>Talk</b><span>A2A</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-check"/></svg></div><b>Agree</b><span>One tap</span></div>
+        <div class="st"><div class="c"><svg class="ic"><use href="#i-qr"/></svg></div><b>Done</b><span>Pass · booking</span></div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="discovery">
   <div class="wrap">
     <div class="sec-head reveal">
       <div><span class="label sq">Discovery &amp; matching</span><h2>Finds who fits. <span class="soft">Says why.</span></h2></div>
+      <p>Intent in. Ranked matches out.</p>
     </div>
     <div class="pipe reveal" id="pipe">
       <span>Intent</span><i>→</i><span>Embedding</span><i>→</i><span>Vector search</span><i>→</i><span>Filters</span><i>→</i><span>Gemini rank</span><i>→</i><span>Agents talk</span>
@@ -773,6 +640,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <div class="wrap">
     <div class="sec-head reveal">
       <div><span class="label sq">Privacy wall</span><h2>Offers cross. <span class="soft">Secrets don't.</span></h2></div>
+      <p>Every message is checked at the wall.</p>
     </div>
     <div class="sorter reveal" id="sorter">
       <span class="side-l"><svg class="ic" style="width:14px;height:14px"><use href="#i-user"/></svg>Your agent</span>
@@ -788,6 +656,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <div class="wrap">
     <div class="sec-head reveal">
       <div><span class="label sq">Analytics &amp; forecasting</span><h2>Chats become <span class="soft">insights.</span></h2></div>
+      <p>Missed demand, real prices, next week's forecast. Counts only, no names.</p>
     </div>
     <div class="board">
       <div class="panel w4 reveal">
@@ -834,6 +703,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <div class="wrap">
     <div class="sec-head reveal">
       <div><span class="label sq">After the deal</span><h2>Signed. Paid. <span class="soft">Collected once.</span></h2></div>
+      <p>Every step checkable with Collab's public key.</p>
     </div>
     <div class="proof2">
       <div class="chain reveal" id="chain">
@@ -855,6 +725,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   <div class="wrap">
     <div class="sec-head reveal">
       <div><span class="label sq">AI Builder Cup 2026 · Retail &amp; Commerce</span><h2>The whole brief. <span class="soft">One network.</span></h2></div>
+      <p>Every theme pillar, built in.</p>
     </div>
     <div class="theme reveal">
       <div><span class="ico2"><svg class="ic"><use href="#i-chat"/></svg></span><span class="label">Conversational commerce</span><h3>Agents close deals</h3></div>
@@ -912,8 +783,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   /* ---------- Use cases: each is one two-agent conversation ---------- */
   const SCENARIOS = [
     { tab: 'Pickup', icon: 'shirt', title: 'Kurta · size M · today',
-      you: { init: 'AS', name: "Asha's agent", role: 'Buyer', lk: 'Max', limit: 1400 },
-      them: { init: 'MT', name: 'Meera Textiles', role: 'Shop', lk: 'Floor', limit: 1150 },
+      you: { init: 'AS', name: "Asha's agent", role: 'Buyer', ctx: [['Wants', 'Kurta, M'], ['Where', 'Indiranagar']], lk: 'Max', limit: 1400 },
+      them: { init: 'MT', name: 'Meera Textiles', role: 'Shop', ctx: [['Listed', '₹1,600'], ['Stock', '2']], lk: 'Floor', limit: 1150 },
       range: [1000, 1700], deal: 1350,
       beats: [
         { from: 'you', st: 'Asking', html: 'Cotton kurta, size M, today?' },
@@ -926,8 +797,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: 'Kurta · ' + P(1350), ticks: ['Cart signed', 'Paid (test)', 'Pickup pass'], qr: true },
       ] },
     { tab: 'Restock', icon: 'box', title: 'Steel bottles · 200 units',
-      you: { init: 'RC', name: "Ravi's Café", role: 'Business buyer', lk: 'Max / unit', limit: 240 },
-      them: { init: 'SW', name: 'Steelware Co.', role: 'Wholesaler', lk: 'Floor', limit: 205 },
+      you: { init: 'RC', name: "Ravi's Café", role: 'Business buyer', ctx: [['Wants', '200 bottles'], ['By', 'Friday']], lk: 'Max / unit', limit: 240 },
+      them: { init: 'SW', name: 'Steelware Co.', role: 'Wholesaler', ctx: [['Listed', '₹280'], ['Stock', '150']], lk: 'Floor', limit: 205 },
       range: [180, 300], deal: 240,
       beats: [
         { from: 'you', st: 'Asking', html: '200 steel bottles by Friday?' },
@@ -941,8 +812,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: '150 bottles · ' + P(36000), ticks: ['Cart signed', 'Paid (test)', 'Delivery Thu'], qr: false },
       ] },
     { tab: 'Repair', icon: 'wrench', title: 'AC repair · Saturday',
-      you: { init: 'PR', name: "Priya's agent", role: 'Customer', lk: 'Max', limit: 600 },
-      them: { init: 'CF', name: 'CoolFix', role: 'Technician', lk: 'Floor', limit: 500 },
+      you: { init: 'PR', name: "Priya's agent", role: 'Customer', ctx: [['Needs', 'AC repair'], ['When', 'Sat AM']], lk: 'Max', limit: 600 },
+      them: { init: 'CF', name: 'CoolFix', role: 'Technician', ctx: [['Visit', '₹650'], ['Area', 'HSR']], lk: 'Floor', limit: 500 },
       range: [400, 750], deal: 575,
       beats: [
         { from: 'you', st: 'Asking', html: 'AC not cooling. Saturday morning?' },
@@ -955,8 +826,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: 'Booked · Sat 11:00', ticks: ['Slot held', 'Reminder Fri', 'Fee waived if repaired'], qr: false },
       ] },
     { tab: 'Resale', icon: 'bike', title: 'Used cycle · neighbours',
-      you: { init: 'DV', name: "Dev's agent", role: 'Buyer', lk: 'Max', limit: 4000 },
-      them: { init: 'KB', name: "Kabir's agent", role: 'Seller', lk: 'Floor', limit: 3600 },
+      you: { init: 'DV', name: "Dev's agent", role: 'Buyer', ctx: [['Wants', '20" cycle'], ['Where', 'Same block']], lk: 'Max', limit: 4000 },
+      them: { init: 'KB', name: "Kabir's agent", role: 'Seller', ctx: [['Listed', '₹4,500'], ['Age', '2 yrs']], lk: 'Floor', limit: 3600 },
       range: [3000, 5000], deal: 3900,
       beats: [
         { from: 'you', st: 'Asking', html: 'Any rust? Brakes OK?' },
@@ -970,8 +841,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: 'Cycle · ' + P(3900), ticks: ['Paid another way', 'Pickup pass'], qr: true },
       ] },
     { tab: 'Tutor', icon: 'book', title: 'Maths tutor · Saturdays',
-      you: { init: 'MN', name: "Meena's agent", role: 'Parent', lk: 'Max / hr', limit: 600 },
-      them: { init: 'AR', name: "Arjun's agent", role: 'Tutor', lk: 'Floor / hr', limit: 450 },
+      you: { init: 'MN', name: "Meena's agent", role: 'Parent', ctx: [['Needs', 'Class 8 maths'], ['When', 'Saturdays']], lk: 'Max / hr', limit: 600 },
+      them: { init: 'AR', name: "Arjun's agent", role: 'Tutor', ctx: [['Rate', '₹700/hr'], ['Free', 'Sat 10am']], lk: 'Floor / hr', limit: 450 },
       range: [350, 800], deal: 600,
       beats: [
         { from: 'you', st: 'Asking', html: 'Class 8 maths, Saturdays?' },
@@ -984,8 +855,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: '4 lessons booked', ticks: ['Sat 10am × 4', 'Calendar added'], qr: false },
       ] },
     { tab: 'Bakery', icon: 'cake', title: 'Eggless cake · Sunday',
-      you: { init: 'NH', name: "Neha's agent", role: 'Customer', lk: 'Max', limit: 1100 },
-      them: { init: 'BN', name: 'Bake Nest', role: 'Home baker', lk: 'Floor', limit: 850 },
+      you: { init: 'NH', name: "Neha's agent", role: 'Customer', ctx: [['Wants', '1 kg, eggless'], ['When', 'Sunday']], lk: 'Max', limit: 1100 },
+      them: { init: 'BN', name: 'Bake Nest', role: 'Home baker', ctx: [['Listed', '₹1,200'], ['Notice', '24 h']], lk: 'Floor', limit: 850 },
       range: [700, 1300], deal: 1050,
       beats: [
         { from: 'you', st: 'Asking', html: 'Eggless chocolate, 1 kg, Sunday?' },
@@ -998,8 +869,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: 'Cake · ' + P(1050), ticks: ['Order confirmed', 'Pickup pass'], qr: true },
       ] },
     { tab: 'Rent', icon: 'proj', title: 'Projector · one night',
-      you: { init: 'OT', name: 'Office team', role: 'Renter', lk: 'Max', limit: 1500 },
-      them: { init: 'RG', name: 'Rent-a-Gear', role: 'Rental shop', lk: 'Floor', limit: 1000 },
+      you: { init: 'OT', name: 'Office team', role: 'Renter', ctx: [['Needs', 'Projector'], ['When', 'Fri night']], lk: 'Max', limit: 1500 },
+      them: { init: 'RG', name: 'Rent-a-Gear', role: 'Rental shop', ctx: [['Listed', '₹1,800'], ['Deposit', '₹3,000']], lk: 'Floor', limit: 1000 },
       range: [800, 2000], deal: 1400,
       beats: [
         { from: 'you', st: 'Asking', html: 'Projector Friday night? HDMI?' },
@@ -1012,8 +883,8 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
         { kind: 'deal', head: 'Projector · ' + P(1400), ticks: ['Deposit refundable', 'Return Sat', 'Pickup pass'], qr: true },
       ] },
     { tab: 'Phone fix', icon: 'phone', title: 'Screen repair · today',
-      you: { init: 'KR', name: "Kiran's agent", role: 'Customer', lk: 'Max', limit: 3000 },
-      them: { init: 'FM', name: 'FixIt Mobile', role: 'Repair shop', lk: 'Floor', limit: 2400 },
+      you: { init: 'KR', name: "Kiran's agent", role: 'Customer', ctx: [['Needs', 'New screen'], ['When', 'Today']], lk: 'Max', limit: 3000 },
+      them: { init: 'FM', name: 'FixIt Mobile', role: 'Repair shop', ctx: [['Listed', '₹3,200'], ['Ready', '6pm']], lk: 'Floor', limit: 2400 },
       range: [2000, 3500], deal: 2800,
       beats: [
         { from: 'you', st: 'Asking', html: 'Screen today? Original part?' },
@@ -1038,7 +909,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
     const b = document.createElement('button');
     b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-label', sc.tab);
     b.innerHTML = icon(sc.icon) + '<span class="t">' + sc.tab + '</span><span class="prog"></span>';
-    b.addEventListener('click', () => play(i));
+    b.addEventListener('click', () => { auto = false; play(i); });
     scenEl.appendChild(b);
   });
 
@@ -1049,6 +920,7 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
   function fillSide(side, d) {
     $('av' + side + 'T').textContent = d.init;
     $('n' + side).textContent = d.name; $('r' + side).textContent = d.role;
+    $('ctx' + side).innerHTML = d.ctx.map((r, i) => '<div class="row' + (i ? ' optional' : '') + '"><span class="k">' + r[0] + '</span><span>' + r[1] + '</span></div>').join('');
     $('lk' + side).textContent = d.lk; $('lv' + side).textContent = rupee(d.limit);
   }
 
@@ -1084,7 +956,6 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
 
   function addMsg(b) {
     const m = document.createElement('div');
-    feed.querySelector('.hint')?.remove();
     m.className = 'msg ' + (b.kind || b.from);
     if (b.kind === 'ask') m.innerHTML = '<span class="meta">Both owners · one tap</span>' + b.html + '<div class="btns"><span class="on">Confirm</span><span>Not now</span></div>';
     else if (b.kind === 'deal') {
@@ -1098,36 +969,21 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
     while (feed.children.length > 5) feed.firstElementChild.remove();
   }
 
-  let run = 0, autoPlay = false, release = null;
-  const nextBtn = $('nextBtn'), autoBtn = $('autoBtn');
-  // Waits for the Next button, or for the time to pass when Auto is on.
-  function gate(ms, label) {
-    nextBtn.textContent = label;
-    return new Promise((r) => {
-      release = r;
-      if (autoPlay) setTimeout(() => { if (release === r) { release = null; r(); } }, ms);
-    });
-  }
-  nextBtn.addEventListener('click', () => { if (release) { const r = release; release = null; r(); } });
-  autoBtn.addEventListener('click', () => {
-    autoPlay = !autoPlay; autoBtn.setAttribute('aria-pressed', autoPlay); autoBtn.textContent = autoPlay ? '❚❚ Auto' : '▶ Auto';
-    if (autoPlay && release) { const r = release; release = null; r(); }
-  });
-  const nextLabel = (b) => !b ? 'Next case →' : b.kind === 'ask' ? 'Ask the owners →' : b.kind === 'deal' ? '✓ Confirm' : b.kind === 'sys' ? 'Next →' : (b.from === 'you' ? 'Your agent →' : 'Their agent →');
+  let run = 0, auto = true;
   async function play(ix) {
     const id = ++run;
     cur = ix; S = SCENARIOS[ix];
     [...scenEl.children].forEach((b, i) => { b.setAttribute('aria-selected', i === ix); b.querySelector('.prog').style.width = '0'; });
     $('sTitle').textContent = S.title;
     fillSide('You', S.you); fillSide('Them', S.them);
-    feed.innerHTML = '<div class="msg sys hint">Tap <b>Start</b> to let the agents talk</div>';
+    feed.innerHTML = '';
     [pinYou, pinThem].forEach((p) => { p.style.opacity = 0; });
     zone.classList.remove('show');
     setStatus($('stYou'), '', 'Ready'); setStatus($('stThem'), '', 'Ready');
     stepsEl.innerHTML = ''; S.beats.forEach(() => stepsEl.appendChild(document.createElement('i')));
     $('trackNote').textContent = 'Only offers cross the wall';
     const prog = scenEl.children[ix].querySelector('.prog');
-    await gate(900, 'Start →');
+    await wait(500);
     for (let i = 0; i < S.beats.length; i++) {
       if (id !== run) return;
       const b = S.beats[i];
@@ -1150,10 +1006,10 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
       }
       [...stepsEl.children].forEach((el, k) => el.classList.toggle('on', k <= i));
       prog.style.transition = 'width .4s'; prog.style.width = ((i + 1) / S.beats.length * 100) + '%';
-      await gate(b.kind === 'ask' ? 1800 : 1500, nextLabel(S.beats[i + 1]));
-      if (id !== run) return;
+      await wait(b.kind === 'ask' ? 1800 : 1500);
     }
-    if (id === run) play((ix + 1) % SCENARIOS.length);
+    await wait(3500);
+    if (id === run) play(auto ? (ix + 1) % SCENARIOS.length : ix);
   }
 
   let started = false;
@@ -1215,55 +1071,26 @@ section.tight { padding: 8px 0 88px; border-top: 0; }
     const c = document.createElement('button');
     c.type = 'button'; c.className = 'case reveal';
     c.innerHTML = '<div class="top"><span class="ico">' + icon(ic) + '</span><span class="tag">' + kind + '</span></div><b>' + name + '</b><div class="mini"><i class="a"></i><i class="b"></i><i class="p" style="animation-delay:' + (-(i * .37) % 2.2).toFixed(2) + 's"></i><i class="done" style="animation-delay:' + (-(i * .37) % 2.2).toFixed(2) + 's"></i></div>';
-    c.addEventListener('click', () => { $('how').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' }); play(sc); });
+    c.addEventListener('click', () => { auto = false; $('how').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' }); play(sc); });
     grid.appendChild(c);
   });
   let spotIx = 0;
   setInterval(() => { const cs = grid.children; [...cs].forEach((c) => c.classList.remove('spot')); cs[spotIx++ % cs.length].classList.add('spot'); }, 1100);
 
-  /* ---------- Story: you drive it — pick, send, let agents talk, confirm ---------- */
-  const REQUESTS = {
-    kurta: { say: 'Kurta, size M, under ₹1,400', talk: [['y', 'Size M?'], ['t', 'In stock · ₹1,600'], ['y', '₹1,150'], ['t', '₹1,450'], ['y', '₹1,300'], ['t', '₹1,350'], ['ok', '✓ Deal']], confirm: '✓ Confirm ₹1,350', pass: 'Pickup pass' },
-    repair: { say: 'AC repair, Saturday, under ₹600', talk: [['y', 'Saturday?'], ['t', '11:00 · ₹650'], ['y', '₹500'], ['t', '₹600'], ['y', '₹550'], ['t', '₹575'], ['ok', '✓ Booked']], confirm: '✓ Book ₹575', pass: 'Sat 11:00 booked' },
-    cake: { say: 'Eggless cake, Sunday, under ₹1,100', talk: [['y', 'Eggless?'], ['t', 'Yes · ₹1,200'], ['y', '₹900'], ['t', '₹1,100'], ['y', '₹1,000'], ['t', '₹1,050'], ['ok', '✓ Deal']], confirm: '✓ Confirm ₹1,050', pass: 'Ready Sunday' },
-  };
-  const scards = [...$('storyRow').querySelectorAll('.scard')];
-  const sayText = $('sayText'), talkCol = $('talkCol'), wall3 = $('wall3'), bigBtn = $('bigBtn'), miniPass = $('miniPass');
-  const sendBtn = $('sendBtn'), talkBtn = $('talkBtn'), againBtn = $('againBtn'), picks = [...document.querySelectorAll('#pick button')];
-  qrFill($('miniQr'), 7);
-  let req = REQUESTS.kurta, busy = false;
-  const focus = (n) => scards.forEach((c, i) => c.classList.toggle('on', i === n));
-  function resetStory() {
-    sayText.textContent = req.say; talkCol.innerHTML = '';
-    bigBtn.className = 'bigbtn'; bigBtn.disabled = true; bigBtn.textContent = req.confirm; miniPass.className = 'minipass';
-    sendBtn.disabled = false; talkBtn.disabled = true; againBtn.hidden = true; picks.forEach((b) => (b.disabled = false));
-    focus(0);
-  }
-  picks.forEach((b) => b.addEventListener('click', () => {
-    req = REQUESTS[b.dataset.k]; picks.forEach((x) => x.classList.toggle('on', x === b)); resetStory();
-  }));
-  sendBtn.addEventListener('click', async () => {
-    if (busy) return; busy = true;
-    sendBtn.disabled = true; picks.forEach((b) => (b.disabled = true));
-    sayText.textContent = '';
-    for (const ch of req.say) { sayText.textContent += ch; await wait(22); }
-    await wait(250); focus(1); talkBtn.disabled = false; busy = false;
-  });
-  talkBtn.addEventListener('click', async () => {
-    if (busy) return; busy = true; talkBtn.disabled = true;
-    for (const [cls, t] of req.talk) {
-      wall3.classList.add('hit'); setTimeout(() => wall3.classList.remove('hit'), 250);
-      const b = document.createElement('span'); b.className = cls; b.textContent = t; talkCol.appendChild(b);
-      await wait(520);
+  /* ---------- Flow: a token walks the five steps ---------- */
+  const flowSteps = [...$('flow2').querySelectorAll('.st')], fill = $('flowFill');
+  onView($('flow2'), async function loop() {
+    while (true) {
+      flowSteps.forEach((s) => s.classList.remove('on')); fill.style.transition = 'none'; fill.style.width = '0';
+      await wait(400);
+      for (let i = 0; i < flowSteps.length; i++) {
+        flowSteps[i].classList.add('on');
+        fill.style.transition = 'width .8s ease'; fill.style.width = (i / (flowSteps.length - 1) * 80) + '%';
+        await wait(900);
+      }
+      await wait(1800);
     }
-    focus(2); bigBtn.disabled = false; bigBtn.classList.add('ready'); busy = false;
   });
-  bigBtn.addEventListener('click', async () => {
-    bigBtn.disabled = true; bigBtn.classList.add('press'); await wait(160);
-    bigBtn.classList.add('gone'); $('passText').textContent = req.pass; miniPass.classList.add('show'); againBtn.hidden = false;
-  });
-  againBtn.addEventListener('click', resetStory);
-  resetStory();
 
   /* ---------- Privacy wall sorter ---------- */
   const TOKENS = [
