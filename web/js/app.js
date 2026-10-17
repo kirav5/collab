@@ -1,6 +1,6 @@
 // Collab on the web: one chat with your agent (it remembers, answers from your notes, shapes requests with Gemini and
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
-// screens Collab has: what your agents are doing (Deals), your QR and agent (My shop), what your agent knows (About me),
+// screens Collab has: what your agents are doing (Activity), your QR and public card (My card), what your agent knows (About me),
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
@@ -116,7 +116,7 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><label class="mic" for="photo-in" title="Sell from a photo" aria-label="Sell something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" capture="environment" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
   voiceInput();
@@ -172,8 +172,8 @@ function paintSidebar() {
         ${!session.pushOn && session.push ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
-        ${navRow("requests", "⇄", "Deals", n ? String(n) : "")}
-        ${navRow("people", "▦", "My shop", "")}
+        ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
+        ${navRow("people", "▦", "My card", "")}
         ${navRow("context", "▤", "About me", "")}
         ${navRow("sharing", "◈", "Privacy", "")}
         ${navRow("settings", "⚙", "Settings", "")}
@@ -195,7 +195,7 @@ function groupSessions(list) {
 
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
-  const titles = { context: "About me", people: "My shop", sharing: "Privacy", requests: "Deals", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
+  const titles = { context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
@@ -1103,7 +1103,7 @@ async function publicIntake(text, noteId = null, photo = null) {
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 Sell this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 List this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
   S.screen = "chat"; paint();
   return true;

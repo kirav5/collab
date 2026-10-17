@@ -1,5 +1,5 @@
 // The screens beside chat (Collab's Screens.swift): Context (what your agent knows, and who sees each thing),
-// My shop (QR, agent card, contacts), Privacy (rules for Protected topics, pause everything, what was shared), Deals
+// My card (QR, agent card, contacts), Privacy (rules for Protected topics, pause everything, what was shared), Activity
 // (every conversation between agents, live) and Settings. Screen keys keep their old names so links keep working.
 import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
@@ -26,7 +26,7 @@ async function sharedLog() {
 }
 
 /**
- * Insights, at the top of My shop, for someone with at least one public offering: what to do first (Gemini's lines, or
+ * Insights, at the top of My card, for someone with at least one public offering: what to do first (Gemini's lines, or
  * the plain reading of the numbers when the model isn't there — the server checks every number either way), then the
  * numbers behind it in small tiles, each edged by what it is: yellow for demand you missed, magenta for demand you
  * could meet (asked near you, bought alongside yours), cyan for what buyers ask and what's coming, green for deals done.
@@ -401,15 +401,15 @@ export const screens = {
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
       let qr = "";
       try { qr = await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
-      return frame("My shop", "Your QR and your agent", `${insights}
+      return frame("My card", "How others reach your agent", `${insights}
         <div class="card qr-card">
           <div class="qr" aria-label="Your QR code">${qr}</div>
           <div class="stack" style="gap:6px">${label("Your QR code", "sq ink")}
-            <span class="small muted">Scan with any phone camera to talk to your agent — no app. Put it on your counter.</span>
+            <span class="small muted">Anyone can scan it with a phone camera to reach your agent — no app needed. Share it or print it.</span>
             <div class="row"><a class="btn secondary compact" download="collab-${esc(S.profile.handle)}-qr.svg" href="data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}">Download</a>
               <button class="btn secondary compact" data-act="copy-link" data-link="${esc(link)}">Copy link</button>
               <button class="btn accent compact" data-act="scan">Scan a QR</button>
-              <button class="btn secondary compact" data-act="preview-card">See your card as customers do</button></div></div></div>
+              <button class="btn secondary compact" data-act="preview-card">See your card as others see it</button></div></div></div>
         <div id="scanner"></div>
         <div class="card">${label("Your agent", "sq ink")}<b>${esc(S.profile.name)} <span class="faint">@${esc(S.profile.handle)}</span></b>
           <span class="small muted">Other people's agents — in this app or any A2A agent — reach yours at:</span>
@@ -716,7 +716,7 @@ export const screens = {
           <div class="row"><span class="avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(a.name)}</b><span class="small faint">fits “${esc(a.title)}” · found by your scheduled agent</span></div>${a.price ? `<span class="end"><b>${money(a.price, a.unit)}</b></span>` : ""}</div>
           <span class="small muted">${esc(a.text)}</span>
           <div class="row"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Dismiss</button></div></div>`).join("");
-      return frame("Deals", "What your agents are doing", `
+      return frame("Activity", "What your agents are doing", `
         <div class="card slim attention ${need ? "wait" : ""}" data-anim="att" data-anim-sig="${need}"><span>${moves ? `Your agents made <b>${moves}</b> move${moves === 1 ? "" : "s"} today${closed ? ` and agreed <b>${closed}</b> deal${closed === 1 ? "" : "s"} inside your rules` : ""}.` : "Your agents are standing by."} ${need ? `<b>${need}</b> need${need === 1 ? "s" : ""} you.` : "Nothing needs you right now."}</span></div>
         ${label(`Waiting for you · ${need}`, "sq wait")}${alerts}${waiting.map(e => engagementCard(e, e.id)).join("") || (alerts ? "" : `<p class="small muted">Nothing waits on you. Your agents ask only when a decision is yours.</p>`)}
         ${talking.length ? `${label(`Agents negotiating · ${talking.length}`, "sq talk")}${talking.map(row).join("")}` : ""}

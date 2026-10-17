@@ -492,7 +492,7 @@ function sellerRequest(e, mine) {
 // Tips by kind of deal — guidance for the buyer, never terms (the seller's own terms come from their offering).
 const TIPS = {
   booking: ["Arrive a few minutes early; tell them if you're running late.", "Share any reference (a photo, a style, notes) when you arrive."],
-  pickup: ["Check the item before you leave with it.", "Keep your pass private until you're at the counter."],
+  pickup: ["Check the item before you leave with it.", "Keep your pass private until the handover."],
   handover: ["See it in person and check the papers before the handover.", "Keep a copy of anything you sign."],
 };
 
