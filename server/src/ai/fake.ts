@@ -66,6 +66,10 @@ function answer(req: CompleteRequest): object {
       : /visit/.test(how) ? [{ label: "Available?", text: `Is ${item} still available?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Visit", text: "When can I come to see it?" }]
       : [{ label: "In stock?", text: `Do you have ${item} in stock?` }, { label: "Price", text: `What's your best price for ${item}?` }, { label: "Collect", text: "Can I order now and collect today?" }] };
   }
+  if (ins.startsWith("For each question about a listing")) {
+    const qs = JSON.parse(p.match(/Questions: (.*)$/m)?.[1] ?? "[]");
+    return { answers: Object.fromEntries(qs.map((q: any) => [q.label, q.options[0] ?? null])) };
+  }
   if (ins.startsWith("Read a photo of something")) {
     // Offline there's no seeing: the stand-in names a generic item (tests send the caption they expect read).
     const caption = quoted(p, "Seller's caption");

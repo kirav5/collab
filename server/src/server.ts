@@ -33,7 +33,7 @@ import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { suggestTerms } from "./core/terms.ts";
-import { NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
+import { AnswersTask, NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
 import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.ts";
 import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
@@ -835,6 +835,14 @@ app.post("/api/facts", route(async req => {
   if (withPhoto && ph) await db.merge(PHOTOS, ph.id, { factId: fact.id });
   const out = withPhoto ? publicFact(withPhoto) : fact;
   return body === raw ? out : { ...out, floorKeptPrivate: true };
+}));
+/** Suggested answers to a listing's common questions (one of each question's options, or none) — see AnswersTask. */
+app.post("/api/offers/answers", route(async req => {
+  await spend(req.uid, 1);
+  const questions = (Array.isArray(req.body?.questions) ? req.body.questions : []).slice(0, 6).map((q: any) => ({ label: text(q?.label, 60), ask: text(q?.ask, 160),
+    options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map((o: unknown) => text(o, 60)).filter(Boolean) })).filter((q: any) => q.label && q.options.length);
+  if (!questions.length) return { answers: {} };
+  return { answers: (await decide(model, AnswersTask, { text: text(req.body?.text, 600), questions })).output };
 }));
 /** A photo of something to sell → a listing sentence (Gemini reads it), and the photo kept for the listing. */
 app.post("/api/offers/photo", route(async req => {

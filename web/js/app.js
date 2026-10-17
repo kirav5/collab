@@ -256,7 +256,10 @@ async function chatHTML() {
   if (!cur || !cur.messages.length) return emptyChat();
   refreshStoreCard(cur);
   // A listing being made gets its terms suggested at once, in the background (see prefillTerms).
-  cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => { if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i); }));
+  cur.messages.forEach(m => (m.cards ?? []).forEach((c, i) => {
+    if (c.type === "offer" && c.step === "review" && c.offer && !c.termsTried && !c.terms?.length) prefillTerms(cur.id, m.id, i);
+    if (c.type === "offer" && c.step === "review" && c.missing?.length && !c.answersTried) prefillAnswers(cur.id, m.id, i);
+  }));
   if (cur.messages.some(m => m.cards?.some(c => c.type === "saved"))) {
     const facts = await savedFacts();
     for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
@@ -386,6 +389,18 @@ async function prefillTerms(sid, mid, i, again = false) {
   now_.c.termsLoading = false;
   if (r?.terms?.length && (again || !now_.c.terms?.length)) now_.c.terms = r.terms;
   else if (again && r && !r.terms?.length) toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own.");
+  await saveSession(now_.s); paintContent(true);
+}
+
+/** Likely answers to the listing's common questions, suggested by Gemini from its words; the owner accepts them. */
+async function prefillAnswers(sid, mid, i) {
+  const f = cardAt(sid, mid, i);
+  if (!f || f.c.answersTried) return;
+  f.c.answersTried = true; await saveSession(f.s);
+  const r = await api("/api/offers/answers", { text: f.c.publicText ?? f.c.text, questions: f.c.missing.map(m => ({ label: m.label, ask: m.ask, options: m.options ?? [] })) }).catch(() => null);
+  const now_ = cardAt(sid, mid, i);
+  if (!now_ || !r?.answers) return;
+  now_.c.suggestedAnswers = r.answers;
   await saveSession(now_.s); paintContent(true);
 }
 
@@ -1105,6 +1120,11 @@ async function cardAction(a, el, { s, m, c }) {
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
     if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
     c.step = "published"; c.publicText = fact.text;
+  }
+  // Accept every suggested answer still open (the owner's own answers stay).
+  if (a === "offer-use-suggested") {
+    c.missingAnswers = { ...(c.suggestedAnswers ?? {}), ...Object.fromEntries(Object.entries(c.missingAnswers ?? {}).filter(([, v]) => String(v).trim())) };
+    c.answeredMissing = (c.missing ?? []).every(m => String(c.missingAnswers[m.label] ?? "").trim());
   }
   // One improvement open at a time under the listing (tap again to fold it); what's typed is kept either way.
   // Each improvement opens and closes on its own; several can be open at once.

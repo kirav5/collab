@@ -383,3 +383,12 @@ details.improve[open] > summary::after { content: "▾"; }
 details.improve.done .improve-title { color: var(--fresh); }
 .improve-status { font-size: 12px; color: var(--text3); }
 .improve-body { padding: 0 12px 12px; display: grid; gap: 8px; }
+
+/* Terms on a phone: the name on its own line, the full sentence wrapped below it — nothing cut off. */
+.term-edit { display: grid; gap: 4px; }
+.term-edit .term-label { font-weight: 600; }
+.term-edit .term-text { resize: vertical; min-height: 56px; font: inherit; }
+
+.chip.suggested { border-style: dashed; border-color: var(--accent); color: var(--accent-ink, var(--accent)); }
+/* Common-question options wrap two per row on a phone instead of a long ragged line. */
+@media (max-width: 520px) { .improve-body .row:has(> .chip) { display: grid; grid-template-columns: 1fr 1fr; } .improve-body .chip { text-align: center; } }
