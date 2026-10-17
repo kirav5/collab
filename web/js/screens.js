@@ -9,7 +9,7 @@ import { applicantsBoard, dealAmount, dealStage, defaultHours, engagementCard, h
 import { local } from "./local.js";
 import { privacyFacts } from "./processing.js";
 import { live, needsYou, needsYouCount } from "./live.js";
-import { ask, avatarHTML, busy, byTag, esc, label, money, shortName, tag, tierTag, time } from "./ui.js";
+import { ask, avatarHTML, busy, byTag, esc, label, logo, money, shortName, tag, tierTag, time } from "./ui.js";
 import { listingRoles, rolesOf } from "./roles.js";
 import { pendingWrites, saveNote } from "./outbox.js";
 
@@ -89,8 +89,8 @@ function deviceAI() {
       <button class="btn quiet compact" data-act="gemma-remove">Remove (frees about 2 GB)</button>`;
     case "absent": return `Read your private notes offline, on this device. One-time 2 GB download.
       <button class="btn secondary compact" data-act="device-download">Download ${MODEL.label}</button>${engine.reason ? `<br><span class="small" style="color:var(--stale)">${esc(engine.reason)}</span>` : ""}`;
-    case "downloading": return `<span class="spinner"></span> Downloading ${MODEL.label}…${pct} <span class="small faint">You can keep using Collab; if it stops, it resumes where it left off.</span>`;
-    case "loading": return `<span class="spinner"></span> Loading ${MODEL.label} onto this device's GPU…`;
+    case "downloading": return `${logo("live spinner")} Downloading ${MODEL.label}…${pct} <span class="small faint">You can keep using Collab; if it stops, it resumes where it left off.</span>`;
+    case "loading": return `${logo("live spinner")} Loading ${MODEL.label} onto this device's GPU…`;
     case "error": return `<span style="color:var(--danger)">${MODEL.label} couldn't start: ${esc(engine.reason ?? "unknown error")}</span> <button class="btn secondary compact" data-act="device-download">Try again</button>`;
     case "checking": return `Checking…`;
     default: return `This device can't run Gemma${engine.reason ? `: ${esc(engine.reason)}` : "."} Your laptop or desktop can — and with the same Google account, it answers this device's questions (My devices, below).`;
@@ -955,12 +955,12 @@ export const screens = {
             : session.appCheckError ? `<span style="color:var(--stale)">● Couldn't verify this browser</span> <span class="small faint">(${esc(session.appCheckError.code)})</span><br><span class="small muted">Chat and requests still work. Payments, pickups and price checks need it: reload Collab, or allow google.com in your content blocker.</span>`
             : `<span class="small muted">Checking…</span>`}</dd>
           <dt>App</dt><dd>${standalone() ? `<span style="color:var(--fresh)">● Installed</span>`
-            : session.install ? `<button class="btn secondary compact" data-act="install">📲 Install Collab</button>`
+            : session.install ? `<button class="btn secondary compact" data-act="install">Install Collab</button>`
             : ios() ? `In Safari, tap <b>Share</b> (the square with an arrow), then <b>Add to Home Screen</b>. Open Collab from the home screen — notifications on iPhone only work there.`
             : `In your browser's menu choose <b>Install app</b> or <b>Add to Home screen</b>.`}</dd>
           <dt>Notifications</dt><dd>${session.pushOn ? `<span style="color:var(--fresh)">● On for this device</span> <button class="btn quiet compact" data-act="push-test">Send a test notification</button>`
             : "Notification" in window && Notification.permission === "denied" ? `Blocked — allow notifications for this site in your browser's site settings, then reload.`
-            : `<button class="btn secondary compact" data-act="push-on">🔔 Turn on notifications</button>`}</dd></dl></div>
+            : `<button class="btn secondary compact" data-act="push-on">Turn on notifications</button>`}</dd></dl></div>
         <div class="card">${label("Account", "sq")}
           ${session.google && anon ? `<span class="small muted">You're a guest. Sign in with Google to keep your handle and context on other devices.</span><button class="btn secondary" data-act="google">Sign in with Google</button>` : `<span class="small muted">${esc(session.user?.email ?? "Signed in")}</span>`}
           <div class="row">${session.signOut ? `<button class="btn secondary compact" data-act="sign-out">Sign out</button>` : ""}<button class="btn quiet compact" data-act="clear-device">Delete chat history</button></div></div>

@@ -8,7 +8,7 @@ import { gpay } from "./gpay.js";
 const gpayOk = () => gpay.available;
 import { live, poke } from "./live.js";
 import { fitsReasons } from "./fits.js";
-import { avatarHTML, brand, byTag, esc, label, logo, money, shortName, tag, tierTag, time } from "./ui.js";
+import { avatarHTML, brand, byTag, esc, label, logo, money, shortName, tag, tierTag, time, icon } from "./ui.js";
 import { cap, limitPast, limitWords, listingRoles, offerWords, partyRoles, rolesOf } from "./roles.js";
 
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -26,7 +26,7 @@ export function renderCard(card, m, i) {
     case "offer": return offerCard(card, at);
     case "saved": return savedCard(card, at);
     case "sources": return sourcesCard(card, at);
-    case "suggest": return `<div class="row">${card.options.map(o => (o.text ? `<button class="chip" data-act="send-text" data-text="${esc(o.text)}">↗ ${esc(o.label)}</button>` : `<label class="chip" for="photo-in">📷 ${esc(o.label)}</label>`)).join("")}<span class="small faint">${esc(card.hint ?? "Saved to your private context.")}</span></div>`;
+    case "suggest": return `<div class="row">${card.options.map(o => (o.text ? `<button class="chip" data-act="send-text" data-text="${esc(o.text)}">↗ ${esc(o.label)}</button>` : `<label class="chip" for="photo-in">${esc(o.label)}</label>`)).join("")}<span class="small faint">${esc(card.hint ?? "Saved to your private context.")}</span></div>`;
     case "engagement": return engagementCard(live.engagements.get(card.id), card.id);
     case "discovery": return discoveryCard(card, at);
     case "store": return storeCard(card);
@@ -188,7 +188,7 @@ function recallChips(c, q, attrs, chosen = null) {
 
 /** Places Google Maps found for a request with no match on Collab (kept with the card). */
 export function nearbyHTML(r) {
-  return r.places?.length ? `<div class="stack" style="gap:6px">${r.places.map(p => `<a class="small" href="${esc(p.uri)}" target="_blank" rel="noopener noreferrer">📍 ${esc(p.title)}</a>`).join("")}
+  return r.places?.length ? `<div class="stack" style="gap:6px">${r.places.map(p => `<a class="small" href="${esc(p.uri)}" target="_blank" rel="noopener noreferrer">${icon("pin", 14)} ${esc(p.title)}</a>`).join("")}
     <span class="small faint">${esc(r.note ?? "")} · Source: Google Maps</span></div>` : `<span class="small muted">Google Maps found nothing close that fits.</span>`;
 }
 
@@ -198,7 +198,7 @@ export const priceKey = (item, area, unit) => `${item}|${area}|${unit ?? ""}`.to
 function priceResultHTML(key) {
   const p = priceChecks.get(key);
   if (!p) return "";
-  if (p.state === "loading") return `<div class="card slim working"><span class="row small"><span class="spinner"></span> Your agent is searching the web for asking prices…</span></div>`;
+  if (p.state === "loading") return `<div class="card slim working"><span class="row small">${logo("live spinner")} Your agent is searching the web for asking prices…</span></div>`;
   if (p.state === "error") return `<div class="card slim"><span class="small">${esc(p.message)}</span></div>`;
   const r = p.r, left = typeof r.remaining === "number" ? ` · ${r.remaining} checks left today` : "";
   return `<div class="card"><b>${r.status === "evidence" ? `${money(r.low)}–${money(r.high)} · usually ${money(r.typical)}${r.unit && r.unit !== "each" ? `/${esc(r.unit)}` : ""}` : "Not enough comparable prices found"}</b>
@@ -237,7 +237,7 @@ function briefCard(c, at) {
     <div class="row">${label("I'll look for", "sq accent")}<span class="end">${tag(need.category.replace(/-/g, " "))}</span></div>
     <input class="field bare title-edit" data-edit="title" value="${esc(s.title)}" aria-label="Title">
     <textarea class="field bare" data-edit="summary" rows="2" aria-label="Summary">${esc(s.summary)}</textarea>
-    <p class="small faint">📍 ${esc(where)}</p>
+    <p class="small faint row" style="gap:6px">${icon("pin", 14)}${esc(where)}</p>
     ${(c.gate && !c.gate.ok) || d.clarify?.length ? `<span class="label sq">step 2 of 2 · tap what fits, or just go</span>` : ""}
     ${gateBanner(c, at, "brief")}
     ${(c.answered ?? []).some(x => x.before) ? `<span class="small faint">From what you said before: ${(c.answered ?? []).filter(x => x.before).map(x => `<b>${esc(x.answer)}</b> (${esc(x.question.replace(/\?$/, "").toLowerCase())})`).join(" · ")}</span>` : ""}
@@ -308,7 +308,7 @@ function matchesCard(c, at) {
     const near = (c.closest ?? []).map((f, j) => `<div class="disc-row as-div">${avatarHTML(f.profile.name, f.profile.handle, 36)}<span class="disc-text"><b>${esc(f.profile.name)}${f.profile.demo ? ` ${tag("demo")}` : ""}</b>
         <span class="small muted">${esc((f.fact.offer?.title ?? f.fact.text).split(" · ")[0])}${f.fact.offer?.price ? ` · ${money(f.fact.offer.price.amount, f.fact.offer.price.period, f.fact.offer.price.currency)}` : ""}</span></span>
         <span class="disc-side">${c.askedClosest?.[j] ? tag("Asked", "fresh") : `<button class="btn secondary compact" data-act="closest-ask" data-j="${j}" ${at}>Ask their agent</button>`}</span></div>`).join("");
-    const maps = c.nearby?.loading ? `<div class="card slim working"><span class="row small"><span class="spinner"></span> Looking on Google Maps nearby…</span></div>` : c.nearby ? nearbyHTML(c.nearby) : "";
+    const maps = c.nearby?.loading ? `<div class="card slim working"><span class="row small">${logo("live spinner")} Looking on Google Maps nearby…</span></div>` : c.nearby ? nearbyHTML(c.nearby) : "";
     const who = c.draft.who || "anyone";
     return `<div class="card" ${at}>${label("No exact match yet", "sq")}
       <p class="small muted">I couldn't find ${esc(who)} for “${esc(c.draft.shared.title)}” on Collab yet. ${near ? "These are the closest — I can ask them." : "I'll keep looking, or try a wider area."}</p>
@@ -418,7 +418,7 @@ function pricePick(c, at) {
   const L = listingRoles(c), h = c.priceHints, per = c.basics.unit ? `<span class="faint">per ${esc(c.basics.unit)}</span>` : "";
   const picked = String(c.basicPrice ?? "");
   const field = `<div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Your ${esc(L.price)}</span><span>₹</span><input class="field compact" type="number" min="1" data-edit="basic-price" ${at} value="${esc(picked)}" placeholder="e.g. 500" style="max-width:140px">${per}</div>`;
-  if (h === null) return `${field}<span class="small faint"><span class="spinner"></span> Checking what others charge near you…</span>`;
+  if (h === null) return `${field}<span class="small faint">${logo("live spinner")} Checking what others charge near you…</span>`;
   if (!h?.typical) return field;
   const opts = [...new Set([h.low, h.typical, h.high].filter(Boolean))].map(v => [v, v === h.low && v !== h.typical ? "low" : v === h.high && v !== h.typical ? "high" : "typical"]);
   const other = c.priceOther || (picked && !opts.some(([v]) => String(v) === picked));
@@ -663,7 +663,7 @@ export function checkoutHTML(e) {
       <span class="small muted">${p.status === "paid" ? `${p.ap2?.instrument?.type === "google_pay" ? "Google Pay" : "In the app"}${p.mode === "test" ? " · demo payment, no money moved" : ""}` : "Marked as paid another way"}</span>
       <div class="row" style="justify-content:center"><button class="btn accent compact" data-act="eng-pickup" data-id="${id}">${kind === "booking" ? "Show booking pass" : "Show pickup pass"}</button><button class="btn secondary compact" data-act="eng-receipt" data-id="${id}">Receipt</button></div></div>
     <span class="small faint">Show the pass at the ${kind === "booking" ? "appointment" : "handover"}; ${esc(shortName(them.name))} marks it done. The receipt is signed — anyone can verify it.</span>`;
-  if (!p) return `${head}<span class="small faint"><span class="spinner"></span> ${esc(shortName(them.name))}'s agent is preparing the cart…</span>`;
+  if (!p) return `${head}<span class="small faint">${logo("live spinner")} ${esc(shortName(them.name))}'s agent is preparing the cart…</span>`;
   return `${head}
     <div class="card co-order">${label("Order", "sq")}
       <div class="row"><b>${item}${qty > 1 ? ` × ${qty}` : ""}</b><span class="end">${money(each, e.offer.unit, cur)}${qty > 1 ? " each" : ""}</span></div>
@@ -843,7 +843,7 @@ export function dealStage(e, mine = e.requester.uid === session.uid ? "requester
 }
 
 export function engagementCard(e, id) {
-  if (!e) return `<div class="card slim"><span class="thinking"><span class="spinner"></span><span class="small faint">Connecting to their agent…</span></span></div>`;
+  if (!e) return `<div class="card slim"><span class="thinking">${logo("live spinner")}<span class="small faint">Connecting to their agent…</span></span></div>`;
   const mine = e.requester.uid === session.uid ? "requester" : "provider";
   const them = mine === "requester" ? e.provider : e.requester;
   const items = live.inbox.filter(i => i.engagementId === e.id && !(i.kind === "move" && !i.question && i.owner === session.uid && !needsLimit.has(i.id)));
@@ -860,7 +860,7 @@ export function engagementCard(e, id) {
       <div class="eng-who"><b>${esc(them.name)}</b><span class="small faint">${mine === "requester" ? "You asked" : "Asked you"} · ${esc(e.title)}</span></div>
       <span class="end">${tag(ph, tone)}</span></div>
     ${stepper(e)}
-    ${e.phase === "agreed" ? "" : `<p class="status ${talking ? "busy" : ""}">${talking ? `<span class="spinner"></span>` : ""}<span>${open ? openLine(e, mine, them) : statusLine(e, mine, them, items, talking)}</span>${e.offer.price ? `<span class="end faint small">listed ${money(e.offer.price, e.offer.unit)}</span>` : ""}</p>`}
+    ${e.phase === "agreed" ? "" : `<p class="status ${talking ? "busy" : ""}">${talking ? `${logo("live spinner")}` : ""}<span>${open ? openLine(e, mine, them) : statusLine(e, mine, them, items, talking)}</span>${e.offer.price ? `<span class="end faint small">listed ${money(e.offer.price, e.offer.unit)}</span>` : ""}</p>`}
     ${items.length || e.phase === "agreed" ? "" : keyAnswer(e, mine)}
     ${items.map(inboxBlock).join("")}
     ${sellerRequest(e, mine)}
@@ -940,7 +940,7 @@ function dealBlock(e, mine) {
   // A deal whose money doesn't move in the app (a job's salary): no cart, no pass — it closes on joining.
   if (e.noPayment) pay = `<span class="small muted">No payment in the app — ${P.paid ? `the ${esc(P.payer)} pays the ${esc(P.price)}` : `you pay the ${esc(P.price)}`} as agreed.</span>`;
   else if (e.reservation?.state === "unavailable" && !["paid", "outside"].includes(p?.status)) pay = `<span class="small" style="color:var(--danger)">${esc(e.reservation.reason ?? "Not enough in stock.")} Nothing to pay until ${mine === seller ? "you restock" : `${them} restocks`}.</span>`;
-  else if (!p) pay = `<span class="small faint"><span class="spinner"></span> ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
+  else if (!p) pay = `<span class="small faint">${logo("live spinner")} ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
   else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span>${p.mode === "test" ? tag("Demo payment", "stale") : ""}`;
   else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
   else if (mine === buyer && e.reservation?.state === "choose_slot") pay = `<span class="small muted">Pick a time above, then pay.</span>`;
@@ -1037,7 +1037,7 @@ function inboxBlock(i) {
   if (i.kind === "approve") return box("Check before sharing", `<span class="small">Asked: <b>${esc(i.question)}</b></span>
     <div class="card slim">${label("Drafted from a Protected fact your rule covers")}<span class="small">“${esc(i.draft)}”</span></div>
     <div class="row"><button class="btn accent compact" data-act="inbox-approve" data-id="${esc(i.id)}">Share</button><button class="btn secondary compact" data-act="inbox-decline" data-id="${esc(i.id)}">Don't share</button></div>`);
-  if (i.kind === "move" && !i.question && !demo && !needsLimit.has(i.id)) return `<span class="thinking small"><span class="spinner"></span><span class="faint">Your agent is making a move with your private limit…</span></span>`;
+  if (i.kind === "move" && !i.question && !demo && !needsLimit.has(i.id)) return `<span class="thinking small">${logo("live spinner")}<span class="faint">Your agent is making a move with your private limit…</span></span>`;
   if (i.kind === "move" && i.counter) {
     const e = live.engagements.get(i.engagementId), c = i.counter, cur = e?.offer?.currency;
     return box(`${esc(shortName(c.by))} countered`, `<span class="small"><b>${c.quantity > 1 ? `${c.quantity} × ${money(c.price, null, cur)} = ${money(c.total, null, cur)}` : money(c.price, e?.offer?.unit, cur)}</b> — take it, offer another price, or walk away.</span>
@@ -1097,7 +1097,7 @@ export function messageHTML(m) {
   return `<div class="msg-agent" data-anim="m-${esc(m.id)}" data-anim-sig="${m.pending ? "p" : "d"}"><div class="row">${brand()}${label("· " + (m.engine ?? "Gemini"))}${label("· " + time(m.at))}</div>
     ${m.photo ? `<img class="item-photo" src="${esc(m.photo)}" alt="" style="max-width:220px">` : ""}
     ${m.pending === "calibrating" ? calibrating(m.photo ? ["reading the photo", "working out what it is", "writing the listing", "coming back around"] : ["reading what you said", "working out what to do", "lining things up", "coming back around"])
-      : m.pending ? `<span class="thinking"><span class="spinner"></span>${label(m.pending)}</span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}
+      : m.pending ? `<span class="thinking">${logo("live spinner")}${label(m.pending)}</span>` : m.text ? `<div class="text">${esc(m.text)}</div>` : ""}
     ${(m.cards ?? []).map((c, i) => renderCard(c, m, i)).join("")}</div>`;
 }
 

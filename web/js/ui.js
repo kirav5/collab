@@ -80,6 +80,18 @@ export function avatarHTML(name, handle = "", size = 30, photo = null) {
     <text x="15" y="21" text-anchor="middle" font-size="14" font-weight="700" font-family="-apple-system,Inter,sans-serif" fill="hsl(${hue} 50% 22%)">${esc(initial)}</text></svg>`;
 }
 
+/** One outline icon set (Lucide shapes, ISC licence), drawn in the text colour — never emoji as icons. */
+const ICONS = {
+  activity: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+  receipt: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M13 16H8"/>',
+  card: '<rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/>',
+  user: '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  settings: '<path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/>',
+  pin: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+};
+export const icon = (name, size = 18) => `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ""}</svg>`;
+
 export const label = (text, cls = "") => `<span class="label ${cls}">${esc(text)}</span>`;
 /** The Collab mark (styles: .logo in styles.css). cls "live" loops it, "intro" plays it once. */
 export const logo = (cls = "") => `<svg class="logo${cls ? " " + cls : ""}" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke-width="8"><path class="you" d="M42 12H12V40H42"/><path class="them" d="M22 24H52V52H22"/></g><rect class="offer" x="18" y="30" width="4" height="4"/></svg>`;
@@ -98,7 +110,7 @@ export const byTag = b => (b === "gemini" ? tag("✦ Gemini", "accent") : b === 
 
 export function busy(btn, on, text = "…") {
   if (!btn) return;
-  if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> ${esc(text)}`; }
+  if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = `${logo("live spinner")} ${esc(text)}`; }
   else { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
 }
 

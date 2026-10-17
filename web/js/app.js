@@ -16,7 +16,7 @@ import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
-import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast } from "./ui.js";
+import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -177,15 +177,15 @@ function paintSidebar() {
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
       ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
-        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">📲 Install app</button>` : ""}</div>` : ""}
+        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">Install app</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
-        ${navRow("requests", "⇄", "Activity", n ? String(n) : "")}
-        ${navRow("receipts", "✓", "Receipts", "")}
-        ${navRow("people", "▦", "My card", "")}
-        ${navRow("context", "▤", "About me", "")}
-        ${navRow("sharing", "◈", "Privacy", "")}
-        ${navRow("settings", "⚙", "Settings", "")}
+        ${navRow("requests", icon("activity"), "Activity", n ? String(n) : "")}
+        ${navRow("receipts", icon("receipt"), "Receipts", "")}
+        ${navRow("people", icon("card"), "My card", "")}
+        ${navRow("context", icon("user"), "About me", "")}
+        ${navRow("sharing", icon("shield"), "Privacy", "")}
+        ${navRow("settings", icon("settings"), "Settings", "")}
       </div>
       <div class="stack" style="gap:4px">${label("Your agent")}<button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
         ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
@@ -523,7 +523,7 @@ async function openPass(path) {
   openPanel({ title: passKind(d).name, render: body, handle: async e => {
     if (e.target.closest('[data-act="pass-move"]')) {
       const box = o.querySelector(".pass-times");
-      box.innerHTML = `<span class="spinner"></span>`;
+      box.innerHTML = `${logo("live spinner")}`;
       const r = await api(`/api/engagements/${encodeURIComponent(pid)}/slots`).catch(err => ({ slots: [], error: err.message }));
       const label_ = sl => new Date(sl.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: r.timezone ?? undefined });
       box.innerHTML = r.slots?.length ? r.slots.slice(0, 8).map(sl => `<button class="chip" data-act="pass-move-to" data-slot="${esc(sl.id)}">${esc(label_(sl))}</button>`).join("") : `<span class="small muted">${esc(r.error ?? "No other free times right now.")}</span>`;
@@ -1460,7 +1460,7 @@ async function publicIntake(text, noteId = null, photo = null) {
   if (!d || (!d.offer && !d.basics)) return false;
   let cur = S.sessions.find(x => x.id === S.current && !x.to);
   if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  cur.messages.push({ id: id(), role: "user", text: photo ? "📷 List this" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
+  cur.messages.push({ id: id(), role: "user", text: photo ? "List this from a photo" : `Make this public: “${text}”`, at: now() }, { id: id(), role: "agent", at: now(), ...(await offerReply(text, d, { noteId, ...(photo ? { photo } : {}) })) });
   await saveSession(cur);
   toChat(); paint();
   return true;
