@@ -2,7 +2,7 @@
 // changes when Firebase is set up; otherwise this checks every few seconds. New requests and new "needs you" items
 // raise a notification.
 import { api, session } from "./api.js";
-import { toast } from "./ui.js";
+import { notice } from "./ui.js";
 
 export const live = { engagements: new Map(), inbox: [], alerts: [], watches: [], listeners: new Set(), started: false };
 const seen = { engagements: new Set(), inbox: new Set(), alerts: new Set() };
@@ -11,11 +11,13 @@ let first = true;
 export const onChange = fn => { live.listeners.add(fn); return () => live.listeners.delete(fn); };
 const emit = () => { for (const fn of live.listeners) fn(); };
 
-function notify(title, body, open) {
-  toast(`${title} — ${body}`, open);
+/** Something happened while the app is open: a notice in the app, and the system's own when the tab is hidden. */
+function notify(title, body, open, kind = "attention") {
+  notice({ title, body, kind, label: { attention: "Needs you", deal: "Deal", success: "Payment", info: "New match" }[kind], action: "Open", onClick: open });
   try {
     // With push on, the server's notification already arrives — no second one from the page.
-    if (document.hidden && !session.pushOn && "Notification" in window && Notification.permission === "granted") new Notification(title, { body, tag: title + body });
+    if (document.hidden && !session.pushOn && "Notification" in window && Notification.permission === "granted")
+      new Notification(title, { body, tag: title + body, icon: "/icon-192.png", badge: "/badge-96.png" });
   } catch { /* not available */ }
 }
 
@@ -26,9 +28,9 @@ function setEngagements(list, openChat, quiet = false) {
     if (e.phase === "agreed" && !e.payment && !carts.has(e.id)) { carts.add(e.id); api(`/api/engagements/${e.id}/cart`, {}).then(x => { live.engagements.set(x.id, x); emit(); }).catch(() => {}); }
     const prev = live.engagements.get(e.id);
     live.engagements.set(e.id, e);
-    if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify("New request", `${e.requester.name}'s agent: ${e.title}`, () => openChat("requests", e.id));
-    if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("requests", e.id));
-    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", e.title, () => openChat("requests", e.id));
+    if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify(`${e.requester.name}'s agent wrote`, e.title, () => openChat("requests", e.id), "attention");
+    if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("requests", e.id), "deal");
+    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", e.title, () => openChat("requests", e.id), "success");
     seen.engagements.add(e.id);
   }
   if (!quiet) emit();
@@ -37,7 +39,7 @@ function setEngagements(list, openChat, quiet = false) {
 function setInbox(items, openChat) {
   live.inbox = items.sort((a, b) => b.createdAt - a.createdAt);
   for (const i of items) {
-    if (!first && !seen.inbox.has(i.id) && i.kind !== "move") notify("Your agent needs you", i.question ?? (i.kind === "confirm" ? `Confirm the deal: ${i.title}` : i.title), () => openChat("requests", i.engagementId));
+    if (!first && !seen.inbox.has(i.id) && i.kind !== "move") notify(i.question ?? (i.kind === "confirm" ? "Confirm the deal" : i.title), i.question ? "Their agent asks — answer once, and your agent remembers it" : i.kind === "confirm" ? i.title : "", () => openChat("requests", i.engagementId));
     seen.inbox.add(i.id);
   }
 }
@@ -47,7 +49,7 @@ function setAlerts(alerts, watches, openChat) {
   live.alerts = alerts;
   live.watches = watches;
   for (const a of alerts) {
-    if (!first && !seen.alerts.has(a.id)) notify(`New match · ${a.title}`, a.text, () => openChat("requests"));
+    if (!first && !seen.alerts.has(a.id)) notify(`New match · ${a.title}`, a.text, () => openChat("requests"), "info");
     seen.alerts.add(a.id);
   }
 }

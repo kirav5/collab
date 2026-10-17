@@ -340,7 +340,7 @@ export const screens = {
           const r = await api("/api/rules/read", { text, side: pays ? "buyer" : "seller", factId: id });
           ctxRules.set(id, { text, rules: r.rules });
           document.querySelector(`[data-ctx-rules-preview="${CSS.escape(id)}"]`).innerHTML = `<div class="card slim">${rulesList(r.lines)}<div class="row"><button class="btn accent compact" data-act="ctx-rules-confirm" data-id="${esc(id)}">Confirm rules</button><span class="small faint">Nothing applies until you confirm. New rules replace the old ones.</span></div></div>`;
-        } catch (err) { h.toast(err.message); }
+        } catch (err) { h.toast(err.message, null, "error"); }
         busy(el, false); return true;
       }
       if (a === "ctx-rules-confirm") {
@@ -348,14 +348,14 @@ export const screens = {
         if (!p) return true;
         busy(el, true, "Saving");
         try { const r = await api(`/api/facts/${el.dataset.id}/rules`, p); ctxRules.delete(el.dataset.id); h.toast(r.needsFloor ? "Saved — add your lowest price so your agent can negotiate." : "Saved — your agent follows these from now on."); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "terms-suggest") {
         // Suggestions fill empty fields (and add new headings); nothing is saved until the seller taps Save terms.
         busy(el, true, "Suggesting");
         const f = (await allFacts()).find(x => x.id === el.dataset.id);
-        const r = await api("/api/terms/suggest", { category: el.dataset.category, text: f?.text ?? "", ownerPays: el.dataset.ownerPays === "1" }).catch(err => { h.toast(err.message); return null; });
+        const r = await api("/api/terms/suggest", { category: el.dataset.category, text: f?.text ?? "", ownerPays: el.dataset.ownerPays === "1" }).catch(err => { h.toast(err.message, null, "error"); return null; });
         busy(el, false);
         if (!r) return true;
         if (!r.terms.length) { h.toast("Gemini couldn't suggest terms just now — try again in a moment, or write your own."); return true; }
@@ -376,7 +376,7 @@ export const screens = {
         const policies = [...document.querySelectorAll(`[data-term-row="${CSS.escape(id)}"]`)].map(r => ({ label: r.querySelector("[data-term-label]").value.trim(), text: r.querySelector("[data-term-text]").value.trim() })).filter(p => p.label && p.text);
         busy(el, true, "Saving");
         try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast(`Saved — ${listingRoles((await allFacts()).find(x => x.id === id)?.offer).responders} see these terms on your card and receipts.`); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "stock-track" || a === "slots-track") {
@@ -384,7 +384,7 @@ export const screens = {
         if (a === "stock-track" && !(Number.isInteger(qty) && qty >= 0)) { h.toast("Enter how many you have."); return true; }
         busy(el, true);
         try { await api("/api/resources", a === "stock-track" ? { factId: el.dataset.id, type: "quantity", onHand: qty } : { factId: el.dataset.id, type: "slots", slots: [] }); h.toast(a === "stock-track" ? "Stock tracked — deals now reserve it." : "Add your time slots below."); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "conn-pos") {
@@ -397,14 +397,14 @@ export const screens = {
             <div class="row"><span class="small" style="min-width:90px">Web address</span><button class="btn secondary compact" data-act="copy" data-value="${esc(r.eventsUrl)}">Copy</button></div>
             <div class="row"><span class="small" style="min-width:90px">Secret key</span><button class="btn secondary compact" data-act="copy" data-value="${esc(r.signingKey)}">Copy</button></div>
             <details class="more"><summary>For your developer</summary><code class="small" style="overflow-wrap:anywhere">${esc(r.eventsUrl)}</code><span class="small faint" style="overflow-wrap:anywhere">${esc(r.howTo)}</span></details></div>`;
-        } catch (err) { h.toast(err.message); busy(el, false); }
+        } catch (err) { h.toast(err.message, null, "error"); busy(el, false); }
         return true;
       }
       if (a === "copy") { try { await navigator.clipboard.writeText(el.dataset.value); h.toast("Copied."); } catch { h.toast("Couldn't copy — select it under “For your developer”."); } return true; }
       if (a === "gcal-link") {
         busy(el, true, "Opening Google");
         try { const r = await api(`/api/google/calendar/start?resourceId=${encodeURIComponent(el.dataset.id)}`); location.href = r.url; return true; }
-        catch (err) { busy(el, false); h.toast(err.message); document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`)?.removeAttribute("hidden"); return true; }
+        catch (err) { busy(el, false); h.toast(err.message, null, "error"); document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`)?.removeAttribute("hidden"); return true; }
       }
       if (a === "cal-other") { const box = document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`); if (box) box.hidden = !box.hidden; return true; }
       if (a === "conn-ical") {
@@ -414,7 +414,7 @@ export const screens = {
         if (/calendar\.google\.com/.test(url) && !/\/private-/.test(url)) { h.toast("That's the public address. Copy the “Secret address in iCal format” instead — it's a bit lower on the same settings page."); return true; }
         busy(el, true);
         try { const r = await api("/api/connectors", { provider: "ical", resourceId: el.dataset.id, url }); h.toast(r.grant.status === "degraded" ? `Connected, but the feed couldn't be read: ${r.grant.lastError}` : "Calendar linked — your busy times now block bookings."); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "conn-sync") { busy(el, true); const r = await api(`/api/connectors/${el.dataset.id}/sync`, {}).catch(e => ({ reason: e.message })); h.toast(r.synced ? `Synced — ${r.busy} busy times.` : `Couldn't sync: ${r.reason}`); h.paint(); return true; }
@@ -425,7 +425,7 @@ export const screens = {
       if (a === "stock-set") {
         const qty = Number(document.querySelector(`[data-stock="${CSS.escape(el.dataset.id)}"]`)?.value);
         busy(el, true);
-        try { await api(`/api/resources/${el.dataset.id}/stock`, { onHand: qty }); h.toast("Stock updated."); } catch (err) { h.toast(err.message); }
+        try { await api(`/api/resources/${el.dataset.id}/stock`, { onHand: qty }); h.toast("Stock updated."); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "hours-save" || a === "hours-stop") {
@@ -434,7 +434,7 @@ export const screens = {
         if (hours && !hoursOk(hours)) { h.toast("Pick at least one day, and leave room for one booking between opening and closing."); return true; }
         busy(el, true);
         try { await api(`/api/resources/${id}/hours`, { hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }); h.toast(hours ? "Saved — free times are ready two weeks ahead and refill on their own." : "Weekly hours stopped. Booked times stay."); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "slot-add") {
@@ -442,7 +442,7 @@ export const screens = {
         const mins = Number(document.querySelector(`[data-slot-mins="${CSS.escape(el.dataset.id)}"]`)?.value) || 60;
         if (!start || start < Date.now() / 1000) { h.toast("Pick a future date and time."); return true; }
         busy(el, true);
-        try { await api(`/api/resources/${el.dataset.id}/slots`, { slots: [{ start, end: start + mins * 60, capacity: 1 }] }); h.toast("Slot added."); } catch (err) { h.toast(err.message); }
+        try { await api(`/api/resources/${el.dataset.id}/slots`, { slots: [{ start, end: start + mins * 60, capacity: 1 }] }); h.toast("Slot added."); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "fact-delete") {
@@ -556,10 +556,10 @@ export const screens = {
         const f = new FormData(form);
         busy(el, true, "Creating");
         try { const c = await api("/api/communities", { name: f.get("name"), kind: f.get("kind"), place: f.get("place") }); S.community = c.id; h.toast(`${c.name} is ready. Share its name so people nearby can join.`); h.paint(); }
-        catch (e) { busy(el, false); h.toast(e.message); }
+        catch (e) { busy(el, false); h.toast(e.message, null, "error"); }
         return true;
       }
-      if (a === "cm-join-community") { busy(el, true); try { await api(`/api/communities/${el.dataset.id}/join`, {}); S.community = el.dataset.id; h.paint(); } catch (e) { busy(el, false); h.toast(e.message); } return true; }
+      if (a === "cm-join-community") { busy(el, true); try { await api(`/api/communities/${el.dataset.id}/join`, {}); S.community = el.dataset.id; h.paint(); } catch (e) { busy(el, false); h.toast(e.message, null, "error"); } return true; }
       if (a === "cm-leave") { if ((await ask({ title: "Leave this community?", detail: "You can join again later.", ok: "Leave" })) === null) return true; await api(`/api/communities/${el.dataset.id}/join`, { leave: true }); S.community = null; h.paint(); return true; }
       if (a === "cm-message") { h.openDirect(el.dataset.handle); return true; }
       if (a === "cm-draft") {
@@ -567,7 +567,7 @@ export const screens = {
         if (text.length < 4) { h.toast("Say what you'd like to post."); return true; }
         busy(el, true, "Reading");
         try { postDrafts.set(S.community, await api(`/api/communities/${S.community}/posts/draft`, { text })); h.paint(); }
-        catch (e) { busy(el, false); h.toast(e.message); }
+        catch (e) { busy(el, false); h.toast(e.message, null, "error"); }
         return true;
       }
       const d = postDrafts.get(S.community);
@@ -583,13 +583,13 @@ export const screens = {
         try {
           await api(`/api/communities/${S.community}/posts`, { text: d.text, kind: d.kind, title: d.title, at: d.at, spots: d.spots, from: d.kind === "trip" ? place("from") : "", to: d.kind === "trip" ? place("to") : "", place: d.kind === "trip" ? "" : place("place") });
           postDrafts.delete(S.community); S.cmTab = "all"; h.toast("Posted. Members who join show up here, and you'll get a notification."); h.paint();
-        } catch (e) { busy(el, false); h.toast(e.message); }
+        } catch (e) { busy(el, false); h.toast(e.message, null, "error"); }
         return true;
       }
       if (a === "cm-join") {
         busy(el, true);
         try { await api(`/api/posts/${el.dataset.id}/join`, el.dataset.leave ? { leave: true } : {}); h.paint(); }
-        catch (e) { busy(el, false); h.toast(e.message); }
+        catch (e) { busy(el, false); h.toast(e.message, null, "error"); }
         return true;
       }
       if (a === "cm-close") { if ((await ask({ title: "Close this post?", detail: "Members won't see it any more.", ok: "Close post", danger: true })) === null) return true; await api(`/api/posts/${el.dataset.id}/close`, {}); h.paint(); return true; }
@@ -713,12 +713,12 @@ export const screens = {
         const amount = Number(document.querySelector(`[data-goal-budget="${CSS.escape(el.dataset.id)}"]`)?.value) || 0;
         const currency = document.querySelector(`[data-goal-currency="${CSS.escape(el.dataset.id)}"]`)?.value ?? "INR";
         busy(el, true);
-        try { await api(`/api/goals/${el.dataset.id}/budget`, { amount, currency }); h.toast(amount ? "Budget set — deals in this goal must fit it." : "Budget removed."); } catch (err) { h.toast(err.message); }
+        try { await api(`/api/goals/${el.dataset.id}/budget`, { amount, currency }); h.toast(amount ? "Budget set — deals in this goal must fit it." : "Budget removed."); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "goal-plan") {
         busy(el, true, "Planning");
-        try { const g = await api(`/api/goals/${el.dataset.id}/plan`, {}); h.toast(`${g.plan.length} step${g.plan.length === 1 ? "" : "s"} — ready steps are searching.`); } catch (err) { h.toast(err.message); }
+        try { const g = await api(`/api/goals/${el.dataset.id}/plan`, {}); h.toast(`${g.plan.length} step${g.plan.length === 1 ? "" : "s"} — ready steps are searching.`); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "goal-repeat" || a === "goal-repeat-stop") {
@@ -752,7 +752,7 @@ export const screens = {
           const e = await api(`/api/engagements/${encodeURIComponent(el.dataset.id)}/${{ "app-shortlist": "shortlist", "app-interview": "interview", "app-reject": "reject" }[a]}`, a === "app-interview" ? { note } : {});
           live.engagements.set(e.id, e);
           h.toast(a === "app-shortlist" ? (el.dataset.demo ? "Shortlisted — their agent opens the salary talk with yours." : "Shortlisted — your agent opens the salary talk.") : a === "app-interview" ? "Invitation sent — their agent asks them when they're free." : "Sent a polite note. The application has ended.");
-        } catch (err) { h.toast(err.message); }
+        } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "goal-cancel") {
@@ -986,7 +986,7 @@ export const screens = {
       if (a === "device-download") {
         el.disabled = true;
         try { await downloadModel(() => h.paint()); h.toast(`${MODEL.label} is on this device — your notes are answered here, even offline.`); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "gemma-remove") { busy(el, true); await removeGemma(); await detectEngine(); refreshServing(); h.toast(`${MODEL.label} removed from this device.`); h.paint(); return true; }
@@ -997,17 +997,17 @@ export const screens = {
       }
       if (a === "device-rename") { await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }
       if (a === "device-serve") { await setServe(el.checked); h.toast(el.checked ? "This device answers your other devices' questions while Collab is open." : "This device no longer answers for your other devices."); h.paint(); return true; }
-      if (a === "device-remove") { busy(el, true); await removeDevice(el.dataset.id).catch(err => h.toast(err.message)); h.paint(); return true; }
+      if (a === "device-remove") { busy(el, true); await removeDevice(el.dataset.id).catch(err => h.toast(err.message, null, "error")); h.paint(); return true; }
       if (a === "push-test") {
         busy(el, true, "Sending");
         try { const r = await api("/api/push/test", {}); h.toast(r.sent ? `Sent to ${r.sent} device${r.sent === 1 ? "" : "s"} — it should appear in a few seconds.` : "The notification service didn't accept it — try turning notifications off and on."); }
-        catch (err) { h.toast(err.message); }
+        catch (err) { h.toast(err.message, null, "error"); }
         busy(el, false); return true;
       }
       if (a === "install") { if (session.install && await session.install()) h.toast("Installed."); h.paint(); return true; }
       if (a === "push-on") {
         busy(el, true);
-        try { if (await session.push()) h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message); }
+        try { if (await session.push()) h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "google") {
@@ -1016,14 +1016,14 @@ export const screens = {
           const r = await session.google();
           if (r === "switched") { h.toast("That Google account already has Collab — switching to it."); setTimeout(() => location.reload(), 800); return true; }
           if (r === "linked") h.toast("Signed in with Google. Your handle and context now follow you to any device.");
-        } catch (err) { h.toast(err.message); }
+        } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
       if (a === "delete-account") {
         if ((await ask({ title: "Delete your account?", detail: "Your agent stops at once; notes, listings, rules, requests and chats are removed; your handle is freed. This can't be undone.", ok: "Delete account", danger: true, input: { label: "Type DELETE to confirm", required: true, match: "DELETE", placeholder: "DELETE" } })) === null) return true;
         busy(el, true, "Deleting");
         try { await api("/api/me/delete", {}); await local.clear().catch(() => {}); try { localStorage.clear(); } catch {} if (session.user?.delete) await session.user.delete().catch(() => {}); if (session.signOut) await session.signOut(); else location.href = "/"; }
-        catch (err) { busy(el, false); h.toast(err.message); }
+        catch (err) { busy(el, false); h.toast(err.message, null, "error"); }
         return true;
       }
       if (a === "clear-device") { if ((await ask({ title: "Delete your chat history on every device?", detail: "Your context, facts, people and deals stay.", ok: "Delete history", danger: true })) !== null) { await api("/api/chats/clear", {}); await local.clear(); location.reload(); } return true; }

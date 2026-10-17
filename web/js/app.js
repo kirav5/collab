@@ -16,7 +16,7 @@ import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
-import { ask, avatarHTML, $, busy, esc, id, label, money, now, shortName, tag, toast } from "./ui.js";
+import { ask, avatarHTML, $, busy, esc, id, label, money, notice, now, shortName, tag, toast } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -135,7 +135,7 @@ async function boot() {
     if (!el || el.disabled) return;
     e.stopPropagation(); e.preventDefault();
     const sheet = openGooglePay(Number(el.dataset.amount), el.dataset.item ?? "Collab", el.dataset.currency ?? "INR");
-    sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message));
+    sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message, null, "error"));
   }, true);
   // The menu (phones) closes on a tap anywhere outside it, and that tap does nothing else; Escape closes it too.
   document.addEventListener("click", e => {
@@ -467,7 +467,7 @@ async function openPass(path) {
     return d;
   };
   let d;
-  try { d = await load(); } catch (err) { return toast(err.message); }
+  try { d = await load(); } catch (err) { return toast(err.message, null, "error"); }
   // The seller by account, not handle (a handle can change after the deal); a pass scanned from someone else's deal
   // falls back to the handle the server reports as the seller's current one.
   const eng = live.engagements.get(pid);
@@ -491,10 +491,10 @@ async function openPass(path) {
       return;
     }
     const to = e.target.closest('[data-act="pass-move-to"]');
-    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message); } return; }
+    if (to) { busy(to, true); try { await booking({ action: "move", slotId: to.dataset.slot }); toast("Booking moved. They've been told."); } catch (err) { busy(to, false); toast(err.message, null, "error"); } return; }
     if (e.target.closest('[data-act="pass-cancel"]')) {
       if ((await ask({ title: "Cancel this booking?", detail: "The time is freed for others, and they're told.", ok: "Cancel booking", cancel: "Keep it", danger: true })) === null) return;
-      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message); }
+      try { await booking({ action: "cancel" }); toast("Booking cancelled."); } catch (err) { toast(err.message, null, "error"); }
       return;
     }
     const copy = e.target.closest('[data-act="pass-copy"]');
@@ -656,7 +656,7 @@ async function payDeal(el, googlePay, a = "eng-pay") {
     live.engagements.set(e.id, e);
     session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
     toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : "Marked as paid outside the app.");
-  } catch (err) { toast(err.message); busy(el, false); }
+  } catch (err) { toast(err.message, null, "error"); busy(el, false); }
   return refresh(openScreen);
 }
 
@@ -724,7 +724,7 @@ async function orderFromCard(a, el) {
     session.track("order_from_card", { kind: el.dataset.kind ?? "offer", quantity: body.quantity, offer: a === "store-offer-send", slot: !!body.slotId });
     S.screen = "chat"; paint();
   } catch (err) {
-    toast(err.message);
+    toast(err.message, null, "error");
     // Stock or a time may have changed: show the card as it is now.
     if (err.status === 409) {
       const cur = S.sessions.find(s => s.to === handle); refreshedCards.delete(cur?.id); await person(handle, true); refreshStoreCard(cur);
@@ -905,7 +905,7 @@ async function onClick(e) {
       const eng = live.engagements.get(el.dataset.id), side = eng?.requester.uid === session.uid ? "requester" : "provider";
       const each = (eng?.negotiation?.deal?.terms?.quantity ?? eng?.quantity ?? 1) > 1 ? " each" : "";
       try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text: `${offerWords(eng, side, `₹${price}`)}${each}` }); live.engagements.set(e.id, e); toast("Offer sent — their agent answers it, or they do."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "delegate") {
@@ -920,13 +920,13 @@ async function onClick(e) {
           pendingRules.set(el.dataset.id, { text: said, rules: r.rules });
           const box = document.querySelector(`[data-rules-preview="${CSS.escape(el.dataset.id)}"]`);
           if (box) box.innerHTML = `<div class="card slim">${rulesList(r.lines)}<div class="row"><button class="btn accent compact" data-act="rules-confirm" data-id="${esc(el.dataset.id)}">Confirm and hand over</button><span class="small faint">Nothing applies until you confirm.</span></div></div>`;
-        } catch (err) { toast(err.message); }
+        } catch (err) { toast(err.message, null, "error"); }
         busy(el, false); return;
       }
       const limit = Number(said.replace(/[^\d]/g, ""));
       busy(el, true, "Handing over");
       try { const e = await api(`/api/engagements/${el.dataset.id}/delegate`, { limit, autonomy: el.dataset.autonomy || "close" }); live.engagements.set(e.id, e); toast(e.phase === "agreed" ? "Your agent agreed inside your limit — pay below." : "Your agent has it — it negotiates inside your limit and asks only if there's no deal there."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "deal-msg" || a === "deal-note") {
@@ -935,7 +935,7 @@ async function onClick(e) {
       if (!text) return;
       busy(el, true, "Sending");
       try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text }); live.engagements.set(e.id, e); if (input) input.value = ""; }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "rules-confirm") {
@@ -944,7 +944,7 @@ async function onClick(e) {
       busy(el, true, "Handing over");
       try { const e = await api(`/api/engagements/${el.dataset.id}/rules`, p); live.engagements.set(e.id, e); pendingRules.delete(el.dataset.id);
         toast(e.phase === "agreed" ? "Your agent agreed inside your rules — pay below." : "Your agent has it — it follows your rules and asks you only when it can't."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "seller-counter") { const box = document.querySelector(`[data-counter="${CSS.escape(el.dataset.id)}"]`); box.hidden = !box.hidden; box.querySelector("input")?.focus(); return; }
@@ -953,7 +953,7 @@ async function onClick(e) {
       // Accepting the seller's listed price is an offer at that price: they confirm (or their agent does, if they allow it).
       busy(el, true, "Sending");
       try { const e = await api(`/api/engagements/${el.dataset.eng}/ask`, { text: `I'll buy it for ₹${el.dataset.price}` }); live.engagements.set(e.id, e); toast("Offered at their price — they confirm, then you pay."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "qty" || a === "shop-slot" || a === "store-offer-open") return shopControl(a, el);
@@ -981,14 +981,14 @@ async function onClick(e) {
       if (a === "join-withdraw") { const r = await ask({ title: "Withdraw before joining?", detail: "They see your reason. This can't be undone.", ok: "Withdraw", danger: true, as, input: { label: "Why (they'll see it)", required: true, min: 3, placeholder: "e.g. I've accepted another offer" } }); if (r === null) return; body.reason = r; }
       busy(el, true);
       try { live.engagements.set(id, await api(`/api/engagements/${id}/joining`, body)); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       finally { busy(el, false); }
       return refresh(openScreen);
     }
     if (a === "demo-applicants") {
       busy(el, true, "Applying");
       try { const r = await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/demo-applicants`, {}); toast(r.added ? `${r.added} demo candidates applied — their agents are talking to yours.` : "The demo candidates have already applied."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       finally { busy(el, false); }
       await refresh(openScreen);
       for (const e of live.engagements.values()) if (e.outbox && e.requester.uid?.startsWith("demo-")) run(e.id);
@@ -1066,7 +1066,7 @@ async function onClick(e) {
     if (a === "slot-pick") {
       busy(el, true, "Holding");
       try { const e = await api(`/api/engagements/${el.dataset.id}/slot`, { slotId: el.dataset.slot }); live.engagements.set(e.id, e); toast("Held for you — pay to book it."); }
-      catch (err) { toast(err.message); }
+      catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
     if (a === "eng-delivered" || a === "eng-received") {
@@ -1109,7 +1109,7 @@ async function onClick(e) {
     const f = findCard(el);
     if (!f) return;
     await cardAction(a, el, f);
-  } catch (err) { toast(err.message); busy(el, false); }
+  } catch (err) { toast(err.message, null, "error"); busy(el, false); }
 }
 
 async function cardAction(a, el, { s, m, c }) {
@@ -1140,7 +1140,7 @@ async function cardAction(a, el, { s, m, c }) {
     if (words.length < 4) return toast("Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
     busy(el, true, "Reading");
     const o = a === "offer-rules-read" ? c.offer : null;
-    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message); return null; });
+    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
     if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; }
   }
   if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; c.rulesText = ""; }
@@ -1235,7 +1235,7 @@ async function cardAction(a, el, { s, m, c }) {
       live.engagements.set(e.id, e); if (!m.cards.some(x => x.type === "engagement" && x.id === e.id)) m.cards.push({ type: "engagement", id: e.id });
       session.track("order_from_card", { kind: "match", instant: e.phase === "agreed" });
       await saveSession(s); paint();
-    } catch (err) { toast(err.message); busy(el, false); }
+    } catch (err) { toast(err.message, null, "error"); busy(el, false); }
     return;
   }
   if (a === "match-booked") { const card = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); card?.scrollIntoView({ behavior: "smooth", block: "center" }); card?.classList.remove("flash"); void card?.offsetWidth; card?.classList.add("flash"); return; }
@@ -1270,7 +1270,7 @@ async function cardAction(a, el, { s, m, c }) {
     const full = `${base} ₹${price.toLocaleString("en-IN")}${c.basics?.unit ? ` per ${c.basics.unit}` : ""}. ${/^online$/i.test(where) ? "Online." : `In ${where}.`}`;
     // The answers already tapped go to Gemini too, so the details it shows match them (they're published once, below).
     const said = Object.entries(c.missingAnswers ?? {}).filter(([, v]) => String(v).trim()).map(([k, v]) => `${k}: ${String(v).trim().replace(/[.]+$/, "")}.`).join(" ");
-    const d = await api("/api/offers/draft", { text: said ? `${full} ${said}` : full, here: S.profile?.area }).catch(err => { toast(err.message); return null; });
+    const d = await api("/api/offers/draft", { text: said ? `${full} ${said}` : full, here: S.profile?.area }).catch(err => { toast(err.message, null, "error"); return null; });
     if (!d?.offer) { busy(el, false); return toast(d?.problem ?? "Still couldn't read it as an offering — say a little more about what it is."); }
     const answered = (c.missing ?? []).filter(x => (c.missingAnswers?.[x.label] ?? "").trim());
     c.missing = [...answered, ...(d.missing ?? []).filter(x => !answered.some(y => y.label.toLowerCase() === x.label.toLowerCase()))].slice(0, 6);
@@ -1312,19 +1312,19 @@ async function cardAction(a, el, { s, m, c }) {
     if (fact.floorKeptPrivate) toast(`${ownerPays(c) ? "The most you'd pay" : "Your lowest price"} was left out of the public text — it stays private.`);
     if (fact.offer && (terms.length || instant)) await api(`/api/facts/${fact.id}/policies`, { policies: terms, instant }).catch(() => {});
     // A job post: the requirements its applicants are screened against, as the employer left them.
-    if (fact.offer && ownerPays(c) && c.offer?.requirements) await api(`/api/facts/${fact.id}/requirements`, { requirements: c.offer.requirements }).catch(err => toast(err.message));
+    if (fact.offer && ownerPays(c) && c.offer?.requirements) await api(`/api/facts/${fact.id}/requirements`, { requirements: c.offer.requirements }).catch(err => toast(err.message, null, "error"));
     // How many they have: tracked from the start, so "is it in stock?" never needs them.
     const stock = c.stock;
     if (fact.offer && Number.isInteger(stock) && stock >= 0) await api("/api/resources", { factId: fact.id, type: "quantity", onHand: stock }).catch(() => {});
     // Weekly hours: bookable times two weeks ahead, in the seller's own time zone, refilled by the server.
-    if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message));
+    if (fact.offer && c.hoursOn && hoursOk(c.hours)) await api("/api/resources", { factId: fact.id, type: "slots", hours: c.hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(err => toast(err.message, null, "error"));
     if (c.offer && c.floor) {
       const listed = c.offer.price.amount, limit = ownerPays(c) ? Math.max(c.floor, listed) : Math.min(c.floor, listed);
       const mandate = { price: { opening: listed, limit }, terms: {}, maxRounds: session.policy?.negotiation?.maxRounds ?? 5 };
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 });
     }
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
-    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message));
+    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message, null, "error"));
     c.step = "published"; c.publicText = fact.text;
   }
   // Accept every suggested answer still open (the owner's own answers stay).
@@ -1430,7 +1430,7 @@ async function inboxAction(a, el) {
   try {
     await api(`/api/inbox/${itemId}`, body);
     if (body.text && item.kind === "answer" && item.owner === session.uid) toast("Sent. Your agent gives this answer itself the next time it's asked.");
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, null, "error"); }
   await refresh(openScreen);
 }
 
@@ -1447,7 +1447,7 @@ async function run(engagementId) {
       paintContent(true);
       if (!e.outbox) break;
     }
-  } catch (err) { toast(err.message); } finally { running.delete(engagementId); refresh(openScreen); }
+  } catch (err) { toast(err.message, null, "error"); } finally { running.delete(engagementId); refresh(openScreen); }
 }
 
 /** The server's policy for this account (quotas left today, currencies, features), shown instead of fixed numbers. */
@@ -1482,11 +1482,11 @@ document.addEventListener("visibilitychange", async () => {
 // A push that arrives while Collab is open shows here (the system shows it when Collab is closed).
 addEventListener("collab-push", e => {
   const n = e.detail ?? {};
-  toast(`🔔 ${n.title ?? "Collab"} — ${n.body ?? ""}`, () => { if (n.link && n.link !== "/") location.href = n.link; });
+  notice({ title: n.title ?? "Collab", body: n.body ?? "", kind: "attention", label: "Your agent", action: "Open", onClick: () => { if (n.link && n.link !== "/") location.href = n.link; } });
   refresh(openScreen);
 });
 navigator.serviceWorker?.addEventListener("message", e => {
-  if (e.data?.type === "collab-updated") toast("A new version of Collab is ready — tap to reload.", () => location.reload());
+  if (e.data?.type === "collab-updated") notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
 });
 
 // Started last, once everything above is defined.
