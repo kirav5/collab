@@ -10,8 +10,8 @@ try {
   // Every published key is tried (the current one and any retired by rotation); the record names which it used.
   const candidates = keys.filter(k => k.kty === 'OKP' && k.crv === 'Ed25519');
   if (!candidates.length) throw new Error('Collab has published no verification keys.');
-  let result = null;
-  for (const key of candidates) { const r2 = await verifyReceiptBundle(r, key); if (!result || r2.receipt) result = r2; if (r2.receipt) break; }
+  let result = null, trusted = null;
+  for (const key of candidates) { const r2 = await verifyReceiptBundle(r, key); if (!result || r2.receipt) { result = r2; trusted = key; } if (r2.receipt) break; }
   document.querySelector('#status').textContent = result.receipt ? '✓ Receipt signature verified in this browser' : 'Verification failed';
   // The receipt itself (from the signed record), then what was checked.
   const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -31,6 +31,19 @@ try {
       <dt>Agreed</dt><dd>${new Date(r.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</dd></dl>
     ${t.policies?.length ? `<p class="small"><b>Seller's terms, as they stated them</b></p>${t.policies.map(p => `<p class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</p>`).join('')}` : ''}
     <p class="small muted">Checked in this browser — agreement: ${ok(result.receipt)} · cart: ${ok(result.cart)} · payment: ${ok(result.payment)}${result.ap2 ? ` · AP2 checkout: ${ok(result.ap2.merchant)} · AP2 mandates: ${ok(result.ap2.mandates)}` : ''}${r.legacyAttestation ? ' · older agreement, attested on export' : ''}</p>`;
+  // Show the check failing: the same record with the price changed, verified the same way in this browser.
+  const tamper = document.querySelector('#tamper'), out = document.querySelector('#tamper-result');
+  if (result.receipt && tamper) {
+    tamper.hidden = false;
+    tamper.onclick = async () => {
+      if (out.dataset.on) { out.textContent = ''; delete out.dataset.on; tamper.textContent = 'Try changing the price'; return; }
+      const changed = structuredClone(r), lower = Math.max(1, Math.round(t.price * 0.8));
+      changed.terms.price = lower;
+      const v = await verifyReceiptBundle(changed, trusted);
+      out.textContent = v.receipt ? 'Unexpected: the changed receipt verified.' : `✗ With the price changed from ${amount(t.price)} to ${amount(lower)}, the signature no longer matches. The record is refused.`;
+      out.style.color = v.receipt ? '' : 'var(--danger)'; out.dataset.on = '1'; tamper.textContent = 'Show the real receipt';
+    };
+  }
   const a = document.querySelector('#download');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' })); a.download = `collab-${id}.json`; a.hidden = false;
 } catch (e) { document.querySelector('#status').textContent = e.message; }

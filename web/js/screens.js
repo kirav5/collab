@@ -1,6 +1,6 @@
 // The screens beside chat (Collab's Screens.swift): Context (what your agent knows, and who sees each thing),
-// People, Sharing (rules for Protected topics, pause everything), Requests (every conversation between agents, live),
-// Activity (what your agent shared, with whom) and Settings.
+// My shop (QR, agent card, contacts), Privacy (rules for Protected topics, pause everything, what was shared), Deals
+// (every conversation between agents, live) and Settings. Screen keys keep their old names so links keep working.
 import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
@@ -12,11 +12,18 @@ import { live, needsYou, needsYouCount } from "./live.js";
 import { busy, esc, label, money, tag, tierTag, time } from "./ui.js";
 import { pendingWrites, saveNote } from "./outbox.js";
 
-/** Rules read from a seller's words on the Context screen, waiting for them to confirm (by offering). */
+/** Rules read from a seller's words on the About me screen, waiting for them to confirm (by offering). */
 const ctxRules = new Map();
 
 /** One of a seller's terms, editable: its name and what it says, in their words. */
 const termRow = (id, l = "", t = "") => `<div class="row small" style="flex-wrap:nowrap" data-term-row="${esc(id)}"><input class="field compact" data-term-label value="${esc(l)}" placeholder="Term" maxlength="40" style="max-width:130px" aria-label="Term"><input class="field" data-term-text value="${esc(t)}" placeholder="In your own words" maxlength="240" aria-label="What it says"></div>`;
+
+/** What the agent shared, and with whom (Public and Protected answers only — Private never appears). */
+async function sharedLog() {
+  const items = await cached("/api/activity").catch(() => []);
+  return { count: items.length, html: items.map(x => `<div class="card slim"><div class="row">${tag(x.tier === "protected" ? "Protected" : "Public", x.tier === "protected" ? "accent" : "fresh")}<b class="small">To ${esc(x.to)}</b><span class="end faint small">${new Date(x.at * 1000).toLocaleString()}</span></div>
+    <span class="small faint">${esc(x.question)}</span><span class="small">→ ${esc(x.answer)}</span></div>`).join("") || `<p class="small muted">Nothing shared yet.</p>` };
+}
 
 const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
 
@@ -199,7 +206,7 @@ export const screens = {
           <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
           <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}">Suggest terms for this offering</button></div></details>`;
       };
-      return frame("Context", "What your agent knows", `
+      return frame("About me", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
           <textarea class="field" name="text" rows="2" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
@@ -349,8 +356,8 @@ export const screens = {
       const card = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
       let qr = "";
-      try { qr = await (await import("https://esm.sh/qrcode@1.5.4")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
-      return frame("People", "Who you know", `
+      try { qr = await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
+      return frame("My shop", "Your QR and your agent", `
         <div class="card qr-card">
           <div class="qr" aria-label="Your QR code">${qr}</div>
           <div class="stack" style="gap:6px">${label("Your QR code", "sq ink")}
@@ -364,7 +371,7 @@ export const screens = {
           <span class="small muted">Other people's agents — in this app or any A2A agent — reach yours at:</span>
           <code class="small" style="overflow-wrap:anywhere">${esc(card)}</code></div>
         <form class="card" data-form="add-contact">${label("Add someone by handle", "sq")}<div class="row"><input class="field" name="handle" placeholder="@handle" style="max-width:260px"><button class="btn" data-act="add-contact">Add</button></div>
-          <span class="small faint">Contacts can be named in rules (Sharing). Try @riya, @kabir, @arjun, @meera, @dev, @sana or @nikhil — demo people.</span></form>
+          <span class="small faint">Contacts can be named in rules (Privacy). Try @riya, @kabir, @arjun, @meera, @dev, @sana or @nikhil — demo people.</span></form>
         <div class="stack">${contacts.map(c => `<div class="card slim"><div class="row"><b>${esc(c.name)}</b><span class="faint small">@${esc(c.handle)}</span>
           <button class="btn secondary compact end" data-act="view-person" data-handle="${esc(c.handle)}">Public profile</button><button class="btn quiet compact" data-act="remove-contact" data-id="${esc(c.uid)}">Remove</button></div>
           <div id="person-${esc(c.handle)}"></div></div>`).join("") || `<p class="muted">No contacts yet.</p>`}</div>`);
@@ -476,12 +483,13 @@ export const screens = {
 
   sharing: {
     async html(S) {
+      const log = await sharedLog();
       const [rules, contacts, facts] = await Promise.all([cached("/api/rules").catch(() => []), cached("/api/contacts").catch(() => []), allFacts()]);
       const topics = [...new Set(facts.filter(f => f.tier === "protected").flatMap(f => f.topics))];
       const shapeText = { yesNo: "Yes or no", oneLine: "One line", summary: "A summary", full: "The whole fact" };
       // One form of taps: who, which topics (your own Protected topics as chips), how much, whether you check first, how long.
       const chip = (field, value, text, on) => `<button type="button" class="chip ${on ? "on" : ""}" data-act="rule-chip" data-field="${field}" data-value="${esc(value)}">${esc(text)}</button>`;
-      return frame("Sharing", "Who sees what", `
+      return frame("Privacy", "Who sees what", `
         <div class="card ${S.profile.paused ? "accent" : ""}"><div class="row">${label(S.profile.paused ? "Paused" : "Your agent is answering", "sq " + (S.profile.paused ? "stale" : "fresh"))}
           <button class="btn ${S.profile.paused ? "accent" : "secondary"} compact end" data-act="pause">${S.profile.paused ? "Resume" : "Pause"}</button></div>
           <span class="small muted">${S.profile.paused ? "Your agent answers no one until you resume." : "It answers from Public facts and from Protected facts a rule below allows."} Private facts are never shared.</span></div>
@@ -489,14 +497,15 @@ export const screens = {
           <div class="row"><span class="small">With</span><select class="field" name="audience" style="max-width:280px"><option value="anyone">Anyone who contacts your agent</option>${contacts.map(c => `<option value="${esc(c.handle)}">${esc(c.name)} (@${esc(c.handle)})</option>`).join("")}</select></div>
           <div class="stack" style="gap:6px"><span class="small">About</span>
             ${topics.length ? `<div class="row">${topics.map((t, i) => chip("topics", t, t, i < 1)).join("")}</div><input type="hidden" name="topics" value="${esc(topics.slice(0, 1).join(","))}">`
-              : `<span class="small faint">Mark a fact Protected in Context — its topics show up here.</span><input type="hidden" name="topics" value="">`}</div>
+              : `<span class="small faint">Mark a fact Protected in About me — its topics show up here.</span><input type="hidden" name="topics" value="">`}</div>
           <div class="stack" style="gap:6px"><span class="small">How much</span><div class="row">${Object.entries(shapeText).map(([k, v]) => chip("shape", k, v, k === "oneLine")).join("")}</div><input type="hidden" name="shape" value="oneLine"></div>
           <div class="stack" style="gap:6px"><span class="small">Before it answers</span><div class="row">${chip("approval", "review", "Ask me first", true)}${chip("approval", "auto", "Answer on its own", false)}</div><input type="hidden" name="approval" value="review"></div>
           <div class="stack" style="gap:6px"><span class="small">For</span><div class="row">${[["1", "A day"], ["7", "A week"], ["30", "A month"], ["", "Until removed"]].map(([k, v]) => chip("days", k, v, k === "30")).join("")}</div><input type="hidden" name="days" value="30"></div>
           <button class="btn" data-act="add-rule" ${topics.length ? "" : "disabled"}>Add rule</button></form>
         ${label(`Rules · ${rules.length}`, "sq")}
         <div class="stack">${rules.map(r => `<div class="card slim"><div class="row"><b class="small">${esc(r.audienceName)}</b><span class="end">${tag(r.approval === "auto" ? "On its own" : "Asks you", r.approval === "auto" ? "fresh" : "stale")}</span></div>
-          <div class="row">${r.topics.map(t => tag(t, "accent")).join("")}<span class="small faint">${esc(shapeText[r.shape])}${r.expires ? ` · until ${new Date(r.expires * 1000).toLocaleDateString()}` : ""}</span><button class="btn quiet compact end" data-act="revoke" data-id="${esc(r.id)}">Remove</button></div></div>`).join("") || `<p class="small muted">None yet — Protected facts stay with you.</p>`}</div>`);
+          <div class="row">${r.topics.map(t => tag(t, "accent")).join("")}<span class="small faint">${esc(shapeText[r.shape])}${r.expires ? ` · until ${new Date(r.expires * 1000).toLocaleDateString()}` : ""}</span><button class="btn quiet compact end" data-act="revoke" data-id="${esc(r.id)}">Remove</button></div></div>`).join("") || `<p class="small muted">None yet — Protected facts stay with you.</p>`}</div>
+        <details class="more"><summary>What your agent shared · ${log.count}</summary><div class="stack">${log.html}</div></details>`);
     },
     async act(a, el, S, h) {
       if (a === "pause") { S.profile = await api("/api/me/pause", { paused: !S.profile.paused }); h.paint(); return true; }
@@ -573,10 +582,11 @@ export const screens = {
         if (!confirm("Cancel this goal? Conversations without a deal end; agreed deals keep their obligations.")) return true;
         await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
       }
+      if (a === "deals-filter") { S.dealsFilter = el.dataset.k; h.paint(); return true; }
       if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ behavior: "smooth", block: "center" }); c?.classList.remove("flash"); void c?.offsetWidth; c?.classList.add("flash"); return true; }
       if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
     },
-    async html() {
+    async html(S) {
       const list = [...live.engagements.values()].sort((a, b) => {
         const need = e => (live.inbox.some(i => i.engagementId === e.id) ? 1 : 0);
         return need(b) - need(a) || b.updatedAt - a.updatedAt;
@@ -628,6 +638,11 @@ export const screens = {
       const paidBy = es => { const m = {}; for (const e of es) if (["paid", "outside"].includes(e.payment?.status)) { const c = e.offer.currency ?? "INR"; m[c] = (m[c] ?? 0) + (e.payment.cart?.total?.value ?? 0); }
         return Object.entries(m).filter(([, v]) => v).map(([c, v]) => money(v, null, c)).join(" + "); };
       const soldSum = paidBy(sold), boughtSum = paidBy(bought);
+      // Find a deal fast: what still needs doing, what you sold, what you bought, what's finished.
+      const DEAL_FILTERS = [["all", "All"], ["todo", "To do"], ["sold", "Sold"], ["bought", "Bought"], ["done", "Done"]];
+      const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
+      const dealIn = (e, k) => k === "all" || (k === "todo" ? !finishedDeal(e) : k === "done" ? finishedDeal(e) : k === "sold" ? sold.includes(e) : bought.includes(e));
+      const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "all";
       const STAGE = e => { const f = e.fulfilment?.state, p = e.payment?.status;
         return f === "accepted" ? ["Completed", "fresh"] : f === "disputed" ? ["Problem", "danger"] : off(e) ? ["Fell through", ""] : f === "delivered" ? (toConfirm(e) ? ["Confirm receipt", "wait"] : ["Handed over", "peri"]) : p === "paid" || p === "outside" ? ["Paid", "accent"] : ["To pay", "stale"]; };
       const dealRow = e => {
@@ -658,7 +673,7 @@ export const screens = {
           <div class="row"><span class="avatar" aria-hidden="true">${esc(a.name.slice(0, 1).toUpperCase())}</span><div class="eng-who"><b>${esc(a.name)}</b><span class="small faint">fits “${esc(a.title)}” · found by your scheduled agent</span></div>${a.price ? `<span class="end"><b>${money(a.price, a.unit)}</b></span>` : ""}</div>
           <span class="small muted">${esc(a.text)}</span>
           <div class="row"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Dismiss</button></div></div>`).join("");
-      return frame("Requests", "What your agents are doing", `
+      return frame("Deals", "What your agents are doing", `
         <div class="card slim attention ${need ? "wait" : ""}" data-anim="att" data-anim-sig="${need}"><span>${moves ? `Your agents made <b>${moves}</b> move${moves === 1 ? "" : "s"} today${closed ? ` and agreed <b>${closed}</b> deal${closed === 1 ? "" : "s"} inside your rules` : ""}.` : "Your agents are standing by."} ${need ? `<b>${need}</b> need${need === 1 ? "s" : ""} you.` : "Nothing needs you right now."}</span></div>
         ${label(`Waiting for you · ${need}`, "sq wait")}${alerts}${waiting.map(e => engagementCard(e, e.id)).join("") || (alerts ? "" : `<p class="small muted">Nothing waits on you. Your agents ask only when a decision is yours.</p>`)}
         ${talking.length ? `${label(`Agents negotiating · ${talking.length}`, "sq talk")}${talking.map(row).join("")}` : ""}
@@ -670,7 +685,8 @@ export const screens = {
         ${deals.length ? `${label(`Your deals · ${deals.length}`, "sq ink")}
           <div class="card slim deals-sum"><div class="row" style="flex-wrap:wrap;gap:14px">${sold.length ? `<span><b>${sold.length}</b> sold${soldSum ? ` · ${soldSum} paid` : ""}</span>` : ""}${bought.length ? `<span><b>${bought.length}</b> bought${boughtSum ? ` · ${boughtSum} paid` : ""}</span>` : ""}<span><b>${deals.filter(e => e.fulfilment?.state === "accepted").length}</b> completed</span></div>
             ${sold.length ? `<div class="row small"><span class="muted">Your sales are on your public card as a verified record — buyers and prices stay private.</span><button class="btn quiet compact end" data-act="preview-card">See your card</button></div>` : ""}</div>
-          ${deals.map(dealRow).join("")}` : ""}
+          <div class="row" style="gap:6px;flex-wrap:wrap">${DEAL_FILTERS.map(([k, t]) => { const n = deals.filter(e => dealIn(e, k)).length; return n || k === "all" ? `<button class="chip ${dealFilter === k ? "on" : ""}" data-act="deals-filter" data-k="${k}">${t} ${n}</button>` : ""; }).join("")}</div>
+          ${deals.filter(e => dealIn(e, dealFilter)).map(dealRow).join("") || `<p class="small muted">None here.</p>`}` : ""}
         ${gone.length ? `<details class="more"><summary>Ended · ${gone.length}</summary>${gone.map(e => row(e).replace('class="more eng-row"', 'class="more eng-row ended"')).join("")}</details>` : ""}
         ${!list.length && !goals.length ? `<p class="small muted">Ask for something in chat — “Need a tabla teacher online” — or open someone's card. Your agents' work shows up here.</p>` : ""}`);
     },
@@ -678,7 +694,6 @@ export const screens = {
 
   activity: {
     async html() {
-      const items = await cached("/api/activity").catch(() => []);
       const es = [...live.engagements.values()], me = session.uid;
       const sold = es.filter(e => (e.seller ?? "provider") === (e.provider.uid === me ? "provider" : "requester") && e.phase === "agreed");
       const bought = es.filter(e => e.phase === "agreed" && !sold.includes(e));
@@ -690,9 +705,8 @@ export const screens = {
         ${stat(sold.filter(paid).length, "paid to you")}${stat(bought.filter(paid).length, "you paid")}${stat(es.filter(done).length, "completed")}</div>
         ${sold.length ? `<span class="small muted">Sold ${money(sum(sold.filter(paid)), null, sold[0]?.offer?.currency)} paid · ${sold.filter(done).length} handed over and accepted</span>` : ""}
         <span class="small faint">Counted on this device from your conversations. Nobody else sees these.</span></div>`;
-      return frame("Activity", "What your agent shared", `${numbers}<p class="small muted">What your agent shared, and with whom. Private notes never appear.</p>
-        <div class="stack">${items.map(x => `<div class="card slim"><div class="row">${tag(x.tier === "protected" ? "Protected" : "Public", x.tier === "protected" ? "accent" : "fresh")}<b class="small">To ${esc(x.to)}</b><span class="end faint small">${new Date(x.at * 1000).toLocaleString()}</span></div>
-          <span class="small faint">${esc(x.question)}</span><span class="small">→ ${esc(x.answer)}</span></div>`).join("") || `<p class="muted">Nothing shared yet.</p>`}</div>`);
+      const log = await sharedLog();
+      return frame("Privacy", "What your agent shared", `${numbers}<p class="small muted">What your agent shared, and with whom. Private notes never appear.</p><div class="stack">${log.html}</div>`);
     },
   },
 

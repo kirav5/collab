@@ -1,7 +1,7 @@
 // Collab on the web: one chat with your agent (it remembers, answers from your notes, shapes requests with Gemini and
 // publishes what you offer), every conversation your agent has with other people's agents as live cards, and the
-// screens Collab has for what your agent knows (Context), who you know (People), who sees what (Sharing), what your
-// agents are doing (Requests) and what was shared (Activity).
+// screens Collab has: what your agents are doing (Deals), your QR and agent (My shop), what your agent knows (About me),
+// who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
 import { autonomyOf, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
@@ -116,9 +116,10 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask anything — remember, find, offer…" aria-label="Message your agent"><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></section></div>`;
   $("#compose").onsubmit = e => { e.preventDefault(); send($("#input").value); };
+  voiceInput();
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
   document.addEventListener("click", e => {
     const el = e.target.closest?.('[data-act="eng-pay"][data-gpay]');
@@ -170,11 +171,10 @@ function paintSidebar() {
         ${!session.pushOn && session.push ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">🔔 Turn on notifications</button>` : ""}</div>` : ""}
       ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
       <div class="nav">${label("Your agent")}
-        ${navRow("context", "▤", "Context", "")}
-        ${navRow("people", "◎", "People", "")}
-        ${navRow("sharing", "◈", "Sharing", "")}
-        ${navRow("requests", "⇄", "Requests", n ? String(n) : "")}
-        ${navRow("activity", "≡", "Activity", "")}
+        ${navRow("requests", "⇄", "Deals", n ? String(n) : "")}
+        ${navRow("people", "▦", "My shop", "")}
+        ${navRow("context", "▤", "About me", "")}
+        ${navRow("sharing", "◈", "Privacy", "")}
         ${navRow("settings", "⚙", "Settings", "")}
       </div>
       <div class="stack" style="gap:4px">${label("Your agent's address")}<a class="small" href="/a2a/${esc(S.profile.handle)}/.well-known/agent-card.json" target="_blank" rel="noopener">@${esc(S.profile.handle)} · agent card ↗</a>
@@ -194,7 +194,7 @@ function groupSessions(list) {
 
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
-  const titles = { context: "Context", people: "People", sharing: "Sharing", requests: "Requests", activity: "Activity", settings: "Settings" };
+  const titles = { context: "About me", people: "My shop", sharing: "Privacy", requests: "Deals", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
   $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(S.screen === "chat" ? (cur?.title ?? "New chat") : titles[S.screen], "sq ink")}
     <span class="end small faint">@${esc(S.profile.handle)}</span>`;
   $("#composer").hidden = S.screen !== "chat";
@@ -277,6 +277,27 @@ function emptyChat() {
   return `${howItWorks()}<h1 class="headline">Ask your agent. <span class="soft">It deals with anyone's agent for you.</span></h1>
     <div class="grid-tiles">${tiles.map(([l, p, short, c]) => `<button class="tile ${c}" data-act="prompt" data-text="${esc(p)}">${label(l, "sq " + (c ? "peri" : ""))}<p>${esc(short)}</p><span class="arrow">↗</span></button>`).join("")}</div>
     ${privacyCard()}`;
+}
+
+/** Speak instead of typing: the browser's own speech recognition (Indian English, or Hindi when the device is set to
+ *  Hindi) fills the message box; nothing is sent until the owner taps send. Hidden where the browser can't. */
+function voiceInput() {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition, mic = $("#mic"), input = $("#input");
+  if (!Rec || !mic) return;
+  mic.hidden = false;
+  let rec = null;
+  mic.onclick = () => {
+    if (rec) { rec.stop(); return; }
+    rec = new Rec();
+    rec.lang = /^hi\b/i.test(navigator.language) ? "hi-IN" : "en-IN";
+    rec.interimResults = true;
+    const before = input.value.trim();
+    rec.onresult = ev => { input.value = [before, [...ev.results].map(r => r[0].transcript).join(" ")].filter(Boolean).join(" "); };
+    rec.onerror = ev => { if (ev.error !== "aborted" && ev.error !== "no-speech") toast(ev.error === "not-allowed" ? "Allow the microphone to speak your message." : "Couldn't hear that — try again."); };
+    rec.onend = () => { rec = null; mic.classList.remove("on"); input.focus(); };
+    mic.classList.add("on");
+    rec.start();
+  };
 }
 
 /** Stored / read by / shared — three lines, with the levels one tap away. */
@@ -763,6 +784,20 @@ async function onClick(e) {
       loadPolicy();
       return;
     }
+    // Buy again: the same item and quantity from the same seller, as a new order at today's price (stock checked again).
+    if (a === "buy-again") {
+      const e = live.engagements.get(el.dataset.id);
+      if (!e) return;
+      const sellerSide = e.seller ?? "provider", n = e.negotiation.deal?.items?.length ? e.negotiation.deal.items.reduce((t, l) => t + l.quantity, 0) : e.negotiation.deal?.terms?.quantity > 1 ? e.negotiation.deal.terms.quantity : 1;
+      busy(el, true, "Ordering");
+      try {
+        const x = await api(`/api/people/${encodeURIComponent(e[sellerSide].handle)}/order`, { offerFactId: e.offer.factId, quantity: n });
+        live.engagements.set(x.id, x); session.track("order_from_card", { kind: "again", instant: x.phase === "agreed" });
+        toast(x.phase === "agreed" ? "Ordered — it's agreed. Pay when you're ready." : "Ordered — waiting for the seller to confirm.");
+        openScreen("requests", x.id);
+      } catch (err) { toast(err.status === 404 ? "That isn't on offer any more." : err.message); busy(el, false); }
+      return;
+    }
     if (a === "eng-pickup") {
       busy(el, true);
       try { await openPass((await api(`/api/engagements/${el.dataset.id}/pickup`)).path); }
@@ -1034,7 +1069,7 @@ async function setTier(fact, tier, el) {
   busy(el, true);
   const saved = await api("/api/facts", { id: fact.id, tier, text: fact.text });
   factsCache = null;
-  if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Sharing to say who sees it.`, () => openScreen("sharing"));
+  if (tier === "protected") toast(`Protected under: ${saved.topics.join(", ")}. Add a rule in Privacy to say who sees it.`, () => openScreen("sharing"));
 }
 
 async function inboxAction(a, el) {
