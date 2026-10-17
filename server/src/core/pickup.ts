@@ -39,7 +39,7 @@ export function pickupDetails(e: Engagement) {
 /** A separate transaction document cannot be reset by an older engagement save or simultaneous scan. */
 export async function collect(db: Docs, e: Engagement, uid: string, now: number) {
   if (pickupDetails(e).cancelled) throw new Error("This booking was cancelled.");
-  if (e[sellerOf(e)].uid !== uid) throw new Error("Only the seller can mark collected.");
+  if (e[sellerOf(e)].uid !== uid) throw new Error("Only the person handing it over can mark it collected.");
   const result = await db.update(PICKUPS, e.id, current => current ? null : { id: e.id, collectedAt: now, collectedBy: uid });
   return { ...(result ?? await db.get(PICKUPS, e.id)), alreadyCollected: !result };
 }

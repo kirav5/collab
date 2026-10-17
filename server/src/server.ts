@@ -401,7 +401,7 @@ app.get("/public/people/:handle/record", route(async req => {
   const p = await byHandle(db, String(req.params.handle));
   if (!p) throw new HttpError(404, "no one by that handle");
   return { handle: p.handle, ...(await trackRecord(db, p.uid)), verifyWith: `${cfg.publicUrl}/public/keys`,
-    note: "Each receipt fingerprint is the SHA-256 of the sealed deal, signed for the seller. The receipt itself stays with the buyer and seller." };
+    note: "Each receipt fingerprint is the SHA-256 of the sealed deal, signed for the person offering it. The receipt itself stays with the two people." };
 }, false));
 // Direct: a QR code (or a link) opens a conversation with one person's or shop's agent — no search. Questions go over
 // A2A like any engagement; their agent answers from what they share and can quote, negotiate and close.
@@ -424,7 +424,7 @@ app.post("/api/people/:handle/ask", route(async req => {
     const r = await resourceFor(db, f.id), at = now();
     const inHand = r?.type === "quantity" && certainty(r, at) === "confirmed" ? availableIn(r, at) : null;
     if (f.offer.maxPerBuyer && n > f.offer.maxPerBuyer && (inHand === null || f.offer.maxPerBuyer <= inHand))
-      throw shortStock(`${p.name} sells at most ${f.offer.maxPerBuyer} per buyer — offer for ${f.offer.maxPerBuyer} instead?`, f.offer.maxPerBuyer, offered.amount, n, isTotal);
+      throw shortStock(`${p.name} offers at most ${f.offer.maxPerBuyer} per person — offer for ${f.offer.maxPerBuyer} instead?`, f.offer.maxPerBuyer, offered.amount, n, isTotal);
     if (r?.type === "quantity" && certainty(r, at) === "confirmed" && availableIn(r, at) < n)
       throw shortStock(availableIn(r, at) ? `Only ${availableIn(r, at)} in stock — they can't sell ${n}. Offer for ${availableIn(r, at)} instead?` : "They're out of stock right now.", availableIn(r, at), offered.amount, n, isTotal);
     const { e } = await directConversation(me_, p, f, t, "question");
@@ -474,7 +474,7 @@ app.post("/api/people/:handle/order", route(async req => {
   const r = await resourceFor(db, f.id), t = now();
   const inHand = r?.type === "quantity" && certainty(r, t) === "confirmed" ? availableIn(r, t) : null;
   if (f.offer.maxPerBuyer && quantity > f.offer.maxPerBuyer && (inHand === null || f.offer.maxPerBuyer <= inHand))
-    throw new HttpError(409, `${p.name} sells at most ${f.offer.maxPerBuyer} per buyer.`, "CAPACITY_UNAVAILABLE", { available: f.offer.maxPerBuyer });
+    throw new HttpError(409, `${p.name} offers at most ${f.offer.maxPerBuyer} per person.`, "CAPACITY_UNAVAILABLE", { available: f.offer.maxPerBuyer });
   if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity) {
     // Kept for the seller's insights: someone wanted more than was in stock.
     await missed({ seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: availableIn(r, t), buyer: req.uid, at: t }, f.offer.category, p.area?.name ?? null);
@@ -1070,7 +1070,7 @@ app.post("/api/briefs/:id/engage", route(async req => {
     const cap = f.offer?.maxPerBuyer;
     const free = want > 1 && f.offer ? Math.min(await inStock(db, e) ?? Infinity, cap ?? Infinity) : null;
     if (free !== null && Number.isFinite(free) && free < want) {
-      if (free > 0) { e.quantity = free; e.wanted = want; e.wantedLimit = cap === free && (await inStock(db, e) ?? Infinity) > free ? "rule" : "stock"; e.events.push({ at: now(), who: "system", text: `${p.name} ${cap === free ? `sells at most ${free} per buyer` : `has ${free} in stock`} — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
+      if (free > 0) { e.quantity = free; e.wanted = want; e.wantedLimit = cap === free && (await inStock(db, e) ?? Infinity) > free ? "rule" : "stock"; e.events.push({ at: now(), who: "system", text: `${p.name} ${cap === free ? `offers at most ${free} per person` : `has ${free} in stock`} — you asked for ${want}. Your agent negotiates for ${free}; you decide before anything is final.` }); }
       else e.events.push({ at: now(), who: "system", text: `${p.name} is out of stock right now — you can still ask when more come in.` });
     }
     if (brief.goalId) { e.goalId = brief.goalId; await linkTask(db, brief.goalId, req.uid, e.id, now()); }
@@ -1207,7 +1207,7 @@ app.post("/api/pickup/:id/collect", route(async req => {
   const id = String(req.params.id);
   if (!validCode(cfg.secret, id, "pickup", req.body?.code)) throw new HttpError(404, "pass not found");
   const e = await participant(req.uid, id), check = checkPayment(e, verifySigned);
-  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark collected.");
+  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the person handing it over can mark it collected.");
   if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
   if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
   const result = await collect(db, e, req.uid, now());
@@ -1233,7 +1233,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   const key = text(req.body?.idempotencyKey, 80).replace(/[^\w-]/g, "") || randomUUID();
   // The same tap again returns what the first one did.
   if (before.payment?.claim?.key === key && before.payment.status === "paid") return before;
-  if (side !== buyerOf(before)) throw new HttpError(403, "Only the buyer pays.", "AUTHORITY_REQUIRED");
+  if (side !== buyerOf(before)) throw new HttpError(403, "Only the person getting it pays.", "AUTHORITY_REQUIRED");
   await spend(req.uid, 1);
   // Exactly one tap claims the payment (a transaction moves awaiting → paying); a claim stuck for two minutes (a
   // crashed request) can be taken over.
@@ -1323,7 +1323,7 @@ app.get("/api/engagements/:id/slots", route(async req => {
 }));
 app.post("/api/engagements/:id/slot", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  if (e[buyerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the buyer picks the slot.", "AUTHORITY_REQUIRED");
+  if (e[buyerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the person booking picks the time.", "AUTHORITY_REQUIRED");
   if (!e.reservation || e.payment?.status === "paid") throw new HttpError(409, "There's no slot to pick for this deal.", "VERSION_CONFLICT");
   const slotId = text(req.body?.slotId, 40);
   try {
@@ -1437,7 +1437,7 @@ async function markDelivered(id: string, seller: "requester" | "provider", at: n
 }
 app.post("/api/engagements/:id/delivered", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
-  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the seller can mark this delivered.", "AUTHORITY_REQUIRED");
+  if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the person handing it over can mark it delivered.", "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
   if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
   await markDelivered(e.id, sellerOf(e), now(), "Marked as delivered."); await clearStats(db, e);
@@ -1448,7 +1448,7 @@ app.post("/api/engagements/:id/delivered", route(async req => {
 app.post("/api/engagements/:id/received", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   const buyer = buyerOf(e);
-  if (e[buyer].uid !== req.uid) throw new HttpError(403, "Only the buyer can accept or dispute.", "AUTHORITY_REQUIRED");
+  if (e[buyer].uid !== req.uid) throw new HttpError(403, "Only the person receiving it can confirm it or report a problem.", "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal.", "VERSION_CONFLICT");
   const ok = req.body?.ok !== false, note = text(req.body?.note, 300);
   const t = now();
@@ -1462,7 +1462,7 @@ app.post("/api/engagements/:id/received", route(async req => {
   if (ok) await closeInbox(db, e.id); // done: nothing more to ask either side
   await clearStats(db, e);
   const seller = e[sellerOf(e)];
-  if (seller.uid) void pushTo(seller.uid, ok ? `Deal complete: ${e.offer.title.split(" · ")[0]}` : `Problem reported: ${e.offer.title.split(" · ")[0]}`, ok ? `${e[buyerOfSide(e)].name} confirmed it's as agreed.` : "The buyer reported a problem. Tap to reply.", `/?engagement=${e.id}`);
+  if (seller.uid) void pushTo(seller.uid, ok ? `Deal complete: ${e.offer.title.split(" · ")[0]}` : `Problem reported: ${e.offer.title.split(" · ")[0]}`, ok ? `${e[buyerOfSide(e)].name} confirmed it's as agreed.` : "They reported a problem. Tap to reply.", `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Paid some other way (cash, UPI outside the app): either side can say so; it counts as the deal having gone ahead.
@@ -1485,7 +1485,7 @@ app.post("/api/engagements/:id/paid-outside", route(async req => {
       void warnLowStock(r.resourceId);
     } catch (err) {
       e.reservation = { ...r, state: "unavailable", reason: (err as Error).message };
-      e.events.push({ at: now(), who: "system", text: "Paid, but the stock count couldn't be updated — the seller should check how many are left.", by: "rules" });
+      e.events.push({ at: now(), who: "system", text: "Paid, but the stock count couldn't be updated — check how many are left.", by: "rules" });
       log.warn("stock not committed after an outside payment", { id: e.id, error: String(err).slice(0, 160) });
     }
   }

@@ -252,7 +252,7 @@ export async function reserveFor(db: Docs, e: Engagement) {
   } catch (err) {
     if (!(err instanceof CapacityError)) throw err;
     e.reservation = { resourceId: r.id, holdId: null, qty, state: "unavailable", expiresAt: null, reason: err.message };
-    say(e, "system", `${err.message} The deal can't be paid until the seller restocks; nothing was charged.`);
+    say(e, "system", `${err.message} The deal can't be paid until they restock; nothing was charged.`);
   }
 }
 
@@ -706,7 +706,7 @@ export async function offerDeal(db: Docs, e: Engagement, s: Side, price: number,
   const free = await inStock(db, e);
   if (cap && units > cap && (free === null || cap <= free)) {
     const mine = s === sellerOf(e);
-    throw new ShortStock(cap, mine ? `Your rule is at most ${cap} per buyer.` : `${e[sellerOf(e)].name} sells at most ${cap} per buyer — offer for ${cap} instead?`, true);
+    throw new ShortStock(cap, mine ? `Your rule is at most ${cap} per person.` : `${e[sellerOf(e)].name} offers at most ${cap} per person — offer for ${cap} instead?`, true);
   }
   // More than the seller has can't be sold: refused before anyone is asked, with what's there.
   if (free !== null && free < units) {
@@ -821,7 +821,7 @@ export async function respondToOffer(db: Docs, model: Model | null, e: Engagemen
     const r = await move(model, e, s, l.mandate, out, true);
     if (r?.escalate) {
       if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", question: r.escalate, listPrice: e.offer.price ?? undefined });
-      say(e, "system", s === sellerOf(e) ? "The seller's agent is checking with the seller." : "Your agent needs you: no deal inside your limit yet.");
+      say(e, "system", s === sellerOf(e) ? "Their agent is checking with them." : "Your agent needs you: no deal inside your limit yet.");
       break;
     }
     if (!out.proposal) break;

@@ -49,10 +49,10 @@ async function insightsCard() {
   const tiles = [
     tile("Demand you missed", "wait", (i.missed ?? []).slice(0, 3).map(m => row(m.item, `${n(m.wanted)}<span class="faint">/${n(m.had)}</span>`)), "wanted / had"),
     tile("Asked near you", "accent", (i.unmet ?? []).slice(0, 3).map(u => row(u.item, n(u.requests))), "people, none filled"),
-    tile("Buyers ask most", "talk wide", (i.asked ?? []).slice(0, 3).map(a => row(a.question, `×${n(a.times)}`, true))),
+    tile("People ask most", "talk wide", (i.asked ?? []).slice(0, 3).map(a => row(a.question, `×${n(a.times)}`, true))),
     tile("Prices agreed", "fresh", (i.prices ?? []).slice(0, 3).map(p => row(p.item, `${esc(money(p.agreed))}${p.listed != null ? `<span class="faint">/${esc(money(p.listed))}</span>` : ""}`)), "agreed / listed"),
-    tile("Your buyers", "fresh", b.total ? [row("New", n(b.total - b.repeat)), row("Repeat", n(b.repeat)), row("Bargained", n(b.bargained)), row("At your price", n(b.atListed))] : []),
-    tile("Often bought together", "accent", (i.together ?? []).slice(0, 3).map(t => row(t.item, n(t.buyers))), "by your buyers"),
+    tile("Who deals with you", "fresh", b.total ? [row("New", n(b.total - b.repeat)), row("Repeat", n(b.repeat)), row("Bargained", n(b.bargained)), row("At your price", n(b.atListed))] : []),
+    tile("Often wanted together", "accent", (i.together ?? []).slice(0, 3).map(t => row(t.item, n(t.buyers))), "by people you dealt with"),
     tile("Next 7 days", "talk", f?.available ? (f.items ?? []).slice(0, 3).map(x => row(x.label, n(x.next7))) : [], "requests expected near you"),
   ].filter(Boolean);
   const lines = (i.summary ?? []).filter(Boolean);
@@ -195,8 +195,17 @@ export const screens = {
       // Stock and time slots for public offerings: what reservations hold and payments commit.
       const ledgers = new Map((await api("/api/resources").catch(() => [])).map(r => [r.factId, r]));
       const grants = await api("/api/connectors").catch(() => []);
-      const connected = r => grants.filter(g => g.resourceId === r.id && g.status !== "revoked").map(g => `<div class="row small"><span class="faint">${esc(g.title)} · ${g.status === "degraded" ? `<span style="color:var(--danger)">not reporting${g.lastError ? `: ${esc(g.lastError)}` : ""}</span>` : `connected${g.lastEventAt ? `, last ${new Date(g.lastEventAt * 1000).toLocaleString([], { hour: "numeric", minute: "2-digit" })}` : ""}`}</span>
-        ${g.provider === "ical" ? `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>` : ""}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">Revoke</button></div>`).join("");
+      // A linked system, in plain words: what it does, whether it's working, and how (one tap away).
+      const connected = r => grants.filter(g => g.resourceId === r.id && g.status !== "revoked").map(g => {
+        const pos = g.provider !== "ical", last = g.lastEventAt ? new Date(g.lastEventAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
+        const state = g.status === "degraded" ? `<span style="color:var(--danger)">not reporting${g.lastError ? ` — ${esc(g.lastError)}` : ""}</span>`
+          : last ? `<span style="color:var(--fresh)">● working</span> · last update ${esc(last)}` : `<span class="faint">● linked · waiting for its first update</span>`;
+        const how = pos ? "Each sale in your billing app is sent here, signed with the key you were given once. Collab checks the signature and takes those units off this count — so what agents say about your stock stays right without you updating it."
+          : "Collab reads only the busy times from your calendar, every few minutes; a busy time can't be booked. Event titles and details stay in your calendar.";
+        return `<div class="stack small" style="gap:2px"><div class="row small"><b>${pos ? "Linked to your billing app" : "Linked to your calendar"}</b><span>${state}</span></div>
+          <details class="more"><summary>How it works</summary><span class="small muted">${how}</span></details>
+          <div class="row">${pos ? "" : `<button class="btn quiet compact" data-act="conn-sync" data-id="${esc(g.id)}">Sync now</button>`}<button class="btn quiet compact" data-act="conn-revoke" data-id="${esc(g.id)}">Disconnect</button></div></div>`;
+      }).join("");
       const now_ = Date.now() / 1000;
       const stockRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
@@ -231,16 +240,16 @@ export const screens = {
         if (f.tier !== "public" || !f.offer) return "";
         const l = limits.get(`fact:${f.id}`), id = esc(f.id);
         const now_ = [l ? `lowest ${money(l.limit)} (private)` : null, l?.autonomy === "close" ? (l.closeAt ? `closes on its own at ${money(l.closeAt)}+` : "closes on its own") : l ? "you confirm deals" : null,
-          f.offer.maxPerBuyer ? `at most ${f.offer.maxPerBuyer} per buyer` : null].filter(Boolean).join(" · ");
+          f.offer.maxPerBuyer ? `at most ${f.offer.maxPerBuyer} per person` : null].filter(Boolean).join(" · ");
         return `<details class="more"><summary>Your agent's rules${now_ ? ` · ${esc(now_)}` : " · none yet"}</summary>
           ${l?.rulesText ? `<span class="small faint">You said: “${esc(l.rulesText)}”</span>` : ""}
-          <div class="row"><input class="field" style="flex:1;min-width:220px" data-ctx-rules="${id}" placeholder="e.g. never below ₹400 each, max 10 per buyer, close yourself above ₹420"><button class="btn secondary compact" data-act="ctx-rules-read" data-id="${id}">Read my rules</button></div>
+          <div class="row"><input class="field" style="flex:1;min-width:220px" data-ctx-rules="${id}" placeholder="e.g. never below ₹400 each, max 10 per person, close yourself above ₹420"><button class="btn secondary compact" data-act="ctx-rules-read" data-id="${id}">Read my rules</button></div>
           <div data-ctx-rules-preview="${id}"></div></details>`;
       };
       const termsRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
         const ps = f.offer.policies ?? [];
-        return `<details class="more"><summary>Your terms for buyers${ps.length ? ` · ${ps.length} set` : ""}${f.offer.instant ? " · instant booking on" : ""}</summary>
+        return `<details class="more"><summary>Your terms${ps.length ? ` · ${ps.length} set` : ""}${f.offer.instant ? " · instant booking on" : ""}</summary>
           <p class="small muted">Shown on your card and in every receipt, exactly as written. No phone or address.</p>
           ${ps.map(p => termRow(f.id, p.label, p.text)).join("")}${termRow(f.id)}
           <label class="row small" style="gap:6px"><input type="checkbox" data-instant="${esc(f.id)}" ${f.offer.instant ? "checked" : ""}> Accept orders at my listed price automatically (instant booking) — offers below it still come to you</label>
@@ -311,7 +320,7 @@ export const screens = {
           const same = rows().find(x => x.querySelector("[data-term-label]").value.trim().toLowerCase() === t.label.toLowerCase());
           if (same) { const input = same.querySelector("[data-term-text]"); if (!input.value.trim()) input.value = t.text; continue; }
           const blank = rows().find(x => !x.querySelector("[data-term-label]").value.trim() && !x.querySelector("[data-term-text]").value.trim());
-          (blank ?? rows().at(-1)).insertAdjacentHTML("beforebegin", termRow(id, t.label, t.text) + (t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""));
+          (blank ?? rows().at(-1)).insertAdjacentHTML("beforebegin", termRow(id, t.label, t.text) + (t.sources?.length ? `<span class="small faint">As others state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""));
         }
         h.toast("Suggested — edit anything, then Save terms. Nothing is saved yet.");
         return true;
@@ -320,7 +329,7 @@ export const screens = {
         const id = el.dataset.id;
         const policies = [...document.querySelectorAll(`[data-term-row="${CSS.escape(id)}"]`)].map(r => ({ label: r.querySelector("[data-term-label]").value.trim(), text: r.querySelector("[data-term-text]").value.trim() })).filter(p => p.label && p.text);
         busy(el, true, "Saving");
-        try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast("Saved — buyers see these terms on your card and receipts."); }
+        try { await api(`/api/facts/${encodeURIComponent(id)}/policies`, { policies, instant: !!document.querySelector(`[data-instant="${CSS.escape(id)}"]`)?.checked }); h.toast("Saved — people see these terms on your card and receipts."); }
         catch (err) { h.toast(err.message); }
         h.paint(); return true;
       }
@@ -727,7 +736,7 @@ export const screens = {
           <span class="small faint">Checks every ${w.every >= 60 ? `${w.every / 60} h` : `${w.every} min`} · ${w.runs ? `last ${when(w.lastRun)} · ` : ""}next ${when(w.nextRun)} · until ${new Date(w.expires * 1000).toLocaleDateString()}</span></div>`).join("")}` : ""}
         ${deals.length ? `${label(`Your deals · ${deals.length}`, "sq ink")}
           <div class="card slim deals-sum"><div class="row" style="flex-wrap:wrap;gap:14px">${sold.length ? `<span><b>${sold.length}</b> sold${soldSum ? ` · ${soldSum} paid` : ""}</span>` : ""}${bought.length ? `<span><b>${bought.length}</b> bought${boughtSum ? ` · ${boughtSum} paid` : ""}</span>` : ""}<span><b>${deals.filter(e => e.fulfilment?.state === "accepted").length}</b> completed</span></div>
-            ${sold.length ? `<div class="row small"><span class="muted">Your sales are on your public card as a verified record — buyers and prices stay private.</span><button class="btn quiet compact end" data-act="preview-card">See your card</button></div>` : ""}</div>
+            ${sold.length ? `<div class="row small"><span class="muted">What you sold is on your public card as a verified record — names and prices stay private.</span><button class="btn quiet compact end" data-act="preview-card">See your card</button></div>` : ""}</div>
           <div class="row" style="gap:6px;flex-wrap:wrap">${DEAL_FILTERS.map(([k, t]) => { const n = deals.filter(e => dealIn(e, k)).length; return n || k === "all" ? `<button class="chip ${dealFilter === k ? "on" : ""}" data-act="deals-filter" data-k="${k}">${t} ${n}</button>` : ""; }).join("")}</div>
           ${deals.filter(e => dealIn(e, dealFilter)).map(dealRow).join("") || `<p class="small muted">None here.</p>`}` : ""}
         ${gone.length ? `<details class="more"><summary>Ended · ${gone.length}</summary>${gone.map(e => row(e).replace('class="more eng-row"', 'class="more eng-row ended"')).join("")}</details>` : ""}

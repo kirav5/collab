@@ -92,7 +92,7 @@ export async function hold(db: Docs, id: string, x: { holder: string; engagement
   const qty = Math.max(1, Math.floor(x.qty ?? 1));
   let made: Hold | null = null;
   await change(db, id, now, r => {
-    if (certainty(r, now) === "stale") throw new CapacityError("AVAILABILITY_UNKNOWN", "Stock hasn't been confirmed recently — the seller needs to check it.");
+    if (certainty(r, now) === "stale") throw new CapacityError("AVAILABILITY_UNKNOWN", "Stock hasn't been confirmed recently — it needs checking first.");
     if (r.type === "slots" && !r.slots.some(s => s.id === x.slotId)) throw new CapacityError("NOT_FOUND", "No such slot.");
     if (available(r, now, x.slotId ?? null) < qty) throw new CapacityError("CAPACITY_UNAVAILABLE", r.type === "quantity" ? "Not enough in stock." : "That slot is full.");
     made = { id: newId(), holder: x.holder, engagementId: x.engagementId ?? null, qty, slotId: x.slotId ?? null, state: "held", createdAt: now, expiresAt: now + x.ttlSec };
@@ -266,8 +266,8 @@ export async function resourceFor(db: Docs, factId: string): Promise<Resource | 
 
 /** What may be said about availability, by anyone: a count only when it's confirmed. */
 export function availabilityText(r: Resource | null, now: number): string {
-  if (!r) return "Availability isn't tracked — the seller will confirm.";
-  if (certainty(r, now) === "stale") return "Availability needs to be confirmed by the seller.";
+  if (!r) return "Availability isn't tracked — they'll confirm.";
+  if (certainty(r, now) === "stale") return "Availability needs to be confirmed first.";
   if (r.type === "quantity") { const n = available(r, now); return n > 0 ? `${n} ${r.unit === "each" ? "available" : r.unit + " available"}` : "Out of stock right now."; }
   // The next free times themselves, in the seller's time zone — "105 open slots" answers nothing.
   const free = r.slots.filter(s => s.start > now && available(r, now, s.id) > 0).sort((a, b) => a.start - b.start);

@@ -88,7 +88,7 @@ function shopItem(it, p, off) {
     ${it.photo ? `<img class="item-photo" src="${esc(it.photo)}" alt="${esc(it.name)}" loading="lazy">` : ""}
     <div class="row"><b>${esc(it.title.split(" · ")[0])}</b><b class="end">${price}</b></div>
     ${it.details && it.details !== it.title ? `<span class="small muted">${esc(it.details)}</span>` : ""}
-    ${stock || it.instant || it.perBuyer ? `<div class="row">${stock}${it.instant ? tag("Instant booking", "peri") : ""}${it.perBuyer ? tag(`At most ${it.perBuyer} per buyer`) : ""}</div>` : ""}
+    ${stock || it.instant || it.perBuyer ? `<div class="row">${stock}${it.instant ? tag("Instant booking", "peri") : ""}${it.perBuyer ? tag(`At most ${it.perBuyer} per person`) : ""}</div>` : ""}
     ${it.policies?.length ? `<details class="more"><summary>Their terms</summary>${it.policies.map(p => `<div class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</div>`).join("")}</details>` : ""}
     ${act}
     <div class="offer-box" hidden><div class="row"><input class="field compact" type="number" inputmode="numeric" min="1" placeholder="Your price${it.unit && it.unit !== "each" ? ` per ${esc(it.unit)}` : it.action === "buy" ? " each" : ""} (${esc(it.currency)})" data-offer-price><input class="field compact" type="number" inputmode="numeric" min="1" placeholder="Up to (private)" data-offer-max title="Your agent negotiates and may agree up to this. Never shown to them."><button class="btn accent compact" data-act="store-offer-send" ${off}>Send offer</button></div>
@@ -107,8 +107,8 @@ function recordLine(r, p) {
   const since = r.since ? new Date(r.since * 1000).toLocaleDateString([], { month: "short", year: "numeric" }) : "";
   return `<details class="more record"><summary>✓ ${r.verified} verified ${r.verified === 1 ? "sale" : "sales"} · ${r.handedOver} handed over${r.problems ? ` · ${r.problems} with problems` : " · no problems"}${since ? ` · since ${esc(since)}` : ""}</summary>
     ${r.recent.map(s => `<div class="row small"><span>${esc(s.item)}${s.quantity > 1 ? ` × ${s.quantity}` : ""}</span><span class="faint">${esc(s.month)}</span>${s.handedOver ? `<span style="color:var(--fresh)">handed over</span>` : s.problem ? `<span style="color:var(--danger)">problem reported</span>` : `<span class="faint">paid or pending</span>`}
-      ${s.receipt ? `<code class="small faint" title="Receipt fingerprint (SHA-256), signed for the seller">#${esc(s.receipt.hash.slice(0, 10))}</code>` : ""}</div>`).join("")}
-    <span class="small faint">From signed receipts — buyers and prices stay private. <a href="/public/people/${esc(p.handle)}/record" target="_blank" rel="noopener">Check the record</a></span></details>`;
+      ${s.receipt ? `<code class="small faint" title="Receipt fingerprint (SHA-256), signed for them">#${esc(s.receipt.hash.slice(0, 10))}</code>` : ""}</div>`).join("")}
+    <span class="small faint">From signed receipts — names and prices stay private. <a href="/public/people/${esc(p.handle)}/record" target="_blank" rel="noopener">Check the record</a></span></details>`;
 }
 
 /** A card saved before cards carried the storefront: its offerings, with plain questions that name the item. */
@@ -157,7 +157,7 @@ function briefCard(c, at) {
       ${d.clarify.map((q, j) => `<div class="stack" style="gap:6px"><span class="small">${esc(q.question)}</span><div class="row">${q.options.map((o, k) => `<button class="chip" data-act="brief-clarify" data-j="${j}" data-k="${k}" ${at}>${esc(o)}</button>`).join("")}</div></div>`).join("")}</div>` : ""}
     ${s.requirements.length ? `<div class="row">${s.requirements.map((r, j) => `<span class="chip req ${r.strength === "required" ? "on" : ""}"><button class="linkish" data-act="brief-strength" data-j="${j}" ${at} title="Tap to switch must-have / nice-to-have">${esc(r.value)} · ${r.strength === "required" ? "must" : "nice"}</button><button class="linkish x" data-act="brief-drop" data-j="${j}" ${at} aria-label="Remove ${esc(r.label)}">×</button></span>`).join("")}</div>` : ""}
     <div class="privacy-split">
-      <div>${label("Shared with sellers", "fresh")}<span class="small">What you need, ${esc(need.place.name)}${mode ? ` · ${esc(mode.toLowerCase())}` : ""}${s.requirements.length ? " · your must-haves" : ""}${s.budget ? ` · a price range (${esc(s.budget)})` : " · no price"}</span></div>
+      <div>${label("Shared with them", "fresh")}<span class="small">What you need, ${esc(need.place.name)}${mode ? ` · ${esc(mode.toLowerCase())}` : ""}${s.requirements.length ? " · your must-haves" : ""}${s.budget ? ` · a price range (${esc(s.budget)})` : " · no price"}</span></div>
       <div>${label("Kept private", "peri")}<span class="small">The most you'll pay, your notes, your exact address and phone</span></div>
     </div>
     <details class="more"><summary>Exactly what their agents get</summary><dl class="kv small">
@@ -253,8 +253,8 @@ export function hoursText(h) {
 /** Weekly hours on the offering card: stated once, bookable times are made from them and refill as days pass. */
 function hoursPick(c, at) {
   const h = c.hours ?? defaultHours(c.offer);
-  return `<div class="stack" style="gap:6px">${label("When buyers can book", "sq")}
-    <label class="row small" style="gap:6px"><input type="checkbox" data-edit="hours-on" ${at} ${c.hoursOn ? "checked" : ""}> Let buyers pick a free time in my weekly hours</label>
+  return `<div class="stack" style="gap:6px">${label("When people can book", "sq")}
+    <label class="row small" style="gap:6px"><input type="checkbox" data-edit="hours-on" ${at} ${c.hoursOn ? "checked" : ""}> Let people pick a free time in my weekly hours</label>
     ${c.hoursOn ? `<div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip ${h.days.includes(d) ? "on" : ""}"><input type="checkbox" data-edit="hours-day" data-day="${d}" ${at} ${h.days.includes(d) ? "checked" : ""} style="display:none">${DAY[d]}</label>`).join("")}</div>
       <div class="row small"><input class="field compact" type="time" data-edit="hours-from" ${at} value="${esc(h.from)}" style="max-width:120px" aria-label="Opens"><span>to</span><input class="field compact" type="time" data-edit="hours-to" ${at} value="${esc(h.to)}" style="max-width:120px" aria-label="Closes">
         <input class="field compact" type="number" min="10" max="480" step="5" data-edit="hours-minutes" ${at} value="${h.minutes}" style="max-width:80px" aria-label="Minutes per booking"><span>minutes each</span></div>
@@ -279,7 +279,7 @@ function offerCard(c, at) {
       <div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Your price</span><span>₹</span><input class="field compact" type="number" min="1" data-edit="basic-price" ${at} value="${esc(c.basicPrice ?? "")}" placeholder="e.g. 500" style="max-width:140px">${c.basics.unit ? `<span class="faint">per ${esc(c.basics.unit)}</span>` : ""}</div>
       <div class="row small" style="flex-wrap:nowrap"><span style="min-width:110px">Where</span><input class="field" data-edit="basic-area" ${at} value="${esc(c.basicArea ?? c.basics.area ?? "")}" placeholder="Your area, or Online"></div>
       <span class="small faint">The lowest you'd accept comes next, and stays private.</span></div>` : ""}
-    ${c.missing?.length && !o && c.basics ? `<div class="stack" style="gap:8px">${label("Common buyer questions · Public", "sq")}${c.missing.map(m => {
+    ${c.missing?.length && !o && c.basics ? `<div class="stack" style="gap:8px">${label("Common questions · Public", "sq")}${c.missing.map(m => {
       const ans = c.missingAnswers?.[m.label] ?? "";
       return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
         ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
@@ -307,39 +307,43 @@ function offerEssentials(c, at) {
  */
 function offerImprovements(c, at) {
   const o = c.offer, kind = passKind({ offer: { category: o.category } });
+  // Each part: [key, title, done, shown, what it says now] — the status line means nothing has to be opened to know.
+  const answered = (c.missing ?? []).filter(m => String(c.missingAnswers?.[m.label] ?? "").trim()).length;
+  const mode = { "": "Asks you every move", negotiate: "Bargains inside your limit; you confirm", close: "Bargains and agrees inside your limit" }[autonomyOf(c) || ""];
   const parts = [
-    ["questions", `Buyer questions${c.missing?.length ? ` · ${c.missing.length}` : ""}`, !(c.missing?.length) || !!c.answeredMissing, !!c.missing?.length],
-    ["terms", "Your terms", !!c.terms?.length, true],
-    ["agent", "How your agent bargains", !!autonomyOf(c) || !!c.rulesOk, true],
-    ["instant", kind === "booking" ? "Instant booking" : "Instant orders", !!c.instant, true],
-    ["prices", "Similar prices", false, !!c.insights?.length],
-    ["privacy", "Who sees what", false, true],
+    ["questions", "Common questions", !(c.missing?.length) || answered === c.missing.length, !!c.missing?.length, `${answered} of ${c.missing?.length ?? 0} answered`],
+    ["terms", "Your terms", !!c.terms?.length, true, c.termsLoading && Date.now() - c.termsLoading < 60_000 ? "Finding what others state…" : c.terms?.length ? `${c.terms.length} set — edit any` : "None yet"],
+    ["agent", "How your agent bargains", !!autonomyOf(c) || !!c.rulesOk, true, `${mode}${c.rulesOk ? " · your rules" : ""}`],
+    ["instant", kind === "booking" ? "Instant booking" : "Instant orders", !!c.instant, true, c.instant ? "On — your listed price is accepted at once" : "Off — you confirm each"],
+    ["prices", "Similar prices", false, !!c.insights?.length, `${c.insights?.length ?? 0} found`],
+    ["privacy", "Who sees what", false, true, "Public vs private"],
   ].filter(p => p[3]);
-  const open = c.improve;
+  const open = c.openParts ?? {};
   const body = {
     questions: () => `<div class="stack" style="gap:8px">${c.missing.map(m => {
       const ans = c.missingAnswers?.[m.label] ?? "";
       return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
         ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}</button>`).join("")}</div>` : ""}
         <input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(ans)}" placeholder="${m.options?.length ? "Or type your own" : esc(m.ask)}"></div>`;
-    }).join("")}<span class="small faint">Public — answered once, so buyers' agents don't ask you.</span></div>`,
+    }).join("")}<span class="small faint">Public — answered once, so others' agents don't ask you.</span></div>`,
     terms: () => `<div class="stack" style="gap:6px"><span class="small muted">Shown on your card and in every receipt. Edit or clear any.</span>
       ${(c.terms ?? []).map((t, j) => `<div class="row small" style="flex-wrap:nowrap"><input class="field compact" data-term-label data-edit="term-label" data-j="${j}" ${at} value="${esc(t.label)}" style="max-width:130px" aria-label="Term"><input class="field" data-term-text data-edit="term-text" data-j="${j}" ${at} value="${esc(t.text)}" aria-label="${esc(t.label)}"></div>
-        ${t.sources?.length ? `<span class="small faint">As sellers state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""}`).join("")}
+        ${t.sources?.length ? `<span class="small faint">As others state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""}`).join("")}
       <div class="row"><button class="btn secondary compact" data-act="offer-suggest-terms" ${at}>${c.terms?.length ? "Suggest again" : "Suggest terms for this offering"}</button></div></div>`,
     agent: () => `<div class="stack" style="gap:6px">${autonomyPick(c)}
-      <div class="row"><input class="field" style="flex:1;min-width:220px" data-edit="rulesText" ${at} value="${esc(c.rulesText ?? "")}" placeholder="Or in your words: never below ₹400, max 10 per buyer, close yourself above ₹420">
+      <div class="row"><input class="field" style="flex:1;min-width:220px" data-edit="rulesText" ${at} value="${esc(c.rulesText ?? "")}" placeholder="Or in your words: never below ₹400, max 10 per person, close yourself above ₹420">
         <button class="btn secondary compact" data-act="offer-rules-read" ${at}>Read my rules</button></div>
       ${c.rules ? `${rulesList(c.rules.lines)}<div class="row">${c.rulesOk ? `<span class="small" style="color:var(--fresh)">✓ Applied when you publish</span>` : `<button class="btn accent compact" data-act="offer-rules-ok" ${at}>Looks right</button>`}<button class="btn quiet compact" data-act="offer-rules-clear" ${at}>Clear</button></div>` : ""}</div>`,
     instant: () => `<label class="row small" style="gap:6px"><input type="checkbox" data-instant-new data-edit="instant" ${at} ${c.instant ? "checked" : ""}> ${kind === "booking" ? "Accept bookings at my listed price automatically" : "Accept orders at my listed price automatically — no need to confirm each one"}</label>`,
     prices: () => `<div class="stack" style="gap:4px">${(c.insights ?? []).map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>`,
     privacy: () => `<div class="privacy-split">
-        <div>${label("Public — buyers' agents see", "fresh")}<span class="small">The text above, your price (${money(o.price.amount, o.price.period)}), ${esc(o.place.name)}${c.missing?.length ? ", the details you answer" : ""}${c.hoursOn ? ", your free times" : ""} and your terms</span></div>
+        <div>${label("Public — others' agents see", "fresh")}<span class="small">The text above, your price (${money(o.price.amount, o.price.period)}), ${esc(o.place.name)}${c.missing?.length ? ", the details you answer" : ""}${c.hoursOn ? ", your free times" : ""} and your terms</span></div>
         <div>${label("Private — never shared", "peri")}<span class="small">The lowest you'll accept, and your private notes</span></div></div>`,
   };
   return `<div class="stack" style="gap:6px">${label("Improve your listing · optional", "sq")}
-    <div class="row" style="gap:6px;flex-wrap:wrap">${parts.map(([k, t, done]) => `<button class="chip ${open === k ? "on" : ""}" data-act="offer-improve" data-k="${k}" ${at}>${done ? "✓ " : ""}${esc(t)}</button>`).join("")}</div>
-    ${open && body[open] && parts.some(p => p[0] === open) ? `<div class="card slim">${body[open]()}</div>` : ""}</div>`;
+    <div class="improve-list">${parts.map(([k, t, done, , status]) => `<details class="improve ${done ? "done" : ""}" ${open[k] ? "open" : ""}>
+      <summary data-act="offer-improve" data-k="${k}" ${at}><span class="improve-title">${done ? "✓ " : ""}${esc(t)}</span><span class="improve-status">${esc(status)}</span></summary>
+      <div class="improve-body">${body[k]()}</div></details>`).join("")}</div></div>`;
 }
 
 // MARK: - Context
@@ -517,8 +521,8 @@ export function receiptHTML(r, e) {
   return `<div class="card receipt-card">
     <div class="row">${label("Receipt", "sq ink")}<span class="small faint">#${esc(String(r.engagementId ?? e?.id ?? "").slice(-8))}</span><span class="end">${r.matches ? tag("✓ Signed record", "fresh") : tag("Changed since agreed", "danger")}</span></div>
     <dl class="kv">
-      ${line("Buyer", `${esc(r.parties[e?.seller === "requester" ? "provider" : "requester"].name)} <span class="faint">@${esc(r.parties[e?.seller === "requester" ? "provider" : "requester"].handle)}</span>`)}
-      ${line("Seller", `${esc(r.parties[e?.seller === "requester" ? "requester" : "provider"].name)} <span class="faint">@${esc(r.parties[e?.seller === "requester" ? "requester" : "provider"].handle)}</span> · <span class="small muted">message them through Collab</span>`)}
+      ${line("For", `${esc(r.parties[e?.seller === "requester" ? "provider" : "requester"].name)} <span class="faint">@${esc(r.parties[e?.seller === "requester" ? "provider" : "requester"].handle)}</span>`)}
+      ${line("From", `${esc(r.parties[e?.seller === "requester" ? "requester" : "provider"].name)} <span class="faint">@${esc(r.parties[e?.seller === "requester" ? "requester" : "provider"].handle)}</span> · <span class="small muted">message them through Collab</span>`)}
       ${line(kind === "booking" ? "Service" : "Item", `${esc(t.title.split(" · ")[0])}${qty > 1 ? ` × ${qty}` : ""}`)}
       ${slot ? line("When", esc(when(slot.start))) : ""}
       ${line("Where", `${esc(e?.offer?.title?.split(" · ").at(-1) ?? e?.brief?.area ?? "As arranged")} · ${PASS[kind].name}`)}
@@ -528,21 +532,21 @@ export function receiptHTML(r, e) {
       ${discount > 0 ? `<div class="row small" style="color:var(--fresh)"><span>Discount (negotiated)</span><span class="end">− ${money(discount, null, cur)} · ${Math.round((discount / (listed * qty)) * 100)}%</span></div>` : ""}
       <div class="row small"><span>Agreed price</span><span class="end">${money(each, null, cur)}${qty > 1 ? ` × ${qty}` : ""}</span></div>
       <div class="row small"><span>Platform fee</span><span class="end">${money(0, null, cur)}</span></div>
-      <div class="row small"><span>Taxes</span><span class="end faint">as included in the seller's price</span></div>
+      <div class="row small"><span>Taxes</span><span class="end faint">as included in the price</span></div>
       <div class="row"><b>Total</b><b class="end">${money(total, null, cur)}</b></div>
       <div class="row small faint"><span>Paid</span><span class="end">${esc(method)}</span></div>
     </div>
-    ${t.policies?.length ? `<div class="stack" style="gap:4px">${label("Seller's terms — as they stated them", "sq")}${t.policies.map(p => `<div class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</div>`).join("")}</div>`
-      : `<span class="small muted">The seller hasn't stated cancellation, return or warranty terms for this. Ask them before you pay if it matters.</span>`}
+    ${t.policies?.length ? `<div class="stack" style="gap:4px">${label("Their terms — as stated", "sq")}${t.policies.map(p => `<div class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</div>`).join("")}</div>`
+      : `<span class="small muted">No cancellation, return or warranty terms were stated for this. Ask them before you pay if it matters.</span>`}
     <div class="stack" style="gap:4px">${label("After you buy", "sq")}
       ${(() => { const after = (t.policies ?? []).filter(p => /warrant|return|refund|re-?service|re-?trim|touch|exchange|guarantee|support|repair/i.test(`${p.label} ${p.text}`));
         return after.length ? after.map(p => `<div class="small"><b>${esc(p.label)}:</b> ${esc(p.text)}</div>`).join("")
-          : `<div class="small muted">No warranty, return or re-service terms were stated for this — ask the seller in this chat if you need them.</div>`; })()}
+          : `<div class="small muted">No warranty, return or re-service terms were stated for this — ask them in this chat if you need them.</div>`; })()}
       <div class="small">Questions or follow-ups: message ${esc(r.parties[e?.seller === "requester" ? "requester" : "provider"].name)} in this conversation.</div></div>
     <div class="stack" style="gap:4px">${label("Collab's terms", "sq")}
       <div class="small">Nothing was final until both of you confirmed; this record is signed and anyone can verify it.</div>
-      <div class="small">${esc(PASS[kind].name)}: shown once at the ${kind === "booking" ? "appointment" : "handover"}; the seller marks it ${PASS[kind].done.toLowerCase()}.</div>
-      <div class="small">If something isn't as agreed, use “Report a problem” here — the seller sees it and it's part of the record.</div></div>
+      <div class="small">${esc(PASS[kind].name)}: shown once at the ${kind === "booking" ? "appointment" : "handover"}; they mark it ${PASS[kind].done.toLowerCase()}.</div>
+      <div class="small">If something isn't as agreed, use “Report a problem” here — they see it and it's part of the record.</div></div>
     <details class="more"><summary>Tips before you go (not terms)</summary>${(TIPS[kind] ?? []).map(x => `<div class="small muted">• ${esc(x)}</div>`).join("")}</details>
   </div>`;
 }
@@ -631,7 +635,7 @@ function reservationLine(e, mine, buyer) {
   if (r.state === "choose_slot") return mine === buyer
     ? `<div class="stack" data-slots="${esc(e.id)}"><span class="small">Pick a time to book it:</span><button class="btn secondary compact" data-act="slots-load" data-id="${esc(e.id)}">Show open slots</button></div>`
     : `<span class="small muted">Waiting for them to pick a time slot.</span>`;
-  if (r.state === "unavailable") return `<span class="small" style="color:var(--danger)">Out of stock — ${mine === buyer ? "you can't pay until the seller restocks; nothing was charged" : "restock to let them pay"}.</span>`;
+  if (r.state === "unavailable") return `<span class="small" style="color:var(--danger)">Out of stock — ${mine === buyer ? "you can't pay until they restock; nothing was charged" : "restock to let them pay"}.</span>`;
   if (r.state === "held") return `<span class="small muted">${r.slot ? `Slot ${when(r.slot.start)} held` : `${r.qty} reserved`} until ${when(r.expiresAt)}${mine === buyer ? " — pay before then to keep it" : ""}.</span>`;
   if (r.state === "committed" && r.slot) return `<span class="small" style="color:var(--fresh)">✓ Booked for ${when(r.slot.start)}</span>`;
   if (r.state === "released") return `<span class="small faint">Reservation released.</span>`;
@@ -687,7 +691,7 @@ function dealBlock(e, mine) {
   const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
     : p?.status === "paid" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
-    <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you sell" : "you buy"}</span></div>
+    <div class="row"><span class="deal-price">${amount}</span><span class="small muted">confirmed by both of you · ${mine === seller ? "you're offering it" : "you're getting it"}</span></div>
     ${reservationLine(e, mine, buyer)}
     ${pay}
     ${fulfil}

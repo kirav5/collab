@@ -369,3 +369,17 @@ details.more.deal-row[open] > .card { margin: 0 8px; }
 details.more.match-more { display: inline-block; }
 details.more.match-more > summary { padding: 6px 4px; }
 details.more.match-more[open] { display: inline-grid; }
+
+/* Improve your listing: one card per part — title, what it says now, and its editor when opened (several at once). */
+.improve-list { display: grid; gap: 6px; }
+details.improve { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); }
+details.improve.done { border-color: color-mix(in srgb, var(--fresh) 45%, var(--hairline)); }
+details.improve > summary { list-style: none; cursor: pointer; display: grid; gap: 2px; padding: 10px 12px; min-height: 44px; }
+details.improve > summary::-webkit-details-marker { display: none; }
+details.improve > summary::after { content: "▸"; position: absolute; right: 12px; color: var(--text3); }
+details.improve > summary { position: relative; padding-right: 32px; }
+details.improve[open] > summary::after { content: "▾"; }
+.improve-title { font-size: 14px; font-weight: 600; }
+details.improve.done .improve-title { color: var(--fresh); }
+.improve-status { font-size: 12px; color: var(--text3); }
+.improve-body { padding: 0 12px 12px; display: grid; gap: 8px; }

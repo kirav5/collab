@@ -15,8 +15,8 @@ import { safeWebhook } from "../a2a/agents.ts";
 export const GRANTS = "connector_grants", CONNECTOR_EVENTS = "connector_events";
 
 export const ADAPTERS = {
-  "inventory-webhook": { scopes: ["inventory.write"], resource: "quantity" as const, title: "Point-of-sale stock updates (signed webhook)" },
-  "ical": { scopes: ["availability.read"], resource: "slots" as const, title: "Calendar busy times (iCal feed)" },
+  "inventory-webhook": { scopes: ["inventory.write"], resource: "quantity" as const, title: "Your billing app" },
+  "ical": { scopes: ["availability.read"], resource: "slots" as const, title: "Your calendar" },
 };
 export type AdapterId = keyof typeof ADAPTERS;
 
