@@ -9,7 +9,7 @@ import { applicantsBoard, dealAmount, dealStage, defaultHours, engagementCard, h
 import { local } from "./local.js";
 import { privacyFacts } from "./processing.js";
 import { live, needsYou, needsYouCount } from "./live.js";
-import { ask, avatarHTML, busy, byTag, esc, label, logo, money, shortName, tag, tierTag, time } from "./ui.js";
+import { ask, avatarHTML, busy, byTag, esc, label, logo, money, shortName, tag, tierTag, time, icon } from "./ui.js";
 import { listingRoles, rolesOf } from "./roles.js";
 import { pendingWrites, saveNote } from "./outbox.js";
 
@@ -943,10 +943,17 @@ export const screens = {
         <div class="card set-card">
           <div class="set-row"><div><b>Theme</b><span class="small faint">Auto follows your device</span></div><div class="seg">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" data-act="theme" data-value="${k}">${v}</button>`).join("")}</div></div>
           <div class="set-row"><div><b>Don't keep history</b><span class="small faint">${S.incognito ? "On — new chats aren't kept or synced, and nothing you say is remembered" : "New chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
-        <div class="card set-card">${label("Privacy & AI", "sq")}<dl class="kv small">${privacyFacts(engine.mode).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
-          <div class="set-row"><div><b>Answer my notes with</b><span class="small faint">${{ "device-only": "Gemma on this device — nothing sent", "my-devices": "Gemma on your devices — never the cloud", cloud: "Your devices, else Gemini", "cloud-only": "Always Gemini in the cloud" }[engine.mode] ?? ""}</span></div></div>
-          <div class="seg wide">${[["device-only", "This device"], ["my-devices", "My devices"], ["cloud", "Devices, then cloud"], ["cloud-only", "Cloud"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
-          <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
+        <div class="card set-card">${label("Privacy & AI", "sq")}
+          <div class="plain-facts">
+            <div>${icon("user")}<span><b>Kept in your Collab account.</b> Only you and your agent can read it.</span></div>
+            <div>${icon("activity")}<span><b>Other people's agents get answers, not your notes.</b> Your agent answers from what you've told it — never your limits, money in private notes, phone or address.</span></div>
+            <div>${icon("shield")}<span><b>Gemini, Google's AI, does the work:</b> it reads your requests and answers other agents for you.</span></div>
+          </div>
+          <details class="more"><summary>Advanced · your own questions about your notes</summary>
+            <span class="small muted">When you ask your agent about your own notes ("what's my landlord's number?"), Gemma — Google's open model — can answer on your phone or laptop instead, even offline.</span>
+            <div class="seg wide">${[["device-only", "Only this device"], ["my-devices", "My devices only"], ["cloud", "My devices, else Gemini"], ["cloud-only", "Gemini"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
+            <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
+          </details>
 </div>
         
         <div class="card">${label("App & notifications", "sq")}
@@ -955,9 +962,7 @@ export const screens = {
             : session.appCheckError ? `<span style="color:var(--stale)">● Couldn't verify this browser</span> <span class="small faint">(${esc(session.appCheckError.code)})</span><br><span class="small muted">Chat and requests still work. Payments, pickups and price checks need it: reload Collab, or allow google.com in your content blocker.</span>`
             : `<span class="small muted">Checking…</span>`}</dd>
           <dt>App</dt><dd>${standalone() ? `<span style="color:var(--fresh)">● Installed</span>`
-            : session.install ? `<button class="btn secondary compact" data-act="install">Install Collab</button>`
-            : ios() ? `In Safari, tap <b>Share</b> (the square with an arrow), then <b>Add to Home Screen</b>. Open Collab from the home screen — notifications on iPhone only work there.`
-            : `In your browser's menu choose <b>Install app</b> or <b>Add to Home screen</b>.`}</dd>
+            : `<button class="btn secondary compact" data-act="install-app">Install Collab</button>`}</dd>
           <dt>Notifications</dt><dd>${session.pushOn ? `<span style="color:var(--fresh)">● On for this device</span> <button class="btn quiet compact" data-act="push-test">Send a test notification</button>`
             : "Notification" in window && Notification.permission === "denied" ? `Blocked — allow notifications for this site in your browser's site settings, then reload.`
             : `<button class="btn secondary compact" data-act="push-on">Turn on notifications</button>`}</dd></dl></div>
@@ -1004,7 +1009,7 @@ export const screens = {
         catch (err) { h.toast(err.message, null, "error"); }
         busy(el, false); return true;
       }
-      if (a === "install") { if (session.install && await session.install()) h.toast("Installed."); h.paint(); return true; }
+
       if (a === "push-on") {
         busy(el, true);
         try { if (await session.push()) h.toast("Notifications are on for this device."); } catch (err) { h.toast(err.message, null, "error"); }

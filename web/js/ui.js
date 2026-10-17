@@ -21,7 +21,7 @@ export function time(t) { return new Date(t * 1000).toLocaleTimeString([], { hou
  * is on it). At most three at once; the same notice isn't shown twice in a row.
  *   kind: "attention" (needs you) · "success" · "error" · "deal" · "info" (default)
  */
-const KINDS = { attention: ["Needs you", "!"], success: ["Done", "✓"], error: ["Problem", "×"], deal: ["Deal", "⇄"], info: ["Collab", "■"] };
+const KINDS = { attention: ["Needs you", "mark"], success: ["Done", "check"], error: ["Problem", "alert"], deal: ["Deal", "activity"], info: ["Collab", "mark"] };
 let lastNotice = { key: "", at: 0 };
 export function notice({ title, body = "", kind = "info", label: kicker, action, onClick, ttl } = {}) {
   const box = $("#toast");
@@ -35,7 +35,7 @@ export function notice({ title, body = "", kind = "info", label: kicker, action,
   el.setAttribute("role", kind === "error" || kind === "attention" ? "alert" : "status");
   const life = ttl ?? (kind === "attention" || kind === "error" ? 8000 : 4500);
   el.style.setProperty("--life", `${life}ms`);
-  el.innerHTML = `<span class="note-ico" aria-hidden="true">${glyph}</span>
+  el.innerHTML = `<span class="note-ico" aria-hidden="true">${glyph === "mark" ? logo() : icon(glyph, 16)}</span>
     <span class="note-main"><span class="note-kicker">${esc(kicker ?? word)}</span><b class="note-title">${esc(title)}</b>${body ? `<span class="note-body">${esc(body)}</span>` : ""}
       ${onClick ? `<span class="note-action">${esc(action ?? "Open")} ›</span>` : ""}</span>
     <button class="note-x" type="button" aria-label="Dismiss">×</button><span class="note-bar" aria-hidden="true"></span>`;
@@ -88,6 +88,8 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
   settings: '<path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
   pin: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
 };
 export const icon = (name, size = 18) => `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ""}</svg>`;

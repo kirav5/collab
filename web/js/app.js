@@ -176,10 +176,7 @@ function paintSidebar() {
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
-      ${!session.pushOn || (!standalone() && (session.install || ios())) ? `<div class="row" style="gap:6px">
-        ${!standalone() && (session.install || ios()) ? `<button class="btn quiet compact" data-act="${session.install ? "install" : "screen"}" data-screen="settings">Install app</button>` : ""}</div>` : ""}
-      ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
-      <div class="nav">${label("Your agent")}
+      <div class="nav">
         ${navRow("requests", icon("activity"), "Activity", n ? String(n) : "")}
         ${navRow("receipts", icon("receipt"), "Receipts", "")}
         ${navRow("people", icon("card"), "My card", "")}
@@ -187,9 +184,13 @@ function paintSidebar() {
         ${navRow("sharing", icon("shield"), "Privacy", "")}
         ${navRow("settings", icon("settings"), "Settings", "")}
       </div>
-      <div class="stack" style="gap:4px">${label("Your agent")}<button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
-        ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}</div>
-    </div>`;
+      ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
+    </div>
+    <footer class="side-foot">
+      <button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
+      ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}
+      ${!standalone() ? `<button class="btn secondary compact" data-act="install">Install app</button>` : ""}
+    </footer>`;
   if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
 }
 
@@ -602,6 +603,22 @@ async function previewCard(el = null) {
 }
 
 /** Your A2A agent card — how any agent finds and talks to yours — shown readably, with the JSON one tap away. */
+/**
+ * Install Collab as an app: the browser's own prompt where there is one (Chrome, Edge, Android); otherwise the steps for
+ * this device, since an iPhone never offers a prompt — Safari's Share › Add to Home Screen is the only way.
+ */
+async function installApp() {
+  if (standalone()) return toast("Collab is already installed — you're in the app.", null, "success");
+  if (session.install) { if (await session.install()) toast("Installed — open Collab from your home screen or apps.", null, "success"); return paint(); }
+  const ua = navigator.userAgent, iphone = ios(), android = /android/i.test(ua), crios = /crios|fxios|edgios/i.test(ua);
+  const share = `<svg class="icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v13"/><path d="m7 8 5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>`;
+  const steps = iphone ? [crios ? `Tap ${share} <b>Share</b> (top right in Chrome, or open this page in Safari)` : `Tap ${share} <b>Share</b> — in Safari it's under <b>⋯</b> at the bottom`, "Scroll and choose <b>Add to Home Screen</b>", "Keep <b>Open as Web App</b> on, then tap <b>Add</b>", "Open Collab from your home screen — notifications on iPhone only work there"]
+    : android ? ["Tap <b>⋮</b> at the top right of Chrome", "Choose <b>Install app</b> (or <b>Add to Home screen</b>)", "Tap <b>Install</b>, then open Collab from your home screen"]
+    : ["Click the install icon at the right of the address bar — or <b>⋮</b> › <b>Cast, save and share</b> › <b>Install page as app</b>", "Click <b>Install</b>", "Collab opens in its own window and in your apps"];
+  openPanel({ title: "Install Collab", html: `<div class="card install-card"><div class="row" style="gap:12px">${logo()}<div class="stack" style="gap:2px"><b>Collab on your ${iphone ? "iPhone" : android ? "phone" : "computer"}</b><span class="small muted">Opens like an app, works offline, and tells you when your agent needs you.</span></div></div>
+    <ol class="install-steps">${steps.map(x => `<li>${x}</li>`).join("")}</ol></div>` });
+}
+
 async function showAgentCard() {
   const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`, link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
   const [c, rec, facts] = await Promise.all([fetch(url).then(r => r.json()).catch(() => null),
@@ -942,9 +959,11 @@ async function onClick(e) {
   const a = el.dataset.act;
   try {
     if (a === "nav") return $("#app").classList.toggle("nav-open");
+    // Anything chosen in the menu closes it (on a phone it covers the page).
+    if (el.closest(".sidebar")) $("#app")?.classList.remove("nav-open");
     if (a === "screen") return openScreen(el.dataset.screen);
     if (a === "intro-done") { try { localStorage.setItem("collab.intro", "done"); } catch {} return paint(); }
-    if (a === "install") { if (session.install && await session.install()) toast("Installed — open Collab from your home screen or apps."); return paint(); }
+    if (a === "install" || a === "install-app") return installApp();
     // A new or earlier chat replaces the chat only — Activity (or whatever is open beside it) stays on a wide screen.
     if (a === "new-chat") { S.current = null; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
     if (a === "open-session") { S.current = el.dataset.id; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
@@ -1563,6 +1582,8 @@ let version = null;
 readVersion().then(v => { version = v; });
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden) return;
+  // Coming back to the app (an installed one is often resumed, not restarted): look for a new deployment first.
+  navigator.serviceWorker?.getRegistration?.().then(r => r?.update()).catch(() => {});
   const v = await readVersion();
   if (shouldReload(version, v, !!document.querySelector("input:focus, textarea:focus"))) location.reload();
 });
@@ -1576,7 +1597,11 @@ addEventListener("collab-push", e => {
 navigator.serviceWorker?.addEventListener("message", e => {
   // A notification tapped while Collab is open: go there, without a reload.
   if (e.data?.type === "collab-open") { openLink(e.data.link); return; }
-  if (e.data?.type === "collab-updated") notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
+  // A new deployment took over: reload into it now, unless the owner is in the middle of typing.
+  if (e.data?.type === "collab-updated") {
+    if (!document.querySelector("input:focus, textarea:focus")) location.reload();
+    else notice({ title: "A new version of Collab is ready", kind: "info", label: "Update", action: "Reload", onClick: () => location.reload(), ttl: 15000 });
+  }
 });
 
 // Started last, once everything above is defined.

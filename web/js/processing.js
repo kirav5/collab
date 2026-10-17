@@ -12,9 +12,9 @@ export const notesReadBy = mode => ({ "device-only": "Gemma, this device only", 
 
 /** Stored where · processed where · shared with whom — the three promises, kept apart and true to the setting. */
 export const privacyFacts = mode => [
-  ["Stored", "In your account on Collab's server"],
-  ["Read by", `Your own questions about your notes: ${notesReadBy(mode)} · answering others and requests: Gemini`],
-  ["Shared", "Your agent answers others from your context so you aren't asked twice. Never your limits, money in private notes, contact details, or notes you set to never use."],
+  ["Kept", "In your Collab account"],
+  ["Read by", "Gemini, which does the work for you"],
+  ["Shared", "Answers from your context — never your limits, money in private notes, or contact details"],
 ];
 
 /** Saved choices from before Gemma ("device-first" let the cloud answer) become "my-devices": Gemma only. */

@@ -213,7 +213,7 @@ function gateBanner(c, at, kind) {
   // Answered questions aren't asked twice.
   const open = g.missing.map((q, j) => [q, j]).filter(([q, j]) => !c.gateAnswers?.[j] && !(c.answered ?? []).some(x => x.question === q.question));
   if (!open.length) return "";
-  return `<div class="card peri slim">${label(g.broad ? "This could mean a lot of things" : "I need a little more", "peri")}
+  return `<div class="card slim ask-box">${label(g.broad ? "This could mean a lot of things" : "I need a little more", "accent")}
     <span class="small muted">Tap what fits and I'll do the rest — or ${kind === "offer" ? "publish" : "search"} as it is.</span>
     ${open.map(([q, j]) => `<div class="stack" style="gap:6px"><span class="small">${esc(q.question)}</span><div class="row">${recallChips(c, q, (o, k, extra) => `data-act="gate-answer" data-j="${j}" ${extra ? `data-val="${esc(o)}"` : `data-k="${k}"`} ${at}`, c.gateAnswers?.[j])}</div></div>`).join("")}
     <div class="row"><button class="btn quiet compact" data-act="gate-override" ${at}>${kind === "offer" ? "Publish" : "Search"} as it is</button></div></div>`;
@@ -236,12 +236,11 @@ function briefCard(c, at) {
     ${stages(0)}
     <div class="row">${label("I'll look for", "sq accent")}<span class="end">${tag(need.category.replace(/-/g, " "))}</span></div>
     <input class="field bare title-edit" data-edit="title" value="${esc(s.title)}" aria-label="Title">
-    <textarea class="field bare" data-edit="summary" rows="2" aria-label="Summary">${esc(s.summary)}</textarea>
     <p class="small faint row" style="gap:6px">${icon("pin", 14)}${esc(where)}</p>
     ${(c.gate && !c.gate.ok) || d.clarify?.length ? `<span class="label sq">step 2 of 2 · tap what fits, or just go</span>` : ""}
     ${gateBanner(c, at, "brief")}
     ${(c.answered ?? []).some(x => x.before) ? `<span class="small faint">From what you said before: ${(c.answered ?? []).filter(x => x.before).map(x => `<b>${esc(x.answer)}</b> (${esc(x.question.replace(/\?$/, "").toLowerCase())})`).join(" · ")}</span>` : ""}
-    ${d.clarify?.length ? `<div class="card peri slim">${label("Quick question before I search", "peri")}
+    ${d.clarify?.length ? `<div class="card slim ask-box">${label("Quick question before I search", "accent")}
       ${d.clarify.map((q, j) => `<div class="stack" style="gap:6px"><span class="small">${esc(q.question)}</span><div class="row">${recallChips(c, q, (o, k, extra) => `data-act="brief-clarify" data-j="${j}" ${extra ? `data-val="${esc(o)}"` : `data-k="${k}"`} ${at}`)}</div></div>`).join("")}</div>` : ""}
     ${d.profile?.length ? profileBlock(d, s, providers, at) : ""}
     ${shown.length ? `<div class="stack" style="gap:6px"><span class="small faint">What matters · tap one to make it optional</span><div class="row">${shown.map(({ r, j }) => `<span class="chip req ${r.strength === "required" ? "on" : ""}"><button class="linkish" data-act="brief-strength" data-j="${j}" ${at} title="${r.strength === "required" ? "Make it optional" : "Make it a must"}">${esc(r.value)}${r.strength === "required" ? "" : " · optional"}</button><button class="linkish x" data-act="brief-drop" data-j="${j}" ${at} aria-label="Remove ${esc(r.label)}">×</button></span>`).join("")}</div></div>` : ""}
