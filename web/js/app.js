@@ -4,13 +4,13 @@
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, session, signIn, standalone } from "./api.js";
-import { autonomyOf, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
+import { autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, storeCard } from "./cards.js";
+import { dealAmount, defaultHours, engagementCard, hoursOk, messageHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { screens } from "./screens.js";
@@ -259,6 +259,8 @@ async function chatHTML() {
     const facts = await savedFacts();
     for (const m of cur.messages) for (const c of m.cards ?? []) if (c.type === "saved") c.fact = facts.get(c.factId) ?? c.fact;
   }
+  // Matches: "Fits you" reasons come from the private notes kept on this device, read here and never sent anywhere.
+  if (cur.messages.some(m => m.cards?.some(c => c.type === "brief" && c.step === "matches"))) setNotesHere(await cachedNotes());
   return cur.messages.map(messageHTML).join("");
 }
 

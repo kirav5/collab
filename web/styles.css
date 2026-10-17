@@ -197,6 +197,7 @@ details.more[open] { display: grid; gap: 10px; }
 .match-row { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--hairline); cursor: pointer; }
 .match-row:first-of-type { border-top: 0; }
 .match-main { display: grid; gap: 2px; min-width: 0; }
+.match-main .fits { color: var(--peri); overflow-wrap: anywhere; } /* "Fits you" — from private notes, so the private colour */
 .chart { display: grid; gap: 4px; }
 
 /* QR code */

@@ -44,7 +44,8 @@ export function setProcessingMode(mode) {
 async function cacheNotes(facts) { try { await local.put("facts", { id: "notes", items: facts.filter(f => f.tier === "private").map(f => ({ id: f.id, text: f.text, tier: f.tier, createdAt: f.createdAt })), at: Date.now() }); } catch {} }
 /** Keeps the device's copy of the private notes current (called while online). */
 export async function refreshNotesCache() { const f = await cached("/api/facts").catch(() => null); if (f) await cacheNotes(f); }
-async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
+/** The private notes kept on this device (empty when there are none or storage is blocked). */
+export async function cachedNotes() { try { return (await local.get("facts", "notes"))?.items ?? []; } catch { return []; } }
 
 /** When no allowed model can answer: the matching notes themselves — found on this device by plain search, nothing
  *  sent — with Gemma or (if the owner allows the cloud) one Gemini answer as an option, never a precondition. */
@@ -118,6 +119,7 @@ export async function chat(text, recent, area, open = null) {
     case "remember": {
       const fact = await saveNote(api, { text, tier: "private" });
       if (fact.queued) return { text: "Saved on this device — the connection dropped; it syncs to your account when you're back online.", cards: [] };
+      await cacheNotes([...(await cachedNotes()), fact]); // at once on this device too, so the next matches can use it
       return { text: "Saved to your context — only your agent can use it; it's never shared.", cards: [{ type: "saved", factId: fact.id, suggestPublic: route.tier === "public" }] };
     }
     case "ask_self": {

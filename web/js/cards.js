@@ -7,6 +7,7 @@ import { autonomyOf, drafts, needsLimit } from "./agent.js";
 import { gpay } from "./gpay.js";
 const gpayOk = () => gpay.available;
 import { live, poke } from "./live.js";
+import { fitsReasons } from "./fits.js";
 import { byTag, esc, label, money, shortName, tag, tierTag, time } from "./ui.js";
 
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -185,9 +186,18 @@ const autonomyPick = (c, a = autonomyOf(c)) => `<select class="field" data-edit=
     <option value="close" ${a === "close" ? "selected" : ""}>My always-on agent negotiates and closes inside my limit</option></select>
   ${a ? `<select class="field" data-edit="days" style="max-width:110px">${[1, 7, 30].map(n => `<option value="${n}" ${(c.days ?? 7) === n ? "selected" : ""}>${n} days</option>`).join("")}</select>` : ""}`;
 
+// The owner's private notes kept on this device (app.js sets them before drawing a chat with matches). They stay in
+// memory here: the "Fits you" lines are worked out each time the card is drawn and never written into the card's
+// data, which syncs to the account (fits.js).
+let notesHere = [];
+export const setNotesHere = notes => { notesHere = Array.isArray(notes) ? notes : []; };
+
 function matchesCard(c, at) {
   const found = c.found ?? [];
   const real = found.filter(f => !f.over).length;
+  const s = c.draft.shared, asked = [s.title, s.summary, ...(s.requirements ?? []).map(r => r.value)].join(" ");
+  const fits = notesHere.length ? found.map(f => fitsReasons(notesHere, f.fact, asked)) : [];
+  const firstFit = fits.findIndex((r, j) => r.length && (j < 3 || c.showAll)); // the one line that says where these come from
   const watch = c.watching ? `<span class="small" style="color:var(--fresh)">● Your agent is watching — checks every hour for 14 days and tells you when someone new fits.</span>`
     : `<button class="btn secondary compact" data-act="watch" ${at}>Keep watching</button>`;
   if (!found.length) return `<div class="card" ${at}>${label("No one yet", "sq")}<p class="small muted">No public offering fits “${esc(c.draft.shared.title)}” yet. Try a wider area or fewer requirements — or let your agent keep looking.</p><div class="row">${watch}
@@ -201,6 +211,7 @@ function matchesCard(c, at) {
       <span class="match-main"><span class="row"><b>${esc(f.profile.name)}</b>${f.profile.demo ? tag("demo") : ""}${f.profile.stats?.kept ? tag(`${f.profile.stats.kept} deal${f.profile.stats.kept === 1 ? "" : "s"} done`, "fresh") : ""}
           <span class="end">${f.fact.offer ? `<b>${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</b>` : ""}</span></span>
         <span class="small muted">${esc(f.why ?? f.fact.offer?.title ?? f.fact.text.slice(0, 120))}</span>
+        ${fits[j]?.length ? `<span class="small fits"><b>Fits you</b> · ${fits[j].map(r => `${esc(r.reason)} <span class="faint">— you noted “${esc(r.note)}”</span>`).join(" · ")}</span>${j === firstFit ? `<span class="small faint">From your private notes, on this device</span>` : ""}` : ""}
         ${f.over ? `<span class="small" style="color:var(--stale)">Above your budget — ticking it lets your agent try to bring the price down.</span>` : ""}
         <span class="small faint">${[f.distanceKm ? `${f.distanceKm} km` : null, ...f.met.slice(0, 2).map(x => `✓ ${x}`), f.unknown.length ? `${f.unknown.length} to ask` : null].filter(Boolean).map(esc).join(" · ")}</span>
         ${f.profile.stats?.deals ? `<span class="small faint">Track record: ${f.profile.stats.deals} deal${f.profile.stats.deals === 1 ? "" : "s"} · ${f.profile.stats.kept} completed as agreed${f.profile.stats.fellThrough ? ` · ${f.profile.stats.fellThrough} fell through` : ""}</span>` : `<span class="small faint">New on Collab — no deals yet</span>`}
