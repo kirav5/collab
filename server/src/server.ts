@@ -34,7 +34,8 @@ import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, link
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
 import { suggestTerms } from "./core/terms.ts";
 import { NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
-import { recordMiss, shopInsights } from "./core/shop-insights.ts";
+import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.ts";
+import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, loadPhoto, readPhoto, savePhoto } from "./core/photos.ts";
 import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
 import { type AgentRules, type RulesContext, RulesTask, checkRules, readRules, rulesLines } from "./core/rules.ts";
@@ -105,6 +106,8 @@ const queue = turnQueue(env.TASKS_QUEUE, env.RUN_URL, env.TASKS_SERVICE_ACCOUNT)
 const cfg = { db, model, directUrl: env.RUN_URL || undefined, enqueue: queue ? queue.enqueue : undefined, receiptKey: signing.publicKey, receiptSubject: signing.subject, cardKey: { privateKey: signing.privateKey, kid: signing.kid },
   screen: armor ? armor.incoming : undefined, publicUrl: (env.PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, ""), secret: (env.AGENT_SECRET ?? randomBytes(32).toString("hex")).trim(), verifyIdToken };
 const a2a = a2aRouter(cfg);
+// Commerce events copied to BigQuery (anonymous rows) and the demand forecast — only when BQ_DATASET is set.
+const bq = analytics(env.GOOGLE_CLOUD_PROJECT, env.BQ_DATASET, cfg.secret);
 setSigner(signing.sign);
 initPush(db, env.STORE !== "memory");
 
@@ -338,11 +341,17 @@ async function warnLowStock(resourceId: string) {
   if (low) await pushTo(low.owner, `Low stock: ${low.title.split(" · ")[0]}`, low.left ? `${low.left} left. Update your count when you restock.` : "Sold out. Update your count when you restock.", "/?screen=context").catch(() => {});
 }
 
-/** What the seller can learn from their own conversations and from demand near them nobody met (see core/shop-insights). */
+/** Kept for the seller's insights, and copied to BigQuery (counts only, the seller hashed) when that's set up. */
+const missed = (m: Omit<DemandMiss, "id">, category: string | null, area: string | null) => { bq.miss(m, category, area); return recordMiss(db, m).catch(() => {}); };
+
+/** What the seller can learn from their own conversations and from demand near them nobody met (see core/shop-insights),
+ *  with next week's demand forecast by BigQuery when it's set up (kept for the day; see core/analytics). */
 app.get("/api/shop/insights", route(async req => {
   const p = await me(req.uid);
   await spend(req.uid, 1);
-  return shopInsights(db, model, req.uid, p.area ?? null, now(), num(req.query.days, 1, 90) ?? 30);
+  const [i, forecast] = await Promise.all([shopInsights(db, model, req.uid, p.area ?? null, now(), num(req.query.days, 1, 90) ?? 30),
+    bq.forecastFor(db, req.uid, p.area?.name ?? null, now())]);
+  return { ...i, forecast };
 }));
 
 app.get("/api/policy", route(async req => {
@@ -468,7 +477,7 @@ app.post("/api/people/:handle/order", route(async req => {
     throw new HttpError(409, `${p.name} sells at most ${f.offer.maxPerBuyer} per buyer.`, "CAPACITY_UNAVAILABLE", { available: f.offer.maxPerBuyer });
   if (r?.type === "quantity" && certainty(r, t) === "confirmed" && availableIn(r, t) < quantity) {
     // Kept for the seller's insights: someone wanted more than was in stock.
-    await recordMiss(db, { seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: availableIn(r, t), buyer: req.uid, at: t }).catch(() => {});
+    await missed({ seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: availableIn(r, t), buyer: req.uid, at: t }, f.offer.category, p.area?.name ?? null);
     throw new HttpError(409, availableIn(r, t) ? `Only ${availableIn(r, t)} left.` : "Out of stock right now.", "CAPACITY_UNAVAILABLE", { available: availableIn(r, t) });
   }
   let slotLabel: string | null = null, slotId: string | null = null;
@@ -495,7 +504,7 @@ app.post("/api/people/:handle/order", route(async req => {
   try { await offerDeal(db, e, "requester", each, said, said, quantity, false); }
   catch (err) {
     if (err instanceof ShortStock) {
-      await recordMiss(db, { seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: err.available, buyer: req.uid, at: now() }).catch(() => {});
+      await missed({ seller: p.uid, factId: f.id, item: f.offer.title.split(" · ")[0], wanted: quantity, available: err.available, buyer: req.uid, at: now() }, f.offer.category, p.area?.name ?? null);
       throw new HttpError(409, err.message, "CAPACITY_UNAVAILABLE", { available: err.available });
     }
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
@@ -1028,6 +1037,7 @@ app.post("/api/briefs", route(async req => {
       ...(closeAt != null && closeAt <= m.price.limit ? { closeAt } : {}), ...(typeof del?.rulesText === "string" ? { rulesText: text(del.rulesText, 600) } : {}) }); }
   const found = await search(db, model, b, req.uid);
   event("request_sent", { category: b.shared.category || "none", found: found.found.length });
+  bq.request(b, wantedUnits(need), b.createdAt);
   return { brief: b, goal, ...found };
 }));
 /** How many a request asks for ("200 lamps"), as read from it: its quantity, else 1. */
@@ -1287,6 +1297,7 @@ app.post("/api/engagements/:id/pay", route(async req => {
   if (side === "requester") await sendTurn(cfg, e.id, turn).catch(() => {});
   else await deliverProviderTurn(cfg, a2a.store, e.id, turn).catch(() => {});
   event("paid", { currency: mandate.amount.currency, amount: mandate.amount.value, instrument: e.payment!.ap2?.instrument.type ?? "test" });
+  bq.deal(e, now());
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
   if (seller.uid) void pushTo(seller.uid, "Payment received", `${e[buyerOfSide(e)].name} paid for ${e.offer.title.split(" · ")[0]}. Hand over with their pass.`, `/?engagement=${e.id}`);
   return load(db, e.id);
@@ -1470,6 +1481,7 @@ app.post("/api/engagements/:id/paid-outside", route(async req => {
   }
   await saveEngagement(db, e);
   event("paid", { currency: currencyOf(e), amount: e.payment.cart?.total?.value ?? e.negotiation.deal?.price ?? 0, instrument: "outside" });
+  bq.deal(e, now());
   return e;
 }));
 app.post("/api/engagements/:id/outcome", route(async req => {
@@ -1562,7 +1574,7 @@ async function typedOffer(e: Engagement, side: "requester" | "provider", q: stri
   catch (err) {
     if (err instanceof ShortStock) {
       const seller = e[e.seller ?? "provider"];
-      if (seller.uid) await recordMiss(db, { seller: seller.uid, factId: e.offer.factId, item: e.offer.title.split(" · ")[0], wanted: n, available: err.available, buyer: uid, at: now() }).catch(() => {});
+      if (seller.uid) await missed({ seller: seller.uid, factId: e.offer.factId, item: e.offer.title.split(" · ")[0], wanted: n, available: err.available, buyer: uid, at: now() }, e.offer.category, e.brief?.area ?? null);
       throw shortStock(err.message, err.available, offered.amount, n, isTotal);
     }
     if (err instanceof Refused) throw new HttpError(409, err.message); throw err;
