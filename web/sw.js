@@ -4,7 +4,7 @@ const SHELL = "collab-shell-v64";
 const FILES = ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/badge-96.png", "/apple-touch-icon.png", "/icon-any-192.png",
   "/js/app.js", "/js/api.js", "/js/agent.js", "/js/cards.js", "/js/live.js", "/js/local.js", "/js/screens.js", "/js/ui.js", "/js/version.js",
   "/js/processing.js", "/js/appcheck.js", "/js/gpay.js", "/icon-512.png",
-  "/js/gemma.js", "/js/e2e.js", "/js/mydevices.js", "/js/outbox.js", "/js/pass.js", "/js/fits.js", "/js/panel.js", "/vendor/qrcode.js", "/js/roles.js"];
+  "/js/gemma.js", "/js/e2e.js", "/js/mydevices.js", "/js/outbox.js", "/js/pass.js", "/js/fits.js", "/js/panel.js", "/vendor/qrcode.js", "/vendor/jsQR.js", "/js/roles.js"];
 
 // Fetched past the browser's own cache, so a new worker holds exactly what was just deployed.
 self.addEventListener("install", e => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES.map(f => new Request(f, { cache: "reload" })))).then(() => self.skipWaiting())); });

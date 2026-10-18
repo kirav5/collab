@@ -14,7 +14,7 @@ import { checkoutHTML, dealAmount, gateOpen, priceChecks, priceKey, defaultHours
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel as showPanel, panelDetail, startPanel } from "./panel.js";
-import { screens } from "./screens.js";
+import { scan, screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
 import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon, FEATURES } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
@@ -128,7 +128,7 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <main class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent">${FEATURES.photo ? `<button type="button" class="mic" data-act="photo" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></button>` : ""}<input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent">${FEATURES.photo ? `<button type="button" class="mic" data-act="photo" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></button>` : ""}<input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" data-act="scan-qr" title="Scan a shop's QR or a pickup pass" aria-label="Scan a QR code"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4M7 12h10"/></svg></button><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></main>
       <aside class="panel" id="panel" hidden><div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize" tabindex="0" title="Drag to resize · double-click to reset"></div><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">${icon("x", 20)}</button></div><div class="content" id="panel-body"></div></aside></div>`;
   startPanel(paint);
@@ -795,6 +795,15 @@ async function showAgentCard(handle = S.profile.handle) {
     <details class="more"><summary>For developers · machine-readable card</summary><span class="small faint">This is the same card in the format other AI agents read (A2A), to learn what ${mine ? "yours" : "theirs"} does and how to reach it. You don't need it to use Collab. It's published at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 
+/** A QR scanned with the phone's camera opened the browser although Collab is installed (Chrome on Android can tell):
+ *  say how to make such links open in the app. iPhone can't send links to a home-screen app, and can't tell either. */
+async function openedInBrowser() {
+  if (standalone() || !navigator.getInstalledRelatedApps) return;
+  const apps = await navigator.getInstalledRelatedApps().catch(() => []);
+  if (!apps.some(x => x.platform === "webapp")) return;
+  notice({ kind: "info", ttl: 12000, title: "Opened in the browser", body: "Collab is installed. To open QR links in the app: Android Settings › Apps › Collab › Open by default › turn on “Open supported links”. Or scan from inside Collab with the scan button." });
+}
+
 async function openDirect(handle) {
   handle = String(handle).replace(/^@/, "").toLowerCase();
   const p = await person(handle);
@@ -1083,7 +1092,7 @@ function toChat() { if (!sideBySide() || !screens[S.screen]) S.screen = "chat"; 
  */
 async function openLink(link) {
   const qp = new URL(link || "/", location.origin).searchParams;
-  if (qp.get("to")) return openDirect(qp.get("to"));
+  if (qp.get("to")) { openedInBrowser(); return openDirect(qp.get("to")); }
   if (qp.get("engagement")) return openEngagement(qp.get("engagement"));
   if (qp.get("alerts")) return openScreen("requests");
   if (qp.get("screen") && screens[qp.get("screen")]) return openScreen(qp.get("screen"));
@@ -1241,6 +1250,12 @@ async function onClick(e) {
     if (el.closest(".sidebar")) setNav(false);
     if (a === "skip") return $("#input").focus();
     if (a === "photo") return FEATURES.photo ? $("#photo-in").click() : undefined;
+    // Scanning inside the app keeps the shop's chat in the app: a phone's camera opens QR links in the browser.
+    if (a === "scan-qr") {
+      let box = document.getElementById("scan-overlay");
+      if (!box) { box = document.createElement("div"); box.id = "scan-overlay"; box.className = "scan-overlay"; document.body.appendChild(box); box.addEventListener("scan-closed", () => box.remove()); }
+      return scan({ toast, openDirect, openPass }, box);
+    }
     // ‹ Close or ‹ Back (panel.js has closed it): its entry in the history goes too.
     if (a === "panel-close") { if (history.state?.detail) history.back(); return; }
     if (a === "screen") return openScreen(el.dataset.screen, null, { keepChat: true });
