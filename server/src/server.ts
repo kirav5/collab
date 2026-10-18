@@ -67,7 +67,7 @@ import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
-import { DEMO_CANDIDATES, DEMO_CUSTOMERS, seedDemo } from "./demo.ts";
+import { DEMO_CANDIDATES, DEMO_CUSTOMERS, seedDemo, refreshDemoSlots } from "./demo.ts";
 import { demoAsks } from "./core/demo-asks.ts";
 import { runDaily, summarise } from "./core/daily.ts";
 import { log } from "./log.ts";
@@ -2154,6 +2154,8 @@ app.post("/cron/run", async (req, res, next) => {
     const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
     if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
     const r = await runDue(db, model, async a => { await notifyAlert(a); });
+    // A long-running instance keeps the demo calendars two weeks ahead too (startup alone isn't enough).
+    if (env.SEED_DEMO === "1") await refreshDemoSlots(db, now()).catch(err => log.warn("demo slots not refreshed", { error: String(err).slice(0, 120) }));
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
     // Connected calendars refresh every run; a feed that fails leaves its grant degraded and its data going stale.
     const calendars = ((await db.find(GRANTS, [["provider", "==", "ical"]], 100)) as ConnectorGrant[]).filter(g => g.status !== "revoked");
