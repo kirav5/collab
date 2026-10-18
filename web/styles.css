@@ -803,3 +803,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; max-heigh
 .agent-ask .ask-q { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.4; }
 .agent-ask .row .field { flex: 1; min-width: 140px; }
 .brief-title { font-size: 16px; }
+/* The logo in a notice keeps its own colours — pink "you" hook, ink "them" hook — on a neutral tile (the notice's own
+   colour tints only icon badges). */
+.note-ico .logo { color: var(--text); }
+.note-ico:has(.logo) { background: var(--surface2); }
