@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { memoryDocs } from "../src/docs.ts";
-import { CapacityError, RESOURCES, availabilityText, available, commit, createResource, hold, lowStock, release, setStock } from "../src/core/resources.ts";
+import { CapacityError, RESOURCES, availabilityText, available, commit, createResource, hold, holdUntil, lowStock, release, setStock } from "../src/core/resources.ts";
 
 const T = 1_800_000_000;
 
@@ -32,6 +32,16 @@ test("a hold expires and frees the unit; a commit takes it out of stock; a relea
   assert.equal((await db.get(RESOURCES, r.id)).onHand, 1);
   const freed = await release(db, r.id, h3.id, T + 64);
   assert.equal(available(freed, T + 64), 1);
+});
+
+test("a live hold's expiry can be moved (a cash payment waiting on the seller); a lapsed one can't", async () => {
+  const db = memoryDocs();
+  const r = await createResource(db, "shop", { factId: "f9", type: "quantity", title: "Mug", onHand: 1 }, T);
+  const h = await hold(db, r.id, { holder: "a", ttlSec: 900 }, T);
+  assert.equal((await holdUntil(db, r.id, h.id, T + 86_400, T + 60)).expiresAt, T + 86_400);
+  await assert.rejects(hold(db, r.id, { holder: "b", ttlSec: 900 }, T + 3600), /Not enough/, "still held after the usual 15 minutes");
+  assert.equal((await holdUntil(db, r.id, h.id, T + 4500, T + 3600)).expiresAt, T + 4500, "and shortened back");
+  await assert.rejects(holdUntil(db, r.id, h.id, T + 86_400, T + 4500), /expired or was released/);
 });
 
 test("time slots: overlapping requests for a one-place slot give one booking; other slots are independent", async () => {

@@ -26,6 +26,8 @@ test("typos, wrong types, out-of-range values and unknown currencies stop the se
   bad({ money: { currencies: ["INR", "EUR"] } });
   bad({ money: { defaultCurrency: "USD", currencies: ["INR"] } });
   bad({ admin: true });
+  bad({ reports: { warnAt: 0 } });
+  bad({ reports: { foo: 1 } });
   assert.throws(() => loadPolicy({ POLICY_JSON: "{not json" }), PolicyError);
 });
 

@@ -145,6 +145,18 @@ export async function cancelBooking(db: Docs, id: string, holdId: string, now: n
   });
 }
 
+/** Moves a live hold's expiry: a cash payment the seller hasn't confirmed yet keeps its units or time until they answer. */
+export async function holdUntil(db: Docs, id: string, holdId: string, until: number, now: number): Promise<Hold> {
+  let kept: Hold | null = null;
+  await change(db, id, now, r => {
+    const h = r.holds.find(x => x.id === holdId && x.state === "held");
+    if (!h) throw new CapacityError("CAPACITY_UNAVAILABLE", "The reservation expired or was released.");
+    kept = { ...h, expiresAt: until };
+    return { ...r, holds: r.holds.map(x => (x.id === holdId ? kept! : x)) };
+  });
+  return kept!;
+}
+
 /** Releases a live hold (cancellation); committed obligations aren't released here. Idempotent. */
 export async function release(db: Docs, id: string, holdId: string, now: number): Promise<Resource> {
   return change(db, id, now, r => ({ ...r, holds: r.holds.map(x => (x.id === holdId && x.state === "held" ? { ...x, state: "released" as const } : x)) }));

@@ -5,8 +5,10 @@ import { createHash } from "node:crypto";
 import { letterTerms } from "./hiring.ts";
 import type { Docs } from "../docs.ts";
 import { moneyText } from "../market/types.ts";
-import type { Engagement, Side } from "./model.ts";
+import type { Engagement, ReportView, Side } from "./model.ts";
 import { ENGAGEMENTS } from "./engage.ts";
+import { paidFor } from "./pay.ts";
+import { reportStatus, reportsAgainst } from "./reports.ts";
 
 export const DEALS = "deals";
 
@@ -181,36 +183,57 @@ export async function clearStats(db: Docs, e: Engagement) { for (const uid of [e
  * a seller; it grows with every sale.
  */
 const RECORDS = "records";
-export interface SaleRecord { item: string; quantity: number; month: string; handedOver: boolean; problem: boolean; receipt: { hash: string; signature: string | null } | null }
-export interface TrackRecord { sales: number; verified: number; handedOver: number; problems: number; since: number | null; recent: SaleRecord[] }
+/** `report`: what a buyer said about this sale, once it stands past the seller's time to reply (counted reports only):
+ *  the reason, unanswered or disputed, the seller's answer and whether the buyer's pass was scanned at handover. */
+export interface SaleRecord { item: string; quantity: number; month: string; handedOver: boolean; problem: boolean;
+  report: { reason: ReportView["reason"]; status: "unanswered" | "disputed"; reply: NonNullable<ReportView["reply"]>["says"] | null; passScanned: boolean } | null;
+  receipt: { hash: string; signature: string | null } | null }
+/** `problems`: sales with a problem, a reporting buyer counted once. `reports`: distinct buyers in the last `days` who
+ *  say they paid and didn't get it, or reported a problem, with no reply in time; and those the seller answered (disputed). */
+export interface TrackRecord { sales: number; verified: number; handedOver: number; problems: number; since: number | null; recent: SaleRecord[];
+  reports: { notReceived: number; notAsAgreed: number; disputed: number; days: number } }
 export async function trackRecord(db: Docs, uid: string, now = Math.floor(Date.now() / 1000)): Promise<TrackRecord> {
   const cached = (await db.get(RECORDS, uid)) as (TrackRecord & { at: number }) | null;
   if (cached && now - cached.at < STATS_TTL) { const { at: _a, ...rest } = cached; return rest; }
   const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
   // A cancelled booking isn't a sale.
   const sold = es.filter(e => e.phase === "agreed" && e.negotiation.deal && e[e.seller ?? "provider"].uid === uid && e.fulfilment?.state !== "cancelled");
+  const reps = await reportsAgainst(db, uid, now);
   const rows = await Promise.all(sold.map(async e => {
     const seller = e.seller ?? "provider", buyer = seller === "provider" ? "requester" : "provider", d = e.negotiation.deal!;
     const r = (await db.get(RECEIPTS, e.id)) as { hash: string; receipt?: Receipt } | null;
     const at = e.agreedAt ?? e.updatedAt;
+    // A buyer's report decides when there is one (public only once it counts and stands). Without one, a problem counts
+    // on a paid deal or a job (not paid in the app); an unpaid walk-away isn't held against the seller.
+    const rep = reps.byEngagement.get(e.id), st = rep?.counts && now - rep.at <= reps.days * 86_400 ? reportStatus(rep, now) : null;
+    const report = rep && (st === "unanswered" || st === "disputed") ? { reason: rep.reason, status: st, reply: rep.reply?.says ?? null, passScanned: e.fulfilment?.how === "pass" } : null;
     return { at, item: e.offer.title.split(" · ")[0].slice(0, 80), quantity: d.items?.length ? d.items.reduce((n, l) => n + l.quantity, 0) : d.terms?.quantity > 1 ? d.terms.quantity : 1,
       month: new Date(at * 1000).toISOString().slice(0, 7), handedOver: ["delivered", "accepted"].includes(e.fulfilment?.state ?? ""),
-      problem: e.fulfilment?.state === "disputed" || e.outcome?.[buyer] === "fell_through", receipt: r ? { hash: r.hash, signature: r.receipt?.signatures?.[seller] ?? null } : null };
+      problem: rep ? !!report : (paidFor(e) || !!e.noPayment) && (e.fulfilment?.state === "disputed" || e.outcome?.[buyer] === "fell_through"),
+      report, receipt: r ? { hash: r.hash, signature: r.receipt?.signatures?.[seller] ?? null } : null, who: report ? rep!.buyer : null };
   }));
   rows.sort((a, b) => b.at - a.at);
+  const { byEngagement: _b, ...reports } = reps;
+  // A buyer's reports count once however many orders they made; problems without a report count per sale.
   const out: TrackRecord = { sales: rows.length, verified: rows.filter(x => x.receipt).length, handedOver: rows.filter(x => x.handedOver).length,
-    problems: rows.filter(x => x.problem).length, since: rows.length ? rows.at(-1)!.at : null, recent: rows.slice(0, 8).map(({ at: _a, ...x }) => x) };
+    problems: rows.filter(x => x.problem && !x.report).length + new Set(rows.filter(x => x.report).map(x => x.who)).size,
+    since: rows.length ? rows.at(-1)!.at : null, recent: rows.slice(0, 8).map(({ at: _a, who: _w, ...x }) => x), reports };
   await db.set(RECORDS, uid, { ...out, at: now });
   return out;
 }
+/** What buyers reported, as the agent card and the seller's agent say it: never "fraud", never who. */
+export const reportsLine = (rec: Pick<TrackRecord, "reports">) => { const n = rec.reports?.notReceived ?? 0, d = rec.reports?.disputed ?? 0;
+  return `${n ? `, ${n} ${n === 1 ? "buyer says they" : "buyers say they"} paid and didn't get it (no reply from the seller)` : ""}${d ? `, ${d} disputed` : ""}`; };
 export async function stats(db: Docs, uid: string, now = Math.floor(Date.now() / 1000)) {
   // Cached for ten minutes: search asks for every candidate's record, and each one is a scan of their conversations.
-  const cached = (await db.get(STATS, uid)) as { deals: number; kept: number; fellThrough: number; at: number } | null;
+  const cached = (await db.get(STATS, uid)) as { deals: number; kept: number; fellThrough: number; notReceived: number; at: number } | null;
   if (cached && now - cached.at < STATS_TTL) { const { at: _a, ...rest } = cached; return rest; }
   const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 300)) as Engagement[];
   const agreed = es.filter(e => e.phase === "agreed" && e.fulfilment?.state !== "cancelled");
   const said = (e: Engagement) => (e.requester.uid === uid ? e.outcome?.provider : e.outcome?.requester);
-  const out = { deals: agreed.length, kept: agreed.filter(e => said(e) === "happened").length, fellThrough: agreed.filter(e => said(e) === "fell_through").length };
+  // notReceived: distinct buyers who say they paid them and didn't get it, with no reply in time (see core/reports.ts).
+  const out = { deals: agreed.length, kept: agreed.filter(e => said(e) === "happened").length, fellThrough: agreed.filter(e => said(e) === "fell_through").length,
+    notReceived: (await reportsAgainst(db, uid, now)).notReceived };
   await db.set(STATS, uid, { ...out, at: now });
   return out;
 }

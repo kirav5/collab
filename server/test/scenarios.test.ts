@@ -126,13 +126,19 @@ async function agreed(price: number) {
   return e;
 }
 
-test("paid outside the app (cash/UPI): the buyer still gets a pass, it says who marked it, and the shop scans it once", async () => {
+test("paid outside the app (cash/UPI): the shop confirms it arrived, then the buyer gets a pass that says who marked it, and the shop scans it once", async () => {
   const e = await agreed(380);
-  const before = (await as("shop", "/api/resources")).find((r: any) => r.factId === shopFact).onHand;
+  const onHand = async () => (await as("shop", "/api/resources")).find((r: any) => r.factId === shopFact).onHand;
+  const before = await onHand();
   const settled = await as("buyer", `/api/engagements/${e.id}/paid-outside`, {});
   assert.equal(settled.payment.status, "outside");
-  assert.equal(settled.reservation.state, "committed", "paid in cash: the unit is sold, not just held");
-  assert.equal((await as("shop", "/api/resources")).find((r: any) => r.factId === shopFact).onHand, before - 1, "it left the stock");
+  // Only the buyer said so: nothing leaves the stock and there's no pass until the shop says the money arrived.
+  assert.equal(settled.reservation.state, "held", "the buyer's word alone doesn't sell the unit");
+  assert.equal(await onHand(), before, "still in stock");
+  assert.equal((await raw("buyer", `/api/engagements/${e.id}/pickup`)).status, 400, "no pass before the shop confirms");
+  const confirmed = await as("shop", `/api/engagements/${e.id}/payment-check`, { got: true });
+  assert.equal(confirmed.reservation.state, "committed", "paid in cash and confirmed: the unit is sold, not just held");
+  assert.equal(await onHand(), before - 1, "it left the stock");
   const pass = await as("buyer", `/api/engagements/${e.id}/pickup`);
   assert.equal(pass.kind, "pickup"); assert.equal(pass.payment, "outside"); assert.equal(pass.markedBy, "buyer");
   const code = pass.path.split(".html#")[1].split(".")[1];
@@ -262,6 +268,7 @@ test("'2 bottles for ₹800' is ₹800 for two, not ₹800 each: the cart, the s
   assert.equal(e.payment.cart.total.value, 800, "the cart is ₹800 in all");
   assert.equal(e.reservation.qty, 2, "two units held");
   await as("q-b", `/api/engagements/${e.id}/paid-outside`, {});
+  await as("q-s", `/api/engagements/${e.id}/payment-check`, { got: true });
   assert.equal((await as("q-b", `/api/engagements/${e.id}/pickup`)).quantity, 2, "the pass says how many");
   const [ledger] = (await as("q-s", "/api/resources")).filter((r: any) => r.id === stock.id);
   assert.equal(ledger.onHand, 3, "paid: the two left the stock");
@@ -313,6 +320,7 @@ test("ordering from a card: buy several (bounded by stock), offer a price, book 
   assert.equal((await as("o-b", `/api/engagements/${b.id}/pickup`).catch(() => null)), null, "no pass before paying");
   assert.equal((await raw("o-b", `/api/engagements/${b.id}/booking`, { action: "cancel" })).status, 409, "unpaid: change the time before paying instead");
   await as("o-b", `/api/engagements/${b.id}/paid-outside`, {});
+  await as("o-s", `/api/engagements/${b.id}/payment-check`, { got: true });
   const pass = await as("o-b", `/api/engagements/${b.id}/pickup`);
   assert.equal(pass.kind, "booking"); assert.equal(pass.slot, lesson.slots[1].start);
   const taken = await raw("o-b", "/api/people/o-s/order", { offerFactId: lessons.id, quantity: 1, slotId: lesson.slots[1].id });
@@ -665,10 +673,14 @@ test("a seller's record grows from signed receipts: public, verifiable, on their
   let e = await as("tr-b", "/api/people/tr-shop/order", { offerFactId: f.id, quantity: 3 });
   await as("tr-s", `/api/inbox/${((await as("tr-s", "/api/inbox")) as any[]).find(i => i.engagementId === e.id && i.kind === "confirm").id}`, { confirm: true });
   await as("tr-b", `/api/engagements/${e.id}/paid-outside`, {});
+  await as("tr-s", `/api/engagements/${e.id}/payment-check`, { got: true });
   const pass = await as("tr-b", `/api/engagements/${e.id}/pickup`);
   await as("tr-s", `/api/pickup/${e.id}/collect`, { code: pass.path.split(".html#")[1].split(".")[1] });
   rec = await (await fetch(`${B}/public/people/tr-shop/record`)).json();
   assert.equal(rec.sales, 1); assert.equal(rec.verified, 1); assert.equal(rec.recent[0].quantity, 3); assert.equal(rec.handedOver, 1, "collected with the pass");
+  assert.deepEqual(rec.reports, { notReceived: 0, notAsAgreed: 0, disputed: 0, days: 365 }, "no buyer reported anything");
+  assert.equal(rec.recent[0].report, null);
+  assert.match((await as("tr-b", "/api/people/tr-shop")).profile.memberSince, /^\d{4}-\d{2}$/, "on Collab since");
   assert.match(rec.recent[0].receipt.hash, /^[0-9a-f]{64}$/); assert.ok(rec.recent[0].receipt.signature);
   const receipt = await as("tr-b", `/api/engagements/${e.id}/receipt`);
   assert.equal(rec.recent[0].receipt.hash, receipt.hash, "the fingerprint is the receipt's own hash");

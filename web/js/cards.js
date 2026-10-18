@@ -150,13 +150,27 @@ function shopItem(it, p, off) {
  * receipt's fingerprint. No buyer names and no prices — those stay in the receipts the two people hold.
  */
 function recordLine(r, p) {
-  if (!r?.sales) return `<span class="small faint">No deals recorded on Collab yet.</span>`;
+  const member = monthOf(p?.memberSince);
+  if (!r?.sales) return `<span class="small faint">No deals recorded on Collab yet${member ? ` · on Collab since ${esc(member)}` : ""}.</span>`;
   const since = r.since ? new Date(r.since * 1000).toLocaleDateString([], { month: "short", year: "numeric" }) : "";
-  return `<details class="more record"><summary>✓ ${r.verified} verified ${r.verified === 1 ? "deal" : "deals"} · ${r.handedOver} completed${r.problems ? ` · ${r.problems} with problems` : " · no problems"}${since ? ` · since ${esc(since)}` : ""}</summary>
-    ${r.recent.map(s => `<div class="row small"><span>${esc(s.item)}${s.quantity > 1 ? ` × ${s.quantity}` : ""}</span><span class="faint">${esc(s.month)}</span>${s.handedOver ? `<span style="color:var(--fresh)">handed over</span>` : s.problem ? `<span style="color:var(--danger)">problem reported</span>` : `<span class="faint">paid or pending</span>`}
+  // Problems, then what buyers reported and the seller didn't answer in time, then what's disputed (counted per buyer, not per order).
+  const rep = r.reports ?? {}, nr = rep.notReceived ?? 0, na = rep.notAsAgreed ?? 0, nd = rep.disputed ?? 0;
+  const said = `${r.problems ? ` · ${r.problems} with problems` : nr || na || nd ? "" : " · no problems"}${nr ? ` · ⚠ ${nr} ${nr === 1 ? "buyer says they" : "buyers say they"} paid and didn't get it (no reply)` : ""}${na ? ` · ⚠ ${na} reported a problem (no reply)` : ""}${nd ? ` · ${nd} disputed` : ""}`;
+  return `<details class="more record"><summary>✓ ${r.verified} verified ${r.verified === 1 ? "deal" : "deals"} · ${r.handedOver} completed${said}${member ? ` · on Collab since ${esc(member)}` : since ? ` · since ${esc(since)}` : ""}</summary>
+    ${r.recent.map(s => `<div class="row small"><span>${esc(s.item)}${s.quantity > 1 ? ` × ${s.quantity}` : ""}</span><span class="faint">${esc(s.month)}</span>${s.report ? reportRow(s.report) : s.handedOver ? `<span style="color:var(--fresh)">handed over</span>` : s.problem ? `<span style="color:var(--danger)">problem reported</span>` : `<span class="faint">paid or pending</span>`}
       ${s.receipt ? `<code class="small faint" title="Receipt fingerprint (SHA-256), signed for them">#${esc(s.receipt.hash.slice(0, 10))}</code>` : ""}</div>`).join("")}
     <span class="small faint">From signed receipts — who and for how much stay private. <a href="/public/people/${esc(p.handle)}/record" target="_blank" rel="noopener">Check the record</a></span></details>`;
 }
+
+/** One sale's report, as the record shows it: no reply in time (red), or disputed with the seller's answer (amber). */
+const SELLER_SAYS = { handed_over: "handed over", refunded: "refunded", never_paid: "never paid" };
+function reportRow(r) {
+  const scanned = r.passScanned ? " · pass scanned at handover" : "";
+  if (r.status === "unanswered") return `<span style="color:var(--danger)">${r.reason === "not_as_agreed" ? "problem reported" : "paid, not received"} · no reply${scanned}</span>`;
+  return `<span style="color:var(--stale)">disputed${r.reply ? ` · seller says ${esc(SELLER_SAYS[r.reply] ?? r.reply)}` : ""}${scanned}</span>`;
+}
+/** "2026-03" → "Mar 2026" (when someone joined Collab). */
+export const monthOf = m => { const [y, mo] = String(m ?? "").split("-").map(Number); return y && mo ? new Date(y, mo - 1, 1).toLocaleDateString([], { month: "short", year: "numeric" }) : ""; };
 
 /** A card saved before cards carried the storefront: its offerings, with plain questions that name the item. */
 function fallbackItems(c) {
@@ -321,13 +335,13 @@ function matchesCard(c, at) {
     ${found.map((f, j) => (j >= 3 && !c.showAll ? "" : `<label class="match-row">
       <input type="checkbox" data-pick="${j}" ${c.picked?.includes(j) ? "checked" : ""} ${at}>
       ${avatarHTML(f.profile.name, f.profile.handle, 36)}
-      <span class="match-main"><span class="row"><b>${esc(f.profile.name)}</b>${f.profile.demo ? tag("demo") : ""}${f.profile.stats?.kept ? tag(`${f.profile.stats.kept} deal${f.profile.stats.kept === 1 ? "" : "s"} done`, "fresh") : ""}
+      <span class="match-main"><span class="row"><b>${esc(f.profile.name)}</b>${f.profile.demo ? tag("demo") : ""}${f.profile.stats?.kept ? tag(`${f.profile.stats.kept} deal${f.profile.stats.kept === 1 ? "" : "s"} done`, "fresh") : ""}${f.profile.stats?.notReceived >= (session.config.reports?.warnAt ?? 2) ? tag(`⚠ ${f.profile.stats.notReceived} paid, not received`, "danger") : ""}
           <span class="end">${f.fact.offer ? `<b>${money(f.fact.offer.price.amount, f.fact.offer.price.period)}</b>` : ""}</span></span>
         <span class="small muted">${esc(f.why ?? f.fact.offer?.title ?? f.fact.text.slice(0, 120))}</span>
         ${fits[j]?.length ? `<span class="small fits"><b>Fits you</b> · ${fits[j].map(r => `${esc(r.reason)} <span class="faint">— you noted “${esc(r.note)}”</span>`).join(" · ")}</span>${j === firstFit ? `<span class="small faint">From your private notes, on this device</span>` : ""}` : ""}
         ${f.over ? `<span class="small" style="color:var(--stale)">Above your budget — ticking it lets your agent try to bring the price down.</span>` : ""}
         <span class="small faint">${[f.distanceKm ? `${f.distanceKm} km` : null, ...f.met.slice(0, 2).map(x => `✓ ${x}`), f.unknown.length ? `${f.unknown.length} to ask` : null].filter(Boolean).map(esc).join(" · ")}</span>
-        ${f.profile.stats?.deals ? `<span class="small faint">Track record: ${f.profile.stats.deals} deal${f.profile.stats.deals === 1 ? "" : "s"} · ${f.profile.stats.kept} completed as agreed${f.profile.stats.fellThrough ? ` · ${f.profile.stats.fellThrough} fell through` : ""}</span>` : `<span class="small faint">New on Collab — no deals yet</span>`}
+        ${f.profile.stats?.deals ? `<span class="small faint">Track record: ${f.profile.stats.deals} deal${f.profile.stats.deals === 1 ? "" : "s"} · ${f.profile.stats.kept} completed as agreed${f.profile.stats.notReceived ? ` · ⚠ ${f.profile.stats.notReceived} ${f.profile.stats.notReceived === 1 ? "says" : "say"} they paid and didn't get it` : ""}</span>` : `<span class="small faint">New on Collab — no deals yet</span>`}
         <span class="row match-actions">${c.booked?.[j] ? `<button class="btn secondary compact" data-act="match-booked" data-id="${esc(c.booked[j])}" ${at}>✓ Booked — see the deal</button>` : (() => {
           // One clear next step per match: take their price when it's within your limit (the least you'd take, for
           // someone who is paid), else let agents bargain.
@@ -563,7 +577,7 @@ function offersChart(e) {
 const STEPS = ["Intake", "Matching", "Negotiation", "Confirmation", "Receipt"];
 
 function stepOf(e) {
-  if (e.phase === "agreed" && (["paid", "outside"].includes(e.payment?.status) || e.noPayment)) return 4;
+  if (e.phase === "agreed" && (settled(e) || e.noPayment)) return 4;
   if (e.phase === "agreed" || e.phase === "deal") return 3;
   return 2; // a conversation exists: the request was made and they were found
 }
@@ -657,13 +671,15 @@ export function checkoutHTML(e) {
   const slot = e.reservation?.slot ? new Date(e.reservation.slot.start * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
   const kind = passKind(e) === "booking" ? "booking" : "pickup";
   const head = `<div class="card slim"><div class="row">${avatarHTML(them.name, them.handle, 40)}<div class="stack" style="gap:2px"><b>${esc(them.name)}</b><span class="small faint">@${esc(them.handle)} · agreed by both of you</span></div></div></div>`;
-  if (p?.status === "paid" || p?.status === "outside") return `${head}
+  if (p?.status === "outside" && !outsideOk(e)) return `${head}<div class="card slim"><span class="small muted">Waiting for ${esc(shortName(them.name))} to confirm your payment outside the app — your pass appears once they do.</span></div>`;
+  if (settled(e)) return `${head}
     <div class="card co-done"><span class="co-tick" aria-hidden="true">✓</span><b>${p.status === "paid" ? `Paid ${money(total, null, cur)}` : "Settled outside the app"}</b>
       <span class="small muted">${p.status === "paid" ? `${p.ap2?.instrument?.type === "google_pay" ? "Google Pay" : "In the app"}${p.mode === "test" ? " · demo payment, no money moved" : ""}` : "Marked as paid another way"}</span>
       <div class="row" style="justify-content:center"><button class="btn accent compact" data-act="eng-pickup" data-id="${id}">${kind === "booking" ? "Show booking pass" : "Show pickup pass"}</button><button class="btn secondary compact" data-act="eng-receipt" data-id="${id}">Receipt</button></div></div>
     <span class="small faint">Show the pass at the ${kind === "booking" ? "appointment" : "handover"}; ${esc(shortName(them.name))} marks it done. The receipt is signed — anyone can verify it.</span>`;
   if (!p) return `${head}<span class="small faint">${logo("live spinner")} ${esc(shortName(them.name))}'s agent is preparing the cart…</span>`;
   return `${head}
+    ${p.outsideClaim?.deniedAt ? `<span class="small" style="color:var(--danger)">⚠ ${esc(shortName(them.name))} says your payment outside the app hasn't arrived.</span>` : ""}
     <div class="card co-order">${label("Order", "sq")}
       <div class="row"><b>${item}${qty > 1 ? ` × ${qty}` : ""}</b><span class="end">${money(each, e.offer.unit, cur)}${qty > 1 ? " each" : ""}</span></div>
       ${slot ? `<div class="row small"><span class="muted">When</span><span class="end">${esc(slot)}</span></div>` : ""}
@@ -677,7 +693,7 @@ export function checkoutHTML(e) {
       <button class="btn secondary" data-act="eng-pay" data-id="${id}">Pay ${money(total, null, cur)} in the app</button>
       <div class="row small faint" style="justify-content:center">${tag("Demo payment", "stale")}<span>Google Pay test cards · no money moves</span></div></div>
     <ol class="co-next small muted"><li>Pay — ${esc(shortName(them.name))}'s agent signed the cart for exactly these terms.</li><li>You get a ${kind === "booking" ? "booking" : "pickup"} pass to show at the ${kind === "booking" ? "appointment" : "handover"}.</li><li>Both of you keep a signed receipt anyone can verify.</li></ol>
-    <button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button>`;
+    ${p.outsideClaim?.deniedAt ? "" : `<button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button>`}`;
 }
 
 export function dealAmount(e) {
@@ -804,10 +820,30 @@ const BOOKING = new Set(["lessons", "services", "tasks", "pets", "stays", "rides
 const HANDOVER = new Set(["property-rent", "commercial-lease", "property-sale", "vehicles", "jobs"]);
 export const passKind = e => (e.reservation?.slotId || BOOKING.has(e.offer?.category) ? "booking" : HANDOVER.has(e.offer?.category) ? "handover" : "pickup");
 export const PASS = {
-  pickup: { name: "Pickup pass", sellerHint: "Scan their pickup pass when they collect", buyerHint: them => `Show your pickup pass to ${them} when you collect.`, done: "Collected" },
-  booking: { name: "Booking pass", sellerHint: "Scan their booking pass when they arrive", buyerHint: them => `Show your booking pass to ${them} when you arrive.`, done: "Checked in" },
-  handover: { name: "Handover pass", sellerHint: "Scan their handover pass when you hand over", buyerHint: them => `Show your handover pass to ${them} at the handover.`, done: "Handed over" },
+  pickup: { name: "Pickup pass", sellerHint: "Scan their pickup pass with your phone camera when they collect", buyerHint: them => `Show your pickup pass to ${them} when you collect.`, done: "Collected",
+    ask: "Did you collect it?", no: "No — I paid and didn't get it" },
+  booking: { name: "Booking pass", sellerHint: "Scan their booking pass with your phone camera when they arrive", buyerHint: them => `Show your booking pass to ${them} when you arrive.`, done: "Checked in",
+    ask: "Did it happen?", no: "No — I paid and it didn't happen" },
+  handover: { name: "Handover pass", sellerHint: "Scan their handover pass with your phone camera when you hand over", buyerHint: them => `Show your handover pass to ${them} at the handover.`, done: "Handed over",
+    ask: "Did they hand it over?", no: "No — I paid and didn't get it" },
 };
+
+/** Paid outside the app and the seller has it: they marked it, confirmed the buyer's word, or it predates confirming
+ *  (the server decides the same way: core/pay.ts outsideConfirmed). */
+export const outsideOk = e => { const p = e.payment; return p?.status === "outside" && (p.by === (e.seller ?? "provider") || !!p.confirmedAt || !p.outsideClaim); };
+/** Paid in the app, or outside it with the seller's word: the pass exists and "Did you get it?" can be asked. */
+export const settled = e => e.payment?.status === "paid" || outsideOk(e);
+/** When the buyer can first report it wasn't handed over (the server's rule: core/reports.ts reportWindow): once it's
+ *  marked handed over, else a day after paying or the end of the booked time, whichever is later. 0: not known here. */
+export function reportFrom(e) {
+  const p = e.payment, r = session.config.reports ?? { waitHours: 24 };
+  const base = p?.status === "paid" || p?.status === "outside" ? p.paidAt : p?.outsideClaim?.deniedAt ? p.outsideClaim.at : null;
+  if (base == null) return 0;
+  if (e.fulfilment?.state === "delivered") return e.fulfilment.deliveredAt ?? base;
+  return Math.max(base + (r.waitHours ?? 24) * 3600, e.reservation?.slot?.end ?? 0);
+}
+/** "Tue, 15 Oct, 6:00 pm" (or the day alone). */
+export const when = (t, time = true) => new Date(t * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", ...(time ? { hour: "numeric", minute: "2-digit" } : {}) });
 
 /** "3 of 5 left today", from the server's policy (the numbers it enforces). */
 function quotaText(name) {
@@ -830,10 +866,13 @@ export function dealStage(e, mine = e.requester.uid === session.uid ? "requester
   if (e.phase === "asking") return ["Agents talking", "talk"];
   if (e.phase === "negotiating") return ["Negotiating", "talk"];
   if (e.phase === "deal") return ["To confirm", "wait"];
-  const seller = e.seller ?? "provider", f = e.fulfilment?.state, p = e.payment?.status, paid = p === "paid" || p === "outside";
+  const seller = e.seller ?? "provider", f = e.fulfilment?.state, p = e.payment?.status, paid = settled(e);
   if (f === "accepted") return ["Completed", "fresh"];
+  if (f === "disputed" && e.fulfilment.report) return [e.fulfilment.report.reason === "not_received" ? "Not received" : "Problem", "danger"];
   if (f === "disputed") return ["Problem", "danger"];
-  if (f === "cancelled") return ["Cancelled", ""];
+  if (f === "cancelled") return [e.fulfilment.note === "Refunded" ? "Cancelled · Refunded" : "Cancelled", ""];
+  // The buyer says they paid outside the app; the seller hasn't said the money arrived yet.
+  if (p === "outside" && !paid) return mine === seller ? ["Check payment", "wait"] : ["Confirming payment", "wait"];
   if (!paid && Object.values(e.outcome ?? {}).includes("fell_through")) return ["Fell through", ""];
   if (f === "delivered") return mine === seller ? ["Handed over", "peri"] : ["Confirm receipt", "wait"];
   const booking = !!e.reservation?.slotId || passKind(e) === "booking";
@@ -885,12 +924,11 @@ export function engagementCard(e, id) {
 function reservationLine(e, mine, buyer) {
   const r = e.reservation;
   if (!r || e.payment?.status === "paid" && r.state === "committed" && !r.slot) return "";
-  const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
   if (r.state === "choose_slot") return mine === buyer
     ? `<div class="stack" data-slots="${esc(e.id)}"><span class="small">Pick a time to book it:</span><button class="btn secondary compact" data-act="slots-load" data-id="${esc(e.id)}">Show open slots</button></div>`
     : `<span class="small muted">Waiting for them to pick a time slot.</span>`;
   if (r.state === "unavailable") return `<span class="small" style="color:var(--danger)">Out of stock — ${mine === buyer ? "you can't pay until they restock; nothing was charged" : "restock to let them pay"}.</span>`;
-  if (r.state === "held") return `<span class="small muted">${r.slot ? `Slot ${when(r.slot.start)} held` : `${r.qty} reserved`} until ${when(r.expiresAt)}${mine === buyer ? " — pay before then to keep it" : ""}.</span>`;
+  if (r.state === "held") return `<span class="small muted">${r.slot ? `Slot ${when(r.slot.start)} held` : `${r.qty} reserved`} until ${when(r.expiresAt)}${mine === buyer && e.payment?.status !== "outside" ? " — pay before then to keep it" : ""}.</span>`;
   if (r.state === "committed" && r.slot) return `<span class="small" style="color:var(--fresh)">✓ Booked for ${when(r.slot.start)}</span>`;
   if (r.state === "released") return `<span class="small faint">Reservation released.</span>`;
   return "";
@@ -922,7 +960,7 @@ function dealBlock(e, mine) {
   const total = money(e.payment?.cart?.total?.value ?? e.negotiation.deal.price, null, e.payment?.cart?.total?.currency ?? e.offer.currency);
   const id = esc(e.id);
   // AP2: the seller's agent signed a cart for the agreed terms; the buyer pays against it (test mode: no money moves).
-  // A payment settles whether it went ahead — nobody is asked separately.
+  // Paid isn't handed over: the buyer still says whether they got it, and can report it if not.
   const P = partyRoles(e, mine), close = P.close;
   if (e.offerLetter?.status === "accepted") return `<div class="deal">
     <details class="more"><summary>Offer letter · accepted</summary>${letterView(e.offerLetter, e)}</details>
@@ -936,38 +974,84 @@ function dealBlock(e, mine) {
     <div class="row" data-receipt="${id}"><button class="linkish small receipt-btn" data-act="eng-receipt" data-id="${id}">Receipt ›</button></div>
   </div>`;
   let pay;
+  const disputed = e.fulfilment?.state === "disputed", denied = p?.status === "awaiting" && !!p.outsideClaim?.deniedAt, k = passKind(e);
   // A deal whose money doesn't move in the app (a job's salary): no cart, no pass — it closes on joining.
   if (e.noPayment) pay = `<span class="small muted">No payment in the app — ${P.paid ? `the ${esc(P.payer)} pays the ${esc(P.price)}` : `you pay the ${esc(P.price)}`} as agreed.</span>`;
   else if (e.reservation?.state === "unavailable" && !["paid", "outside"].includes(p?.status)) pay = `<span class="small" style="color:var(--danger)">${esc(e.reservation.reason ?? "Not enough in stock.")} Nothing to pay until ${mine === seller ? "you restock" : `${them} restocks`}.</span>`;
   else if (!p) pay = `<span class="small faint">${logo("live spinner")} ${mine === seller ? "Your" : `${them}'s`} agent is preparing the cart…</span>`;
   else if (p.status === "paid") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You paid" : `${them} paid`} ${amount}</span>${p.mode === "test" ? tag("Demo payment", "stale") : ""}`;
-  else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app</span>`;
+  // Cash or UPI the buyer says they paid: no pass and no stock taken until the seller says the money arrived.
+  else if (p.status === "outside" && !outsideOk(e)) pay = disputed || e.fulfilment?.state === "cancelled" ? `<span class="small muted">${mine === buyer ? "You said you paid" : `${them} says they paid you`} outside the app (cash or UPI).</span>`
+    // A seller who never answers: once it was due, the buyer can still report it.
+    : mine === buyer ? `<div class="row"><span class="small muted">You said you paid outside the app · waiting for ${them} to confirm. Your pass appears once they do.</span>${Date.now() / 1000 >= reportFrom(e) ? `<button class="btn quiet compact" data-act="eng-report" data-id="${id}" data-reason="not_received" data-from="${reportFrom(e)}" data-them="${them}">I paid and didn't get it</button>` : ""}</div>`
+    : `<div class="row"><span class="small">${them} says they paid you outside the app (cash or UPI). Did it arrive?</span><button class="btn accent compact" data-act="eng-payment-check" data-id="${id}" data-got="1" data-them="${them}">Yes, I got it</button><button class="btn quiet compact" data-act="eng-payment-check" data-id="${id}" data-got="0" data-them="${them}">Not yet</button></div>`;
+  else if (p.status === "outside") pay = `<span class="small" style="color:var(--fresh)">✓ ${p.by === mine ? "You" : them} marked it paid outside the app${p.confirmedAt && p.by !== seller ? ` · ${mine === seller ? "you" : them} confirmed it arrived` : ""}</span>`;
+  // A report is open (on cash the seller says never arrived): it's sorted there, not by paying now.
+  else if (disputed) pay = "";
   else if (mine === buyer && e.reservation?.state === "choose_slot") pay = `<span class="small muted">Pick a time above, then pay.</span>`;
-  else if (mine === buyer) pay = `<div class="row"><button class="btn accent" data-act="checkout" data-id="${id}">Checkout · ${total} ›</button><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button>${p.mode === "test" ? tag("Demo payment", "stale") : ""}</div>`;
+  else if (mine === buyer) pay = `${denied ? `<span class="small" style="color:var(--danger)">⚠ ${them} says your payment outside the app hasn't arrived.</span>` : ""}<div class="row"><button class="btn accent" data-act="checkout" data-id="${id}">Checkout · ${total} ›</button>${denied ? "" : `<button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Paid another way</button>`}${p.mode === "test" ? tag("Demo payment", "stale") : ""}${denied && Date.now() / 1000 >= reportFrom(e) ? `<button class="btn quiet compact" data-act="eng-report" data-id="${id}" data-reason="not_received" data-from="${reportFrom(e)}" data-them="${them}">I paid and didn't get it</button>` : ""}</div>`;
   else pay = `<div class="row"><span class="small muted">Waiting for ${them} to pay.</span><button class="btn quiet compact" data-act="eng-paid-outside" data-id="${id}">Got paid another way</button></div>`;
   // After payment: handover / delivery, then the buyer's acceptance — tracked apart from the payment.
-  const f = e.fulfilment?.state ?? (p?.status === "paid" || p?.status === "outside" || e.noPayment ? "not_started" : null);
+  const f = e.fulfilment?.state ?? (settled(e) || e.noPayment ? "not_started" : null);
+  // "No, I didn't get it": the buyer's report, which the seller can answer (refused for deals with no payment in the app).
+  const report = (reason, text, from = 0) => `<button class="btn quiet compact" data-act="eng-report" data-id="${id}" data-reason="${reason}" data-from="${from}" data-them="${them}">${esc(text)}</button>`;
   let fulfil = "";
   if (f === "accepted") fulfil = `<span class="small" style="color:var(--fresh)">✓ ${mine === buyer ? "You" : them} ${esc(close.confirmedLine)}</span>`;
-  else if (f === "disputed") fulfil = `<span class="small" style="color:var(--danger)">⚠ ${mine === buyer ? "You" : them} reported a problem${e.fulfilment?.note ? `: “${esc(e.fulfilment.note)}”` : ""}</span>`;
+  else if (f === "disputed") fulfil = e.fulfilment?.report ? reportBlock(e, mine, buyer, them, id) : `<span class="small" style="color:var(--danger)">⚠ ${mine === buyer ? "You" : them} reported a problem${e.fulfilment?.note ? `: “${esc(e.fulfilment.note)}”` : ""}</span>`;
   else if (f === "delivered") fulfil = mine === buyer
-    ? `<div class="row"><span class="small muted">${them} ${esc(close.markedBy)}.</span><button class="btn accent compact" data-act="eng-received" data-id="${id}" data-ok="1">${esc(close.confirm)}</button><button class="btn quiet compact" data-act="eng-received" data-id="${id}" data-ok="0">Report a problem</button></div>`
+    ? `<div class="row"><span class="small muted">${them} ${esc(close.markedBy)}.</span><button class="btn accent compact" data-act="eng-received" data-id="${id}" data-ok="1">${esc(close.confirm)}</button>${e.noPayment ? "" : `${report("not_received", "I didn't get it")}${report("not_as_agreed", "Not as agreed")}`}</div>`
     : `<span class="small muted">✓ ${esc(close.marked.replace(/\.$/, ""))} · waiting for ${them} to confirm</span>`;
   else if (f === "not_started") fulfil = mine === seller
-    ? `<div class="row"><span class="small muted">${e.noPayment ? esc(close.todo) : `${PASS[passKind(e)].sellerHint}, or`}</span><button class="btn ${e.noPayment ? "accent" : "secondary"} compact" data-act="eng-delivered" data-id="${id}">${esc(close.mark)}</button></div>`
-    : `<span class="small muted">${e.noPayment ? esc(close.waiting) : PASS[passKind(e)].buyerHint(them)}</span>`;
+    ? `<div class="row"><span class="small muted">${e.noPayment ? esc(close.todo) : `${esc(PASS[k].sellerHint)}, or`}</span><button class="btn ${e.noPayment ? "accent" : "secondary"} compact" data-act="eng-delivered" data-id="${id}">${esc(close.mark)}</button></div>`
+    : e.noPayment ? `<span class="small muted">${esc(close.waiting)}</span>`
+    : `<span class="small muted">${PASS[k].buyerHint(them)}</span>${settled(e) ? `<div class="row"><span class="small">${esc(PASS[k].ask)}</span><button class="btn secondary compact" data-act="eng-received" data-id="${id}" data-ok="1">${esc(close.confirm)}</button>${report("not_received", PASS[k].no, reportFrom(e))}</div>` : ""}`;
+  // "It fell through" is for before paying; once it's paid, "Did you get it?" gives the seller a chance to reply first.
   const fell = e.outcome?.[mine] === "fell_through" ? `<span class="small faint">You marked it as fell through.</span>`
-    : p?.status === "paid" || f === "accepted" ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
+    : ["paid", "outside"].includes(p?.status) || ["accepted", "delivered", "disputed"].includes(f) ? "" : `<button class="linkish small faint" data-act="eng-outcome" data-id="${id}" data-happened="0">It fell through</button>`;
   return `<div class="deal">
     <div class="row"><span class="deal-price">${amount}</span><span class="small muted">${f === "cancelled" ? `cancelled${e.fulfilment?.note ? ` · ${esc(e.fulfilment.note.replace(/^Cancelled by /, "by "))}` : ""}` : `${e.noPayment ? esc(close.agreed) : "confirmed"} by both of you`}</span></div>
     ${reservationLine(e, mine, buyer)}
     ${pay}
     ${fulfil}
-    ${(p?.status === "paid" || p?.status === "outside") && !["accepted", "disputed", "cancelled"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[passKind(e)].name}</button></div>` : ""}
+    ${settled(e) && !["accepted", "disputed", "cancelled"].includes(f) ? `<div data-pickup="${id}"><button class="btn secondary compact" data-act="eng-pickup" data-id="${id}">${PASS[k].name}</button></div>` : ""}
     ${dealTalk(e, mine, buyer, them, id)}
-    ${mine === buyer && e.offer?.factId && (p?.status === "paid" || p?.status === "outside") && f !== "cancelled" ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ ${passKind(e) === "booking" ? "Book again" : "Get it again"}</button><span class="small faint">Same thing${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
+    ${mine === buyer && e.offer?.factId && settled(e) && !["cancelled", "disputed"].includes(f) ? `<div class="row"><button class="btn secondary compact" data-act="buy-again" data-id="${id}">↻ ${k === "booking" ? "Book again" : "Get it again"}</button><span class="small faint">Same thing${unitsOf(e) > 1 ? ` · ${unitsOf(e)}` : ""} from ${esc(them)}, at today's price</span></div>` : ""}
     <div class="row" data-receipt="${id}"><button class="linkish small receipt-btn" data-act="eng-receipt" data-id="${id}">Receipt ›</button><span class="end">${fell}</span></div>
   </div>`;
+}
+
+/** A seller's answer to a report, as the buyer reads it and as the seller does. */
+const SAYS = { handed_over: ["says they handed it over", "you handed it over"], refunded: ["says they refunded you", "you refunded them"], never_paid: ["says they were never paid", "you were never paid"] };
+const NOT_COUNTED = { guest: "guest account", new_account: "new account", demo: "demo seller" };
+
+/**
+ * A report on a paid deal ("Did you get it?" answered no): what the buyer said, the seller's one reply, and where it
+ * stands. It's private for the reply time, then on the seller's record next to their reply unless it's sorted. The
+ * words stay between the two; the record shows only that it was reported and how the seller answered.
+ */
+function reportBlock(e, mine, buyer, them, id) {
+  const r = e.fulfilment.report, open = Date.now() / 1000 < r.replyBy, inTime = !!r.reply && r.reply.at <= r.replyBy, by = esc(when(r.replyBy));
+  const quote = n => (n ? `: “${esc(n)}”` : "."), warn = t => `<span class="small" style="color:var(--danger)">⚠ ${t}</span>`;
+  const answer = (i, x = r.reply) => `${SAYS[x.says]?.[i] ?? "replied"}${x.note ? ` — “${esc(x.note)}”` : ""}`;
+  // A report that doesn't count (a guest's, a new account's, a demo seller's) still reaches the seller, but stays off the record.
+  const quiet = r.counts ? "" : ` This stays between you two${NOT_COUNTED[r.notCounted] ? ` (${NOT_COUNTED[r.notCounted]})` : ""}.`;
+  if (r.end) return `<span class="small muted">The report on this deal is closed.</span>`;
+  if (mine === buyer) {
+    const where = r.reply ? `${them} replied: ${answer(0)}.${inTime ? " Both accounts are on record." : ""}`
+      : open ? `${them} has until ${by} to reply.${r.counts ? " Nothing is public yet." : ""}` : `No reply from ${them}${r.counts ? " — this shows on their record." : "."}`;
+    return `<div class="stack" style="gap:6px">${warn(`${r.reason === "not_as_agreed" ? "You reported it wasn't as agreed" : "You reported you paid and didn't get it"}${quote(r.note)}`)}
+      <span class="small muted">${where}${quiet}</span>
+      <div class="row"><button class="btn secondary compact" data-act="eng-report-settle" data-id="${id}" data-how="got_it" data-them="${them}">Got it after all ✓</button>${r.reply?.says === "refunded" ? `<button class="btn quiet compact" data-act="eng-report-settle" data-id="${id}" data-how="refunded" data-them="${them}">Got my money back</button>` : ""}</div></div>`;
+  }
+  const what = warn(`${them} ${r.reason === "not_as_agreed" ? "says it wasn't as agreed" : "says they paid and didn't get it"}${quote(r.note)}`);
+  if (r.reply) return `<div class="stack" style="gap:6px">${what}<span class="small" style="color:var(--fresh)">✓ You replied: ${answer(1)}</span>${!inTime && r.counts ? `<span class="small faint">It came after ${by}: ${them} sees it, but your record still shows no reply.</span>` : ""}</div>`;
+  const next = open ? `Reply by ${by}${r.counts ? " — after that, people looking at your shop see it, with your reply if you give one." : "."}`
+    : `No reply by ${by}${r.counts ? ` — people looking at your shop see it now. A reply still reaches ${them}, but the record stays as it is.` : "."}`;
+  const says = (v, t) => `<button class="btn ${v === "handed_over" ? "secondary" : "quiet"} compact" data-act="eng-report-reply" data-id="${id}" data-says="${v}" data-them="${them}">${t}</button>`;
+  return `<div class="stack" style="gap:6px">${what}
+    <span class="small muted">${next}${quiet} Handing it over now? Ask ${them} to tap “Got it after all”.</span>
+    <input class="field" data-report-reply="${id}" maxlength="300" placeholder="Your reply (only ${them} sees the words)" aria-label="Your reply">
+    <div class="row">${says("handed_over", "I handed it over")}${says("refunded", "I refunded them")}${r.payment !== "in_app" ? says("never_paid", "I was never paid") : ""}</div></div>`;
 }
 
 const JOIN_TAG = { awaiting: ["Offer accepted", "fresh"], joined: ["Joining to confirm", "wait"], confirmed: ["Joined", "fresh"], no_show: ["Didn't join", "danger"],

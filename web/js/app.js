@@ -10,7 +10,7 @@ import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { checkoutHTML, dealAmount, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
+import { checkoutHTML, dealAmount, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, outsideOk, receiptHTML, rulesList, setNotesHere, storeCard, when } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
@@ -496,11 +496,15 @@ async function prefillAnswers(sid, mid, i) {
   await saveSession(now_.s); paintContent(true);
 }
 
-/** A pass (from its link: "/pickup.html#<id>.<code>") in a modal: the buyer sees the code to show, the seller marks it done. */
-async function openPass(path) {
-  const [pid, code] = new URL(path, location.origin).hash.slice(1).split(".");
-  const link = `${location.origin}/pickup.html#${pid}.${code}`, missing = "This pass doesn't exist or its link is incomplete.";
-  const load = async () => {
+/**
+ * A pass (from its link: "/pickup.html#<id>.<code>") in a modal: the buyer sees the code to show, the seller marks it done.
+ * With no link (the code is the buyer's alone): the seller's view of their deal `engId` from `details`, without the
+ * code — they mark it by scanning the buyer's QR.
+ */
+async function openPass(path, details = null, engId = null) {
+  const [pid, code] = path ? new URL(path, location.origin).hash.slice(1).split(".") : [engId, null];
+  const link = code ? `${location.origin}/pickup.html#${pid}.${code}` : "", missing = "This pass doesn't exist or its link is incomplete.";
+  const load = !path ? () => api(`/api/engagements/${encodeURIComponent(pid)}/pickup`) : async () => {
     if (!pid || !code) throw new Error(missing);
     const r = await fetch(`/public/pickup/${encodeURIComponent(pid)}?code=${encodeURIComponent(code)}`, { cache: "no-store" });
     const d = await r.json().catch(() => ({ error: "pass not found" }));
@@ -508,13 +512,13 @@ async function openPass(path) {
     return d;
   };
   let d;
-  try { d = await load(); } catch (err) { return toast(err.message, null, "error"); }
+  try { d = details ?? await load(); } catch (err) { return toast(err.message, null, "error"); }
   // The seller by account, not handle (a handle can change after the deal); a pass scanned from someone else's deal
   // falls back to the handle the server reports as the seller's current one.
   const eng = live.engagements.get(pid);
-  const seller = eng ? eng[eng.seller ?? "provider"].uid === session.uid : d.sellerHandle === S.profile.handle;
+  const seller = !path || (eng ? eng[eng.seller ?? "provider"].uid === session.uid : d.sellerHandle === S.profile.handle);
   const qr = seller ? "" : await passQR(link);
-  const body = () => passHTML(d, { qr, seller, link, manage: !!eng });
+  const body = () => passHTML(d, path ? { qr, seller, link, manage: !!eng } : { seller: true, scanOnly: true, manage: true });
   const o = { querySelector: s => document.querySelector(`#panel ${s}`), remove: closePanel };
   const draw = () => paintContent(true);
   // Changing or cancelling a booking, from the pass: the result is the same pass, redrawn.
@@ -712,8 +716,44 @@ async function payDeal(el, googlePay, a = "eng-pay") {
     const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);
     live.engagements.set(e.id, e);
     session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
-    toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : "Marked as paid outside the app.");
+    // A buyer's word that they paid outside the app waits for the seller's; the seller's own is settled at once.
+    toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : outsideOk(e) ? "Marked as paid outside the app."
+      : `Sent — ${shortName(e[e.seller ?? "provider"].name)} confirms they got it, then your pass appears.`);
   } catch (err) { toast(err.message, null, "error"); busy(el, false); }
+  return refresh(openScreen);
+}
+
+/**
+ * "No — I paid and didn't get it": too early, it says when it can be reported (the seller has until then) and points
+ * to the chat; after that, it asks what happened and files it. The seller is told and has a few days to reply or sort
+ * it out before it shows on their record.
+ */
+async function reportDeal(el, reason = el.dataset.reason === "not_as_agreed" ? "not_as_agreed" : "not_received") {
+  const eid = el.dataset.id, e = live.engagements.get(eid), sellerSide = e?.seller ?? "provider";
+  const them = el.dataset.them || (e ? shortName(e[sellerSide].name) : "The seller");
+  const early = async from => {
+    if ((await ask({ title: "It's early", detail: `${them} has until ${when(from)} to hand it over. Message them in the chat — if it still hasn't happened by then, you can report it here.`, ok: "OK", cancel: `Message ${them}` })) === null)
+      document.querySelector(`[data-deal-msg="${CSS.escape(eid)}"]`)?.focus();
+  };
+  const from = Number(el.dataset.from) || 0;
+  if (from > now()) return early(from);
+  const by = when(now() + (session.config.reports?.replyHours ?? 72) * 3600);
+  const detail = [`${them} is told now and has until ${by} to reply or sort it out. Nothing shows on ${them}'s record before then. If it isn't sorted, people looking at ${them}'s shop see that a buyer ${reason === "not_as_agreed" ? "reported a problem" : "says they paid and didn't get it"}, next to ${them}'s reply. What you write stays between you two.`,
+    session.user?.isAnonymous ? `You're on a guest account: ${them} is told, but it won't count on ${them}'s record unless you keep your account with Google first (Settings).` : "",
+    e?.[sellerSide].uid?.startsWith("demo-") ? `${them} is a demo seller — this stays on this deal.` : ""].filter(Boolean).join(" ");
+  const note = await ask({ title: reason === "not_as_agreed" ? "Report a problem?" : "Report that you didn't get it?", detail, ok: "Report", danger: true, input: { label: "What happened (optional)" } });
+  if (note === null) return;
+  busy(el, true, "Reporting");
+  try {
+    const x = await api(`/api/engagements/${eid}/report`, { reason, note });
+    live.engagements.set(x.id, x); session.track("reported", { reason });
+    const until = x.fulfilment?.report?.replyBy;
+    toast(`Reported to ${them}.${until ? ` They have until ${when(until, false)} to reply.` : ""}`);
+  } catch (err) {
+    busy(el, false);
+    if (err.code === "TOO_EARLY" && err.data?.reportFrom) return early(err.data.reportFrom);
+    toast(err.message, null, "error");
+  }
   return refresh(openScreen);
 }
 
@@ -1160,7 +1200,8 @@ async function onClick(e) {
     }
     if (a === "eng-pickup") {
       busy(el, true);
-      try { await openPass((await api(`/api/engagements/${el.dataset.id}/pickup`)).path); }
+      // The buyer gets the pass's link (its code); the seller gets the pass without it, and scans the buyer's.
+      try { const r = await api(`/api/engagements/${el.dataset.id}/pickup`); await (r.path ? openPass(r.path) : openPass(null, r, el.dataset.id)); }
       catch (err) { toast(`Couldn't open the pass: ${err.message}`); }
       finally { busy(el, false); }
       return;
@@ -1182,16 +1223,45 @@ async function onClick(e) {
       catch (err) { toast(err.message, null, "error"); }
       return refresh(openScreen);
     }
+    // A problem after paying is a report the seller can answer (a card drawn before reports still says data-ok="0").
+    if (a === "eng-report" || (a === "eng-received" && el.dataset.ok === "0")) return reportDeal(el, a === "eng-report" ? undefined : "not_as_agreed");
     if (a === "eng-delivered" || a === "eng-received") {
-      const ok = el.dataset.ok !== "0";
-      const note = a === "eng-received" && !ok ? await ask({ title: "Report a problem?", detail: "They see it, and it's part of the deal record.", ok: "Report problem", danger: true, input: { label: "What went wrong (optional)" } }) : "";
-      if (note === null) return;
       busy(el, true);
-      const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
+      const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok: true });
       live.engagements.set(e.id, e);
-      session.track(a === "eng-delivered" ? "delivered" : ok ? "received" : "disputed");
+      session.track(a === "eng-delivered" ? "delivered" : "received");
       const them = (e.requester.uid === session.uid ? e.provider : e.requester).name, close = partyRoles(e, "provider").close;
-      toast(a === "eng-delivered" ? `${close.marked} ${them} will confirm.` : ok ? `Thanks — ${them} will see it: ${close.confirmed}` : `Problem reported to ${them}.`);
+      toast(a === "eng-delivered" ? `${close.marked} ${them} will confirm.` : `Thanks — ${them} will see it: ${close.confirmed}`);
+      return refresh(openScreen);
+    }
+    // The seller's one answer to a report: handed over, refunded, or (cash or UPI only) never paid. The words stay
+    // between the two; the answer goes on the record next to the report.
+    if (a === "eng-report-reply") {
+      const says = el.dataset.says, input = document.querySelector(`[data-report-reply="${CSS.escape(el.dataset.id)}"]`);
+      if (says === "never_paid" && (await ask({ title: "Say you were never paid?", detail: "They see this, and it's on record next to their report.", ok: "I was never paid", danger: true })) === null) return;
+      busy(el, true, "Sending");
+      try { const x = await api(`/api/engagements/${el.dataset.id}/report/reply`, { says, note: String(input?.value ?? "").trim() }); if (x?.id) live.engagements.set(x.id, x); session.track("report_reply", { says }); toast("Reply sent — it's on record next to their report."); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return refresh(openScreen);
+    }
+    // The buyer closes their report: they got it after all, or got their money back (after a "refunded" reply).
+    if (a === "eng-report-settle") {
+      const how = el.dataset.how === "refunded" ? "refunded" : "got_it", them = el.dataset.them;
+      if ((await (how === "got_it" ? ask({ title: "Take your report back?", detail: `It comes off ${them}'s record and the deal shows as received.`, ok: "Take it back" })
+        : ask({ title: "Got your money back?", detail: `The report closes and doesn't count against ${them}.`, ok: "Yes, refunded" }))) === null) return;
+      busy(el, true);
+      try { const x = await api(`/api/engagements/${el.dataset.id}/report/settle`, { how }); if (x?.id) live.engagements.set(x.id, x); session.track("report_settled", { how }); toast(how === "got_it" ? `Done — ${them} is told you got it.` : "Done — the report is closed."); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return refresh(openScreen);
+    }
+    // The seller says whether the buyer's cash or UPI arrived: yes gives them their pass, no puts the order back to unpaid.
+    if (a === "eng-payment-check") {
+      const got = el.dataset.got === "1", them = el.dataset.them;
+      if ((await (got ? ask({ title: `Got ${them}'s payment?`, detail: "Only say yes once the money is with you. Their pass appears and the stock is taken off.", ok: "Yes, I got it" })
+        : ask({ title: `Tell ${them} it hasn't arrived?`, detail: "Their order goes back to unpaid and they're told. If they did pay you, they can still report it — your answer stays on record next to it.", ok: "It hasn't arrived", danger: true }))) === null) return;
+      busy(el, true);
+      try { const x = await api(`/api/engagements/${el.dataset.id}/payment-check`, { got }); if (x?.id) live.engagements.set(x.id, x); session.track("payment_check", { got }); toast(got ? `Payment confirmed — ${them}'s pass is ready.` : `Sent — ${them} is told it hasn't arrived.`); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
       return refresh(openScreen);
     }
     if (a === "eng-receipt") {

@@ -32,7 +32,8 @@ function setEngagements(list, openChat, quiet = false) {
     live.engagements.set(e.id, e);
     if (!first && !seen.engagements.has(e.id) && e.provider.uid === session.uid) notify(`${e.requester.name}'s agent wrote`, e.title, () => openChat("engagement", e.id), "attention");
     if (!first && prev && prev.phase !== e.phase && e.phase === "agreed") notify("Deal agreed", e.title, () => openChat("engagement", e.id), "deal");
-    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify("Payment received", e.title, () => openChat("engagement", e.id), "success");
+    // Test mode: no money moved, so never "Payment received" (as the push says).
+    if (!first && prev && prev.payment?.status !== "paid" && e.payment?.status === "paid" && e.payment.by !== (e.requester.uid === session.uid ? "requester" : "provider")) notify(e.payment.mode === "test" ? `Paid (demo) · ${e.title}` : "Payment received", e.payment.mode === "test" ? "A demo payment, no money moved. Hand over with their pass." : e.title, () => openChat("engagement", e.id), "success");
     seen.engagements.add(e.id);
   }
   if (!quiet) emit();

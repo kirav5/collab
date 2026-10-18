@@ -96,7 +96,7 @@ export async function saveFact(db: Docs, model: Model | null, owner: Profile, in
 }
 
 export interface Found {
-  profile: Pick<Profile, "uid" | "handle" | "name" | "bio" | "demo"> & { stats: { deals: number; kept: number; fellThrough: number } };
+  profile: Pick<Profile, "uid" | "handle" | "name" | "bio" | "demo"> & { stats: { deals: number; kept: number; fellThrough: number; notReceived: number } };
   fact: { id: string; text: string; offer: Fact["offer"] };
   why: string | null;
   distanceKm: number | null;

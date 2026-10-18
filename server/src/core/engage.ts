@@ -25,7 +25,7 @@ import { BudgetError, allocate, deallocate } from "./goals.ts";
 import { linesOf, totalOf } from "./pay.ts";
 import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
-import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, trackRecord } from "./deals.ts";
+import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, reportsLine, trackRecord } from "./deals.ts";
 import { matchSaved, savedAnswers } from "./memory.ts";
 import { hasContact } from "../market/text.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
@@ -360,7 +360,7 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
   // A seller's record from signed receipts answers "how many have you sold?" or "can I trust you?" without asking them.
   if (s === sellerOf(e) && owner) {
     const rec = await trackRecord(db, owner);
-    if (rec.sales) facts = [...facts, { label: "Record on Collab (from signed receipts)", value: `${rec.verified} verified ${rec.verified === 1 ? "sale" : "sales"}, ${rec.handedOver} handed over, ${rec.problems} with problems reported${rec.since ? `, selling here since ${new Date(rec.since * 1000).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}` : ""}.` }];
+    if (rec.sales) facts = [...facts, { label: "Record on Collab (from signed receipts)", value: `${rec.verified} verified ${rec.verified === 1 ? "sale" : "sales"}, ${rec.handedOver} handed over, ${rec.problems} with problems reported${reportsLine(rec)}${rec.since ? `, selling here since ${new Date(rec.since * 1000).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}` : ""}.${rec.reports?.notReceived || rec.reports?.disputed ? " Reports are what buyers said; the seller can reply." : ""}` }];
   }
   if (s === "requester") {
     const b = e.brief;

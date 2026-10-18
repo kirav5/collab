@@ -5,7 +5,7 @@ import { api, ios, session, standalone, cached } from "./api.js";
 import { detectEngine, downloadModel, engine, setProcessingMode } from "./agent.js";
 import { MODEL, removeGemma } from "./gemma.js";
 import { me, others, refreshServing, removeDevice, renameDevice, setServe } from "./mydevices.js";
-import { applicantsBoard, dealAmount, dealStage, defaultHours, engagementCard, hoursOk, hoursText, rulesList } from "./cards.js";
+import { applicantsBoard, dealAmount, dealStage, defaultHours, engagementCard, hoursOk, hoursText, monthOf, rulesList, settled } from "./cards.js";
 import { local } from "./local.js";
 import { privacyFacts } from "./processing.js";
 import { live, needsYou, needsYouCount } from "./live.js";
@@ -499,7 +499,7 @@ export const screens = {
       if (a === "remove-contact") { await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
       if (a === "view-person") {
         const p = await api(`/api/people/${el.dataset.handle}`);
-        document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals ? `<span class="small faint">${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<div class="row"><button class="btn accent compact" data-act="cm-message" data-handle="${esc(el.dataset.handle)}">Open their shop</button><a class="small faint" href="${esc(p.agentCard)}" target="_blank" rel="noopener" title="The machine-readable card other agents read">agent card ↗</a></div></div>`;
+        document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals || p.profile.memberSince ? `<span class="small faint">${[p.stats?.deals ? `${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead${p.stats.notReceived ? ` · ⚠ ${p.stats.notReceived} paid and didn't get it` : ""}` : "", p.profile.memberSince ? `on Collab since ${esc(monthOf(p.profile.memberSince))}` : ""].filter(Boolean).join(" · ")}</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<div class="row"><button class="btn accent compact" data-act="cm-message" data-handle="${esc(el.dataset.handle)}">Open their shop</button><a class="small faint" href="${esc(p.agentCard)}" target="_blank" rel="noopener" title="The machine-readable card other agents read">agent card ↗</a></div></div>`;
         return true;
       }
     },
@@ -662,7 +662,7 @@ export const screens = {
       const cats = [...new Map(list.map(e => [e.offer.category, e])).values()].slice(0, 3);
       const market = (await Promise.all(cats.map(e => cached(`/api/insights?category=${encodeURIComponent(e.offer.category)}&item=${encodeURIComponent((e.offer.title ?? "").split(" · ")[0])}&unit=${encodeURIComponent(e.offer.unit ?? "")}`, 300_000)
         .then(r => (r?.insights ? { e, i: r.insights } : null)).catch(() => null)))).filter(Boolean);
-      const status = e => { const p = e.payment?.status; return p === "paid" ? ["Paid", "fresh"] : p === "outside" ? ["Settled", "fresh"] : ["closed", "declined"].includes(e.phase) ? ["Ended", "stale"] : ["To pay", "wait"]; };
+      const status = e => { const p = e.payment?.status; return p === "paid" ? ["Paid", "fresh"] : p === "outside" ? (settled(e) ? ["Settled", "fresh"] : ["Confirming payment", "wait"]) : ["closed", "declined"].includes(e.phase) ? ["Ended", "stale"] : ["To pay", "wait"]; };
       const v = S.verified ?? {};
       const row = e => { const side = mine(e), them = side === "provider" ? e.requester : e.provider, [st, tone] = status(e);
         const when = e.agreedAt ? new Date(e.agreedAt * 1000).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
@@ -822,13 +822,15 @@ export const screens = {
       const deals = list.filter(e => e.phase === "agreed" && e.negotiation.deal).sort((a, b) => (b.agreedAt ?? b.updatedAt) - (a.agreedAt ?? a.updatedAt));
       const sold = deals.filter(e => !off(e) && sellerOf(e) === me(e)), bought = deals.filter(e => !off(e) && sellerOf(e) !== me(e));
       // What was paid, per currency ("₹12,000" or "₹500 + $40").
-      const paidBy = es => { const m = {}; for (const e of es) if (["paid", "outside"].includes(e.payment?.status)) { const c = e.offer.currency ?? "INR"; m[c] = (m[c] ?? 0) + (e.payment.cart?.total?.value ?? 0); }
+      const paidBy = es => { const m = {}; for (const e of es) if (settled(e)) { const c = e.offer.currency ?? "INR"; m[c] = (m[c] ?? 0) + (e.payment.cart?.total?.value ?? 0); }
         return Object.entries(m).filter(([, v]) => v).map(([c, v]) => money(v, null, c)).join(" + "); };
       const soldSum = paidBy(sold), boughtSum = paidBy(bought);
       // Find a deal fast: what still needs doing, what you sold, what you bought, what's finished.
       // Open: still to pay, hand over or confirm. Won: paid or handed over as agreed. Lost: cancelled or fell through.
       const DEAL_FILTERS = [["open", "Open"], ["won", "Won"], ["lost", "Lost"], ["all", "All"]];
-      const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
+      // A report still open (the seller can reply, the buyer can take it back) keeps the deal open.
+      const reportOpen = e => e.fulfilment?.state === "disputed" && !!e.fulfilment.report && !e.fulfilment.report.end;
+      const finishedDeal = e => (["accepted", "disputed"].includes(e.fulfilment?.state) && !reportOpen(e)) || off(e) || (handed(e) && sellerOf(e) === me(e));
       const dealIn = (e, k) => k === "all" || (k === "open" ? !finishedDeal(e) : k === "lost" ? off(e) : finishedDeal(e) && !off(e));
       const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "open";
       const STAGE = e => dealStage(e, me(e));
@@ -915,7 +917,8 @@ export const screens = {
       const es = [...live.engagements.values()], me = session.uid;
       const sold = es.filter(e => (e.seller ?? "provider") === (e.provider.uid === me ? "provider" : "requester") && e.phase === "agreed");
       const bought = es.filter(e => e.phase === "agreed" && !sold.includes(e));
-      const paid = x => x.payment?.status === "paid" || x.payment?.status === "outside", done = x => x.fulfilment?.state === "accepted";
+      // Cash or UPI the buyer says they paid counts once the seller says it arrived.
+      const paid = settled, done = x => x.fulfilment?.state === "accepted";
       const sum = xs => xs.reduce((n, e) => n + (e.payment?.cart?.total?.value ?? e.negotiation.deal?.price ?? 0), 0);
       const stat = (n, l) => `<div><b>${n}</b><span class="small muted">${l}</span></div>`;
       const numbers = `<div class="card">${label("Your numbers", "sq")}<div class="stats">

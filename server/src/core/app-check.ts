@@ -7,10 +7,14 @@ export function appCheckRequired(method: string, path: string): boolean {
   return method !== "GET" || /^\/goals(\/|$)/.test(path);
 }
 
-export function replayProtected(method: string, path: string): boolean {
+export function replayProtected(method: string, path: string, body?: { ok?: unknown }): boolean {
   return method === "POST" && (path === "/price-check"
     || /^\/engagements\/[^/]+\/pay$/.test(path)
-    || /^\/pickup\/[^/]+\/collect$/.test(path));
+    || /^\/pickup\/[^/]+\/collect$/.test(path)
+    // Reports and the seller's payment check: each needs a fresh browser check ("Received it ✓" and closing a report never wait on one).
+    || /^\/engagements\/[^/]+\/(report(\/reply)?|payment-check)$/.test(path)
+    // "I didn't get it" by the old button is a report too.
+    || (/^\/engagements\/[^/]+\/received$/.test(path) && body?.ok === false));
 }
 
 export async function verifyAppCheckToken(

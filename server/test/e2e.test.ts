@@ -214,6 +214,7 @@ test('shop QR destination → ask → follow-up → offer → confirm → pay �
   // Paid is not delivered: fulfilment waits for the handover, and nobody's outcome is decided by payment.
   assert.equal(e.fulfilment.state, 'not_started');
   assert.equal(e.outcome, undefined);
+  assert.ok(e.askAt >= e.payment.paidAt, "the cron asks the buyer \"Did you get it?\" once the wait is over");
   const pass = await as('retail-buyer', `/api/engagements/${e.id}/pickup`);
   const code = pass.path.split('.html#')[1].split('.')[1];
   const publicPath = `/public/pickup/${e.id}?code=${code}`;

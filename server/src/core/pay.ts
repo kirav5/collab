@@ -1,7 +1,7 @@
 // AP2 (Agent Payments Protocol) after a deal: the seller's agent issues a Cart Mandate for exactly what both owners
 // confirmed, the buyer's owner taps Pay and their agent signs a Payment Mandate against that cart, and the payment
 // goes to the seller's agent over A2A. Test mode only: no money moves — the payment is simulated, and says so.
-// A completed payment records the deal as gone ahead for both sides, so nobody has to answer "did it happen?".
+// Paid is not delivered: the buyer still says whether they got it (core/reports.ts).
 import { createHash } from "node:crypto";
 import { sealed } from "./deals.ts";
 import type { Engagement, Side } from "./model.ts";
@@ -25,6 +25,10 @@ export interface Payment {
   /** The tap that claimed this payment (set atomically before anything is signed). */
   claim?: { key: string; at: number };
   paymentId?: string; paidAt?: number; by?: Side;
+  /** The seller confirmed a buyer's payment outside the app arrived. */
+  confirmedAt?: number;
+  /** The buyer said they paid outside the app; `deniedAt`: the seller said it hasn't arrived. */
+  outsideClaim?: { at: number; deniedAt?: number };
   /** AP2 v0.2 checkout + mandates (added at Pay). */
   ap2?: import("./ap2.ts").Ap2Bundle;
 }
@@ -33,6 +37,10 @@ const other = (s: Side): Side => (s === "requester" ? "provider" : "requester");
 const digest = (x: unknown) => createHash("sha256").update(JSON.stringify(x)).digest("hex");
 export const sellerOf = (e: Engagement): Side => e.seller ?? "provider";
 export const buyerOf = (e: Engagement): Side => other(sellerOf(e));
+/** Paid outside the app and the money is known to be there: the seller marked it, confirmed it, or it predates claims. */
+export const outsideConfirmed = (e: Engagement) => { const p = e.payment; return p?.status === "outside" && (p.by === sellerOf(e) || !!p.confirmedAt || !p.outsideClaim); };
+/** Paid in the app, or outside it and confirmed. */
+export const paidFor = (e: Engagement) => e.payment?.status === "paid" || outsideConfirmed(e);
 const party = (e: Engagement, s: Side) => (s === "requester" ? e.requester : e.provider);
 
 /** Who sells in a deal offered in a chat: "I'll sell…" makes the person offering the seller; "I'll buy / pay…" the buyer. */

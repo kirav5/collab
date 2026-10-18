@@ -28,7 +28,7 @@ import { capabilities, unsupported } from "../core/capabilities.ts";
 import { SafePushSender } from "./webhooks.ts";
 import { RESOURCES } from "../core/resources.ts";
 import { type Tracked, forOffer, suggestionsFor } from "../core/suggest.ts";
-import { trackRecord } from "../core/deals.ts";
+import { reportsLine, trackRecord } from "../core/deals.ts";
 
 const TASKS = "a2a_tasks";
 export const TURN = "collab.turn/v1";
@@ -158,7 +158,7 @@ async function cardFor(cfg: A2AConfig, p: Profile): Promise<AgentCard> {
   const rec = await trackRecord(cfg.db, p.uid);
   return AgentCard.fromJSON({
     name: `${p.name}'s agent (@${p.handle})`,
-    description: `${p.bio ? p.bio + " " : ""}Ask about what ${p.name} offers or send a request. This agent answers only from what ${p.name} chose to share; anything else goes to ${p.name}.${rec.sales ? ` Record: ${rec.verified} verified ${rec.verified === 1 ? "sale" : "sales"}, ${rec.handedOver} handed over, ${rec.problems} with problems — details and receipt fingerprints at ${cfg.publicUrl}/public/people/${p.handle}/record.` : ""}`,
+    description: `${p.bio ? p.bio + " " : ""}Ask about what ${p.name} offers or send a request. This agent answers only from what ${p.name} chose to share; anything else goes to ${p.name}.${rec.sales ? ` Record: ${rec.verified} verified ${rec.verified === 1 ? "sale" : "sales"}, ${rec.handedOver} handed over, ${rec.problems} with problems${reportsLine(rec)} — details and receipt fingerprints at ${cfg.publicUrl}/public/people/${p.handle}/record.` : ""}`,
     version: "1.0.0",
     supportedInterfaces: [...(cfg.directUrl ? [{ url: `${cfg.directUrl.replace(/\/$/, "")}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }] : []),
       { url: `${cfg.publicUrl}/a2a/${p.handle}`, protocolBinding: "JSONRPC", protocolVersion: "1.0" }],

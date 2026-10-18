@@ -6,7 +6,7 @@ import type { Docs } from "../docs.ts";
 import type { Engagement, Side } from "./model.ts";
 import { ENGAGEMENTS } from "./engage.ts";
 import { newId } from "../market/types.ts";
-import { buyerOf } from "./pay.ts";
+import { buyerOf, paidFor } from "./pay.ts";
 import { rolesFor, shortName } from "../market/roles.ts";
 import { joinsOnLetter, today } from "./hiring.ts";
 
@@ -61,12 +61,14 @@ export function taskOf(e: Engagement, ownerUid: string, now = Math.floor(Date.no
   }
   if (joinsOnLetter(e)) return { ...base, ...joiningTask(e, mine, counterparty, now) };
   if (e.phase === "agreed") {
-    const f = e.fulfilment?.state, paid = e.payment?.status === "paid" || e.payment?.status === "outside" || !!e.noPayment;
+    const f = e.fulfilment?.state, paid = paidFor(e) || !!e.noPayment;
     const close = rolesFor(e.offer.category).close;
     if (f === "accepted") return { ...base, state: "succeeded", waitingOn: null, next: close.done };
     if (f === "disputed") return { ...base, state: "failed", waitingOn: null, next: "A problem was reported." };
     if (f === "cancelled") return { ...base, state: "cancelled", waitingOn: null, next: "Cancelled." };
     const buyer = buyerOf(e);
+    // The buyer says they paid outside the app: nothing is handed over until the seller says it arrived.
+    if (!paid && e.payment?.status === "outside") return { ...base, state: mine === buyer ? "waiting_for_external" : "waiting_for_input", waitingOn: mine === buyer ? "them" : "you", next: mine === buyer ? "Waiting for them to confirm your payment." : "Check their payment arrived." };
     if (!paid) return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? "Pay to complete the deal." : "Waiting for payment." };
     if (f === "delivered") return { ...base, state: mine === buyer ? "waiting_for_input" : "waiting_for_external", waitingOn: mine === buyer ? "you" : "them", next: mine === buyer ? close.confirmTodo : "Waiting for them to confirm." };
     return { ...base, state: mine === buyer ? "waiting_for_external" : "waiting_for_input", waitingOn: mine === buyer ? "them" : "you", next: mine === buyer ? close.waiting : close.todo };

@@ -19,6 +19,9 @@ export interface Policy {
   stock: { lowAt: number };
   models: { grounding: string };
   features: { priceCheck: boolean; mapsNearby: boolean; googlePayTest: boolean };
+  /** A buyer's “paid and didn't get it”: when it opens and closes, the seller's time to reply, how long it shows, which
+   *  accounts count, when a match card warns, and how many one account can file a day (core/reports.ts). */
+  reports: { waitHours: number; replyHours: number; maxDays: number; showDays: number; minAccountDays: number; warnAt: number; perDay: number };
 }
 
 export const DEFAULT_POLICY: Policy = {
@@ -31,6 +34,7 @@ export const DEFAULT_POLICY: Policy = {
   stock: { lowAt: 3 },
   models: { grounding: "gemini-3.8-flash" },
   features: { priceCheck: true, mapsNearby: true, googlePayTest: true },
+  reports: { waitHours: 24, replyHours: 72, maxDays: 30, showDays: 365, minAccountDays: 7, warnAt: 2, perDay: 5 },
 };
 
 // [min, max] for every number; currencies are ISO 4217 codes the money code can format and parse.
@@ -39,6 +43,8 @@ const RANGES: Record<string, [number, number]> = {
   "timing.checkoutValiditySec": [60, 3600], "timing.cartValidityDays": [1, 60], "timing.paymentClaimStaleSec": [30, 900],
   "timing.a2aTurnBudgetMs": [5_000, 50_000], "timing.holdTtlSec": [60, 7 * 86_400], "timing.decisionTtlSec": [300, 30 * 86_400],
   "timing.anonymousTokenDays": [1, 30], "stock.lowAt": [0, 1000],
+  "reports.waitHours": [0, 336], "reports.replyHours": [0, 336], "reports.maxDays": [1, 180], "reports.showDays": [30, 1825],
+  "reports.minAccountDays": [0, 90], "reports.warnAt": [1, 10], "reports.perDay": [1, 50],
 };
 export const KNOWN_CURRENCIES = ["INR", "USD"];
 

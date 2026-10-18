@@ -11,6 +11,16 @@ test("only sensitive writes consume App Check tokens", () => {
   assert.equal(replayProtected("POST", "/engagements/deal-1/pay/again"), false);
 });
 
+test("reports and the seller's payment check need a single-use token; receiving and closing a report don't", () => {
+  for (const p of ["/engagements/d/report", "/engagements/d/report/reply", "/engagements/d/payment-check"]) assert.equal(replayProtected("POST", p), true, p);
+  for (const p of ["/engagements/d/report/settle", "/engagements/d/received"]) assert.equal(replayProtected("POST", p), false, p);
+  assert.equal(replayProtected("GET", "/engagements/d/report"), false);
+  // "I didn't get it" by the old button files a report, so it needs one too; "Received it ✓" doesn't.
+  assert.equal(replayProtected("POST", "/engagements/d/received", { ok: false }), true);
+  assert.equal(replayProtected("POST", "/engagements/d/received", { ok: true }), false);
+  assert.equal(replayProtected("POST", "/engagements/d/received", {}), false);
+});
+
 test("a consumed limited-use token cannot authorize a second sensitive write", async () => {
   const calls: Array<{ consume: boolean } | undefined> = [];
   let used = false;

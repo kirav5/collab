@@ -32,7 +32,7 @@ import { compensate, runRecurrence } from "./core/composed.ts";
 import { ADAPTERS, ConnectorError, type ConnectorGrant, GRANTS, createGrant, grantKey, ingestInventory, revokeGrant, syncIcal } from "./core/connectors.ts";
 import { finishLink, gcalConfig, startLink, syncGcal, unlink } from "./core/gcal.ts";
 import { getSafe } from "./a2a/webhooks.ts";
-import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, lowStock, moveHold, cancelBooking, createResource, hold as holdResource, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
+import { CapacityError, RESOURCES, type Resource, available as availableIn, commit as commitResource, lowStock, moveHold, cancelBooking, createResource, hold as holdResource, holdUntil, release as releaseResource, resourceFor, setStock, certainty, needsTopUp, setHours, topUpHours, validHours } from "./core/resources.ts";
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
@@ -57,7 +57,8 @@ import { checkPrice, PriceCheckError, PRICE_CHECKS, priceEvidence, priceUnit, qu
 import { appCheckDecision, appCheckMode, appCheckOutcome, appCheckRequired, freeUnverified, instanceBucket, replayProtected } from "./core/app-check.ts";
 import { signer } from "./core/signatures.ts";
 import { PICKUPS, passCode, validCode, pickupDetails, collect } from "./core/pickup.ts";
-import { buyerOf, checkPayment, linesOf, pay, sellerOf } from "./core/pay.ts";
+import { buyerOf, checkPayment, linesOf, outsideConfirmed, paidFor, pay, sellerOf } from "./core/pay.ts";
+import { REPLY_LINE, ReportError, askDidYouGetIt, canReport, countsFor, fileReport, replyReport, reportWindow, settleReport } from "./core/reports.ts";
 import { offeredMoney, explicitOffer, offeredQuantity, amountIsTotal } from "./core/direct.ts";
 import { currencyOf, moneyText } from "./market/types.ts";
 import { forProvider, forRequester, insights, receipt, RECEIPTS, registerReceipt, sameItem, stats, verifyReceipt, clearStats, trackRecord } from "./core/deals.ts";
@@ -86,17 +87,24 @@ const db: Docs = env.STORE === "memory" ? memoryDocs() : await firestoreDocs();
 const model = env.GEMINI_FAKE === "1" ? fakeModel() : geminiFromEnv();
 const WEB_DIR = env.WEB_DIR ?? new URL("../../web", import.meta.url).pathname;
 
-let verifier: ((t: string) => Promise<string>) | null = null;
-async function verifyIdToken(token: string): Promise<string> {
-  if (env.DEV_AUTH === "1" && token.startsWith("dev:")) return token.slice(4, 64);
+type SignIn = "google" | "anonymous" | "dev";
+let verifier: ((t: string) => Promise<{ uid: string; signIn: SignIn }>) | null = null;
+/** Who a token is, and how they signed in: a guest (anonymous, never linked to Google) or not. Never stored. */
+async function verifyToken(token: string): Promise<{ uid: string; signIn: SignIn }> {
+  if (env.DEV_AUTH === "1" && token.startsWith("dev-anon:")) return { uid: token.slice(9, 69), signIn: "anonymous" };
+  if (env.DEV_AUTH === "1" && token.startsWith("dev:")) return { uid: token.slice(4, 64), signIn: "dev" };
   if (!verifier) {
     const { initializeApp, getApps } = await import("firebase-admin/app");
     const { getAuth } = await import("firebase-admin/auth");
     if (!getApps().length) initializeApp();
-    verifier = async t => (await getAuth().verifyIdToken(t)).uid;
+    verifier = async t => {
+      const d = await getAuth().verifyIdToken(t);
+      return { uid: d.uid, signIn: d.firebase.sign_in_provider === "anonymous" && !Object.keys(d.firebase.identities ?? {}).length ? "anonymous" : "google" };
+    };
   }
   return verifier(token);
 }
+async function verifyIdToken(token: string): Promise<string> { return (await verifyToken(token)).uid; }
 
 const previousKeys = (() => { try { return env.RECEIPT_KEYS_PREVIOUS ? JSON.parse(env.RECEIPT_KEYS_PREVIOUS) : []; } catch { throw new Error("RECEIPT_KEYS_PREVIOUS must be a JSON array of public JWKs"); } })();
 const signing = signer(env.RECEIPT_KEY, env.STORE === "memory", previousKeys);
@@ -124,12 +132,12 @@ initPush(db, env.STORE !== "memory");
 // the message stays for people. Codes default from the status when a route doesn't name one.
 const CODE_BY_STATUS: Record<number, string> = { 400: "INVALID_INPUT", 401: "AUTHENTICATION_REQUIRED", 403: "AUTHORITY_REQUIRED", 404: "NOT_FOUND", 409: "VERSION_CONFLICT", 413: "TOO_LARGE", 429: "RATE_LIMITED", 503: "UNAVAILABLE" };
 class HttpError extends Error { status: number; code: string; extra?: Record<string, unknown>; constructor(status: number, message: string, code?: string, extra?: Record<string, unknown>) { super(message); this.status = status; this.code = code ?? CODE_BY_STATUS[status] ?? "ERROR"; this.extra = extra; } }
-type Handler = (req: Request & { uid: string }, res: Response) => Promise<unknown>;
+type Handler = (req: Request & { uid: string; signIn: string }, res: Response) => Promise<unknown>;
 
-async function uidOf(req: Request): Promise<string> {
+async function authOf(req: Request): Promise<{ uid: string; signIn: SignIn }> {
   const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
   if (!token) throw new HttpError(401, "sign in first");
-  try { return await verifyIdToken(token); } catch { throw new HttpError(401, "sign in again"); }
+  try { return await verifyToken(token); } catch { throw new HttpError(401, "sign in again"); }
 }
 
 /** Gemini calls cost money: each account gets a steady allowance (a burst of 60, then 1 every 15 s), counted in
@@ -140,7 +148,7 @@ async function spend(uid: string, n = 1) {
 
 const route = (h: Handler, auth = true) => async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (auth) (req as any).uid = await uidOf(req);
+    if (auth) { const who = await authOf(req); (req as any).uid = who.uid; (req as any).signIn = who.signIn; }
     if (auth && (req as any).appCheck === "unverified" && APPCHECK === "enforce" && !freeUnverified(req.method, req.path)) await spendUnverified((req as any).uid);
     res.set("cache-control", "no-store").json((await h(req as any, res)) ?? null);
   } catch (e) { next(e); }
@@ -228,7 +236,7 @@ app.use("/api", async (req, res, next) => {
   if (!appCheckRequired(req.method, req.path) && typeof token !== "string") return next();
   // Consuming a token needs a network call and the Token Verifier IAM role. Do it only for sensitive writes when
   // enforcement is on; monitor mode keeps working with ordinary cached tokens.
-  const consume = (APPCHECK === "enforce" || APPCHECK === "strict") && replayProtected(req.method, req.path);
+  const consume = (APPCHECK === "enforce" || APPCHECK === "strict") && replayProtected(req.method, req.path, req.body);
   if (!appCheck) {
     const { initializeApp, getApps } = await import("firebase-admin/app");
     const { getAppCheck } = await import("firebase-admin/app-check");
@@ -265,7 +273,7 @@ app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local"
   modelArmor: armor ? { on: true, ...armor.stats } : { on: false },
   security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" && APPCHECK !== "strict" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on", verification: appCheckStats } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
-  a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null, roles: roleTable() }), false));
+  a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null, roles: roleTable(), reports: policy().reports }), false));
 
 // Goals: what the owner wants done, with each conversation as a task and a state that follows from them.
 app.get("/api/goals", route(async req => {
@@ -443,16 +451,19 @@ app.get("/api/people/:handle", route(async req => {
   const sales = await trackRecord(db, p.uid);
   const facts = all.filter(f => f.tier === "public").map(publicFact);
   const tracked = Object.fromEntries(resources.filter(r => r.factId).map(r => [r.factId!, r.type])) as Record<string, Tracked>;
-  return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo }, stats: record, facts,
+  return { profile: { uid: p.uid, handle: p.handle, name: p.name, bio: p.bio, demo: !!p.demo, memberSince: memberSince(p) }, stats: record, facts,
     offers: facts.filter(f => f.offer).length, suggestions: suggestionsFor(p.name, facts as Fact[], tracked),
     shop: storefront(all, resources, now(), !!p.paused), paused: !!p.paused, record: sales, agentCard: `${cfg.publicUrl}/a2a/${p.handle}/.well-known/agent-card.json` };
 }));
-// A seller's record, for anyone and any agent (no sign-in): verified sales, handovers, problems, receipt fingerprints.
+/** The month someone joined ("2026-03"), shown next to their record. */
+const memberSince = (p: Profile) => (p.createdAt ? new Date(p.createdAt * 1000).toISOString().slice(0, 7) : null);
+// A seller's record, for anyone and any agent (no sign-in): verified sales, handovers, problems, receipt fingerprints,
+// and what buyers reported (counts and a status per sale, never notes, buyers or prices).
 app.get("/public/people/:handle/record", route(async req => {
   const p = await byHandle(db, String(req.params.handle));
   if (!p) throw new HttpError(404, "no one by that handle");
-  return { handle: p.handle, ...(await trackRecord(db, p.uid)), verifyWith: `${cfg.publicUrl}/public/keys`,
-    note: "Each receipt fingerprint is the SHA-256 of the sealed deal, signed for the person offering it. The receipt itself stays with the two people." };
+  return { handle: p.handle, memberSince: memberSince(p), ...(await trackRecord(db, p.uid)), verifyWith: `${cfg.publicUrl}/public/keys`,
+    note: "Each receipt fingerprint is the SHA-256 of the sealed deal, signed for the person offering it. The receipt itself stays with the two people. Reports are what buyers said and how the seller answered; Collab doesn't decide who is right." };
 }, false));
 // Direct: a QR code (or a link) opens a conversation with one person's or shop's agent — no search. Questions go over
 // A2A like any engagement; their agent answers from what they share and can quote, negotiate and close.
@@ -1426,22 +1437,25 @@ app.get("/public/receipts/:id", route(async req => {
 /**
  * A pass is honoured when the agreement record matches and the seller's signed cart is intact; an in-app payment
  * must also carry a valid payment signature. Paid outside the app (cash, UPI) has no payment signature to check —
- * the pass says who marked it paid instead.
+ * the seller confirms the money arrived instead (or marked it paid themselves), and the pass says who marked it.
  */
 async function passVerified(e: Engagement, _check?: unknown) {
   if (!(await verifyReceipt(db, e)).matches) return false;
   const check = checkPayment(e, verifySigned);
   if (!check?.cartOk) return false;
-  return e.payment?.status === "outside" || !!check.paymentOk;
+  return (e.payment?.status === "outside" && outsideConfirmed(e)) || !!check.paymentOk;
 }
+// The pass's code is the buyer's: only they (or someone acting for a demo buyer) get the link that carries it, so a
+// collect means the buyer's QR or link was shown. The seller sees the same details without it.
 app.get("/api/engagements/:id/pickup", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   let details;
   try { details = pickupDetails(e); } catch (err) { throw new HttpError(400, (err as Error).message); }
   const check = checkPayment(e, verifySigned);
   if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
+  const buyer = buyerOf(e), holder = e[buyer].uid === req.uid || actsForDemo(e, req.uid, buyer);
   return { ...details, sellerHandle: await handleNow(e, details.sellerHandle), collectedAt: (await db.get(PICKUPS, e.id))?.collectedAt ?? null,
-    path: `/pickup.html#${e.id}.${passCode(cfg.secret, e.id, "pickup")}` };
+    path: holder ? `/pickup.html#${e.id}.${passCode(cfg.secret, e.id, "pickup")}` : null };
 }));
 app.get("/public/pickup/:id", route(async req => {
   const id = String(req.params.id);
@@ -1460,9 +1474,11 @@ app.post("/api/pickup/:id/collect", route(async req => {
   if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, "Only the person handing it over can mark it collected.");
   if (!(await passVerified(e, check))) throw new HttpError(409, "Payment or agreement cannot be verified.");
   if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
+  if (e.fulfilment?.state === "disputed") throw new HttpError(409, "This deal has a report open — sort it out in the chat first.", "VERSION_CONFLICT");
+  if (e.fulfilment?.state === "accepted") throw new HttpError(409, "Already confirmed.", "VERSION_CONFLICT");
   const result = await collect(db, e, req.uid, now());
   if (result.alreadyCollected) throw new HttpError(409, `Already collected at ${new Date(result.collectedAt * 1000).toISOString()}`);
-  await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass."); await clearStats(db, e);
+  await markDelivered(e.id, sellerOf(e), result.collectedAt, "Collected with the pickup pass.", "pass"); await clearStats(db, e);
   event("collected");
   const buyer = e[buyerOf(e)];
   if (buyer.uid) void pushTo(buyer.uid, `Collected: ${e.offer.title.split(" · ")[0]}`, "Got it as agreed? Tap to confirm.", `/?engagement=${e.id}`);
@@ -1474,6 +1490,9 @@ app.get("/api/engagements/:id/verify", route(async req => {
   if (!e) return { registered: false, matches: false, registeredAt: null };
   return verifyReceipt(db, e);
 }));
+/** Paid means it went ahead: the buyer's earlier "it fell through" no longer stands (on a paid deal it would read as a
+ *  problem on the seller's record). */
+const wentAhead = (e: Engagement): Partial<Engagement> => { const { [buyerOf(e)]: said, ...rest } = e.outcome ?? {}; return said === "fell_through" ? { outcome: rest } : {}; };
 // AP2, test mode: the buyer pays against the seller agent's Cart Mandate; their agent signs the Payment Mandate and
 // sends it to the seller's agent over A2A. No money moves.
 app.post("/api/engagements/:id/pay", route(async req => {
@@ -1540,8 +1559,10 @@ app.post("/api/engagements/:id/pay", route(async req => {
   const paidEvent = { at: now(), who: side, text: `Paid ${moneyText({ amount: mandate.amount.value, currency: mandate.amount.currency, period: e.offer.unit })}.`, by: "owner" as const };
   // Commit only while this tap still holds the claim.
   const committed = await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => (cur?.payment?.status === "paying" && cur.payment.claim?.key === key
-    ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, ...(e.reservation ? { reservation: e.reservation } : {}), events: [...cur.events, paidEvent], updatedAt: now() } : null));
+    ? { ...cur, payment: { ...e.payment!, claim: { key, at: t0 } }, fulfilment: e.fulfilment, ...(e.reservation ? { reservation: e.reservation } : {}), events: [...cur.events, paidEvent],
+      askAt: reportWindow(e)!.from, ...wentAhead(cur), updatedAt: now() } : null));
   if (!committed) throw new HttpError(409, "This payment changed while it was being made. Try again.", "VERSION_CONFLICT");
+  await clearStats(db, e);
   // Paid: the held units become a commitment (they leave the seller's stock).
   if (e.reservation?.holdId && e.reservation.state === "held") {
     await commitResource(db, e.reservation.resourceId, e.reservation.holdId, now()).catch(err => log.error("reservation commit failed after payment", { id, error: String(err).slice(0, 160) }));
@@ -1554,7 +1575,8 @@ app.post("/api/engagements/:id/pay", route(async req => {
   event("paid", { currency: mandate.amount.currency, amount: mandate.amount.value, instrument: e.payment!.ap2?.instrument.type ?? "test" });
   bq.deal(e, now());
   const seller = sellerOf(e) === "requester" ? e.requester : e.provider;
-  if (seller.uid) void pushTo(seller.uid, "Payment received", `${e[buyerOfSide(e)].name} paid for ${e.offer.title.split(" · ")[0]}. Hand over with their pass.`, `/?engagement=${e.id}`);
+  // Test mode: no money moved, and the seller is told so (never "Payment received").
+  if (seller.uid) void pushTo(seller.uid, `Paid (demo) · ${e.offer.title.split(" · ")[0]}`, `${e[buyerOfSide(e)].name} paid in the app — a demo payment, no money moved. Hand over with their pass.`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
 // Deals agreed before AP2 carts existed get theirs when a participant opens them (saving issues it).
@@ -1614,8 +1636,13 @@ app.post("/api/engagements/:id/booking", route(async req => {
   const slotId = text(req.body?.slotId, 40);
   let to;
   try { to = await moveHold(db, r.resourceId, r.holdId, slotId, now()); } catch (err) { if (err instanceof CapacityError) throw new HttpError(409, err.message, err.code); throw err; }
-  await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur ? { ...cur, preferredSlotId: slotId, reservation: { ...cur.reservation!, slotId, slot: { start: to.start, end: to.end } },
-    events: [...cur.events, { at: now(), who: side, text: `Moved the booking to ${when(to)}${r.slot ? ` (was ${when(r.slot)})` : ""}.`, by: "owner" }], updatedAt: now() } : null));
+  await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => {
+    if (!cur) return null;
+    const next: Engagement = { ...cur, preferredSlotId: slotId, reservation: { ...cur.reservation!, slotId, slot: { start: to.start, end: to.end } },
+      events: [...cur.events, { at: now(), who: side, text: `Moved the booking to ${when(to)}${r.slot ? ` (was ${when(r.slot)})` : ""}.`, by: "owner" }], updatedAt: now() };
+    // A new time moves "Did you get it?" with it, if it's still to be asked.
+    return cur.askAt !== undefined && !cur.fulfilment?.askedAt ? { ...next, askAt: reportWindow(next)!.from } : next;
+  });
   if (other.uid) void pushTo(other.uid, `New time: ${item}`, `${me_.name} moved the booking to ${when(to)}.`, `/?engagement=${e.id}`).catch(() => {});
   return load(db, e.id);
 }));
@@ -1695,11 +1722,12 @@ app.post("/api/resources/:id/stock", route(async req => {
 }));
 
 // Fulfilment, separate from payment: the seller hands over (pickup pass) or marks delivered; the buyer then accepts or
-// reports a problem. Each side's report also feeds the other side's track record.
-async function markDelivered(id: string, seller: "requester" | "provider", at: number, note: string) {
+// reports a problem. Each side's report also feeds the other side's track record. `how`: the buyer's pass was
+// scanned, or the seller marked it.
+async function markDelivered(id: string, seller: "requester" | "provider", at: number, note: string, how: "pass" | "marked") {
   await db.update(ENGAGEMENTS, id, (cur: Engagement | null) => {
     if (!cur || cur.phase !== "agreed" || ["delivered", "accepted", "disputed", "cancelled"].includes(cur.fulfilment?.state ?? "")) return null;
-    return { ...cur, fulfilment: { state: "delivered", deliveredAt: at, note }, outcome: { ...(cur.outcome ?? {}), [seller]: "happened" },
+    return { ...cur, fulfilment: { ...(cur.fulfilment ?? {}), state: "delivered", deliveredAt: at, note, how }, outcome: { ...(cur.outcome ?? {}), [seller]: "happened" },
       events: [...cur.events, { at, who: seller, text: note, by: "owner" }], updatedAt: at };
   });
 }
@@ -1710,65 +1738,183 @@ app.post("/api/engagements/:id/delivered", route(async req => {
   if (e[sellerOf(e)].uid !== req.uid) throw new HttpError(403, `Only the ${roles.payee} can mark this done.`, "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal to deliver.", "VERSION_CONFLICT");
   if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This booking was cancelled.", "VERSION_CONFLICT");
-  await markDelivered(e.id, sellerOf(e), now(), close.marked); await clearStats(db, e);
+  if (!e.noPayment && !paidFor(e)) throw new HttpError(409, "Nothing to hand over until it's paid.", "VERSION_CONFLICT");
+  await markDelivered(e.id, sellerOf(e), now(), close.marked, "marked"); await clearStats(db, e);
   const buyer = e[buyerOf(e)];
   if (buyer.uid) void pushTo(buyer.uid, `${close.marked.replace(/\.$/, "")} · ${e.offer.title.split(" · ")[0]}`, `${e[sellerOf(e)].name} ${close.markedBy}. ${close.confirmTodo}`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
+// "Received it ✓" completes the deal. "I didn't get it" is a report (below), with the same rules as one made there.
 app.post("/api/engagements/:id/received", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (joinsOnLetter(e)) throw new HttpError(409, "This closes on joining — use the offer card.", "VERSION_CONFLICT");
   const buyer = buyerOf(e), roles = rolesFor(e.offer.category);
   if (e[buyer].uid !== req.uid) throw new HttpError(403, `Only the ${roles.payer} can accept or dispute.`, "AUTHORITY_REQUIRED");
   if (e.phase !== "agreed") throw new HttpError(409, "There's no agreed deal.", "VERSION_CONFLICT");
-  const ok = req.body?.ok !== false, note = text(req.body?.note, 300);
+  const ok = req.body?.ok !== false, note = text(req.body?.note, 300).trim();
+  if (!ok) return fileFor(req, e, e.fulfilment?.state === "delivered" ? "not_as_agreed" : "not_received", note);
+  // Received after reporting it: the report is withdrawn.
+  if (e.fulfilment?.state === "disputed" && e.fulfilment.report) return settle(e, req.uid, "got_it");
   const t = now();
   await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => {
     if (!cur || ["accepted", "disputed", "cancelled"].includes(cur.fulfilment?.state ?? "")) return null;
-    return { ...cur, fulfilment: { ...(cur.fulfilment ?? { state: "not_started" }), state: ok ? "accepted" : "disputed", acceptedAt: t, ...(note ? { note } : {}) },
-      outcome: { ...(cur.outcome ?? {}), [buyer]: ok ? "happened" : "fell_through" },
-      events: [...cur.events, { at: t, who: buyer, text: ok ? roles.close.confirmed : `Reported a problem${note ? `: ${note}` : "."}`, by: "owner" }], updatedAt: t,
-      ...(ok ? { inboxClosed: true } : {}) };
+    return { ...cur, fulfilment: { ...(cur.fulfilment ?? { state: "not_started" }), state: "accepted", acceptedAt: t, ...(note ? { note } : {}) },
+      outcome: { ...(cur.outcome ?? {}), [buyer]: "happened" },
+      events: [...cur.events, { at: t, who: buyer, text: roles.close.confirmed, by: "owner" }], updatedAt: t, inboxClosed: true };
   });
-  if (ok) await closeInbox(db, e.id); // done: nothing more to ask either side
+  await closeInbox(db, e.id); // done: nothing more to ask either side
   await clearStats(db, e);
   const seller = e[sellerOf(e)];
-  if (seller.uid) void pushTo(seller.uid, ok ? `Deal complete: ${e.offer.title.split(" · ")[0]}` : `Problem reported: ${e.offer.title.split(" · ")[0]}`, ok ? `${e[buyer].name}: ${roles.close.confirmed}` : `${e[buyer].name} reported a problem. Tap to reply.`, `/?engagement=${e.id}`);
+  if (seller.uid) void pushTo(seller.uid, `Deal complete: ${e.offer.title.split(" · ")[0]}`, `${e[buyer].name}: ${roles.close.confirmed}`, `/?engagement=${e.id}`);
   return load(db, e.id);
 }));
-// Paid some other way (cash, UPI outside the app): either side can say so; it counts as the deal having gone ahead.
+// "Did you get it?" — no: a buyer who paid reports that they didn't get it (or, once it was handed over, that it wasn't
+// as agreed). The seller is told at once and has until the reply deadline to answer or put it right; only a report
+// still standing then shows on their record, next to their answer (see core/reports.ts).
+const dayOf = (t: number) => new Date(t * 1000).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short" });
+const reportFailed = (err: unknown) => (err instanceof ReportError ? new HttpError(err.status, err.message, err.code, err.extra) : err);
+async function fileFor(req: { uid: string; signIn: string }, e: Engagement, reason: "not_received" | "not_as_agreed", note: string) {
+  const p = policy().reports, t = now();
+  const ok = canReport(e, req.uid, reason, t, p);
+  if (!ok.ok) throw new HttpError(ok.status, ok.message, ok.code, ok.extra);
+  if (!(await take(db, `report:${req.uid}`, 1, p.perDay, p.perDay / 86_400))) throw new HttpError(429, "That's a lot of reports today — try again tomorrow.");
+  const profile = (await db.get(PROFILES, req.uid)) as Profile | null;
+  let filed: Engagement;
+  try { filed = await fileReport(db, e, reason, note, countsFor(e, { signIn: req.signIn, createdAt: profile?.createdAt ?? t }, t, p), t, p); }
+  catch (err) { throw reportFailed(err); }
+  await clearStats(db, e);
+  const seller = e[sellerOf(e)], buyer = e[buyerOf(e)], item = e.offer.title.split(" · ")[0], r = filed.fulfilment!.report!, by = dayOf(r.replyBy);
+  if (seller.uid) void pushTo(seller.uid, reason === "not_received" ? `Not received: ${item}` : `Problem reported: ${item}`,
+    reason === "not_received" ? `${buyer.name} says they paid and didn't get it. Reply by ${by}.` : `${buyer.name} reported a problem. Reply by ${by}.`, `/?engagement=${e.id}`);
+  event("report_filed", { reason, counts: r.counts });
+  return load(db, e.id);
+}
+/** The buyer closes their report: got it after all, or got their money back. */
+async function settle(e: Engagement, uid: string, how: "got_it" | "refunded") {
+  try { await settleReport(db, e, uid, how, now()); } catch (err) { throw reportFailed(err); }
+  if (how === "got_it") await closeInbox(db, e.id);
+  await clearStats(db, e);
+  const seller = e[sellerOf(e)], buyer = e[buyerOf(e)], item = e.offer.title.split(" · ")[0];
+  if (seller.uid) void pushTo(seller.uid, how === "got_it" ? `Report withdrawn: ${item}` : `Report closed: ${item}`, how === "got_it" ? `${buyer.name} got it after all.` : `${buyer.name} confirmed the refund.`, `/?engagement=${e.id}`);
+  event("report_settled", { how });
+  return load(db, e.id);
+}
+app.post("/api/engagements/:id/report", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  return fileFor(req, e, req.body?.reason === "not_as_agreed" ? "not_as_agreed" : "not_received", text(req.body?.note, 300).trim());
+}));
+// The seller's one answer to a report: handed over, refunded, or (paid outside the app) never paid. The words stay
+// between the two of them; the answer itself shows next to the report.
+app.post("/api/engagements/:id/report/reply", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const says = String(req.body?.says ?? "") as "handed_over" | "refunded" | "never_paid", note = text(req.body?.note, 300).trim();
+  if (!["handed_over", "refunded", "never_paid"].includes(says)) throw new HttpError(400, "Say handed_over, refunded or never_paid.", "INVALID_INPUT");
+  try { await replyReport(db, e, req.uid, says, note, now()); } catch (err) { throw reportFailed(err); }
+  await clearStats(db, e);
+  const seller = e[sellerOf(e)], buyer = e[buyerOf(e)];
+  if (buyer.uid) void pushTo(buyer.uid, `${seller.name} replied · ${e.offer.title.split(" · ")[0]}`, REPLY_LINE[says](note), `/?engagement=${e.id}`);
+  event("report_reply", { says });
+  return load(db, e.id);
+}));
+app.post("/api/engagements/:id/report/settle", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const how = req.body?.how;
+  if (how !== "got_it" && how !== "refunded") throw new HttpError(400, "Say got_it or refunded.", "INVALID_INPUT");
+  return settle(e, req.uid, how);
+}));
+/** Paid is paid, however it was paid: the held units leave the seller's stock, as with an in-app payment. A hold that
+ *  lapsed meanwhile is taken again if the units are still there; if not, both sides are told. */
+async function commitPaidStock(e: Engagement) {
+  if (!e.reservation || !["held", "released"].includes(e.reservation.state) || e.reservation.qty <= 0) return;
+  const r = e.reservation;
+  try {
+    let holdId = r.holdId;
+    if (r.state !== "held" || !holdId || (r.expiresAt ?? 0) <= now()) holdId = (await holdResource(db, r.resourceId, { holder: e.requester.uid ?? "", engagementId: e.id, qty: r.qty, slotId: r.slotId ?? null, ttlSec: 300 }, now())).id;
+    await commitResource(db, r.resourceId, holdId, now());
+    e.reservation = { ...r, holdId, state: "committed" };
+    void warnLowStock(r.resourceId);
+  } catch (err) {
+    e.reservation = { ...r, state: "unavailable", reason: (err as Error).message };
+    e.events.push({ at: now(), who: "system", text: "Paid, but the stock count couldn't be updated — check how many are left.", by: "rules" });
+    log.warn("stock not committed after an outside payment", { id: e.id, error: String(err).slice(0, 160) });
+  }
+}
+/** While a buyer's cash claim waits for the seller, their units or time stay held (so nobody else takes them); once the
+ *  seller says it hasn't arrived, back to the usual hold. A lapsed hold is taken again if it's still free; if it isn't,
+ *  the seller's confirm says so (commitPaidStock). */
+async function holdFor(e: Engagement, ttlSec: number) {
+  const r = e.reservation;
+  if (r?.state !== "held" || r.qty <= 0) return;
+  try {
+    const h = r.holdId && (r.expiresAt ?? 0) > now() ? await holdUntil(db, r.resourceId, r.holdId, now() + ttlSec, now())
+      : await holdResource(db, r.resourceId, { holder: e.requester.uid ?? "", engagementId: e.id, qty: r.qty, slotId: r.slotId ?? null, ttlSec }, now());
+    e.reservation = { ...r, holdId: h.id, expiresAt: h.expiresAt };
+  } catch (err) { if (!(err instanceof CapacityError)) throw err; }
+}
+// Paid some other way (cash, UPI outside the app). The seller saying so settles it; the buyer saying so waits for the
+// seller to confirm the money arrived (/payment-check) before the pass appears or the stock is taken off.
 app.post("/api/engagements/:id/paid-outside", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (e.phase !== "agreed" || !e.payment || e.payment.status === "paid") throw new HttpError(400, "Nothing to settle.");
-  const side = e.requester.uid === req.uid ? "requester" : "provider";
-  e.payment = { ...e.payment, status: "outside", by: side, paidAt: now() };
-  (e.outcome ??= {})[side] = "happened";
-  e.events.push({ at: now(), who: side, text: "Settled outside the app (cash or UPI).", by: "owner" });
-  // Paid is paid, however it was paid: the held units leave the seller's stock, as with an in-app payment. A hold that
-  // lapsed meanwhile is taken again if the units are still there; if not, both sides are told.
-  if (e.reservation && ["held", "released"].includes(e.reservation.state) && e.reservation.qty > 0) {
-    const r = e.reservation;
-    try {
-      let holdId = r.holdId;
-      if (r.state !== "held" || !holdId || (r.expiresAt ?? 0) <= now()) holdId = (await holdResource(db, r.resourceId, { holder: e.requester.uid ?? "", engagementId: e.id, qty: r.qty, ttlSec: 300 }, now())).id;
-      await commitResource(db, r.resourceId, holdId, now());
-      e.reservation = { ...r, holdId, state: "committed" };
-      void warnLowStock(r.resourceId);
-    } catch (err) {
-      e.reservation = { ...r, state: "unavailable", reason: (err as Error).message };
-      e.events.push({ at: now(), who: "system", text: "Paid, but the stock count couldn't be updated — check how many are left.", by: "rules" });
-      log.warn("stock not committed after an outside payment", { id: e.id, error: String(err).slice(0, 160) });
-    }
-  }
+  if (e.payment.status === "outside") throw new HttpError(409, "Already marked as paid outside the app.", "VERSION_CONFLICT");
+  if (["cancelled", "delivered", "accepted", "disputed"].includes(e.fulfilment?.state ?? "")) throw new HttpError(409, "This deal is already settled.", "VERSION_CONFLICT");
+  const side = e.requester.uid === req.uid ? "requester" : "provider", seller = sellerOf(e), t = now();
+  // The seller already said it hasn't arrived: that answer stands (they can still mark it paid themselves).
+  if (side !== seller && e.payment.outsideClaim?.deniedAt) throw new HttpError(409, `${e[seller].name} says your payment hasn't arrived. Pay in the app, or sort it in the chat.`, "VERSION_CONFLICT");
+  // A demo seller's phone is simulated: their confirmation is taken as given.
+  const confirmed = side === seller || !!e[seller].uid?.startsWith("demo-");
+  const { outsideClaim: _o, ...p } = e.payment;
+  e.payment = { ...p, status: "outside", by: side, paidAt: t, ...(side !== seller ? { outsideClaim: { at: t } } : {}), ...(confirmed ? { confirmedAt: t } : {}) };
+  if (side === seller) (e.outcome ??= {})[side] = "happened";
+  e.events.push({ at: t, who: side, text: side === seller ? "Settled outside the app (cash or UPI)." : "Says they paid outside the app (cash or UPI).", by: "owner" });
+  if (confirmed) { await commitPaidStock(e); e.fulfilment ??= { state: "not_started" }; e.askAt = reportWindow(e)!.from; Object.assign(e, wentAhead(e)); }
+  else await holdFor(e, policy().timing.decisionTtlSec);
   await saveEngagement(db, e);
+  await clearStats(db, e);
+  const sellerUid = e[seller].uid;
+  if (!confirmed && sellerUid) void pushTo(sellerUid, `Paid outside? · ${e.offer.title.split(" · ")[0]}`, `${e[side].name} says they paid you outside the app. Got it? Tap to confirm.`, `/?engagement=${e.id}`);
   event("paid", { currency: currencyOf(e), amount: e.payment.cart?.total?.value ?? e.negotiation.deal?.price ?? 0, instrument: "outside" });
-  bq.deal(e, now());
+  bq.deal(e, t);
   return e;
 }));
+// The seller answers a buyer's "I paid outside the app": it arrived (the pass appears, the stock is taken off), or it
+// hasn't (the order goes back to unpaid, and the buyer is told).
+app.post("/api/engagements/:id/payment-check", route(async req => {
+  const e = await participant(req.uid, String(req.params.id));
+  const seller = sellerOf(e), buyer = buyerOf(e), p = e.payment;
+  if (e[seller].uid !== req.uid) throw new HttpError(403, "Only the person being paid can confirm the payment.", "AUTHORITY_REQUIRED");
+  if (typeof req.body?.got !== "boolean") throw new HttpError(400, "Say got: true if it arrived, or got: false if it hasn't.", "INVALID_INPUT");
+  if (e.phase !== "agreed" || p?.status !== "outside" || p.by !== buyer || !p.outsideClaim || p.confirmedAt) throw new HttpError(409, "Nothing to confirm.", "VERSION_CONFLICT");
+  if (e.fulfilment?.state === "cancelled") throw new HttpError(409, "This deal was cancelled.", "VERSION_CONFLICT");
+  const got = req.body.got as boolean, t = now(), item = e.offer.title.split(" · ")[0];
+  if (got) {
+    e.payment = { ...p, confirmedAt: t };
+    e.events.push({ at: t, who: seller, text: "Confirmed the payment arrived.", by: "owner" });
+    await commitPaidStock(e);
+    e.fulfilment ??= { state: "not_started" };
+    e.askAt = reportWindow(e)!.from;
+    Object.assign(e, wentAhead(e));
+  } else {
+    const { by: _b, paidAt: _p, ...rest } = p;
+    e.payment = { ...rest, status: "awaiting", outsideClaim: { ...p.outsideClaim, deniedAt: t } };
+    e.events.push({ at: t, who: seller, text: "Says the money hasn't arrived.", by: "owner" });
+    await holdFor(e, policy().timing.holdTtlSec);
+  }
+  await saveEngagement(db, e);
+  await clearStats(db, e);
+  const buyerUid = e[buyer].uid;
+  if (buyerUid) void pushTo(buyerUid, got ? `Payment confirmed · ${item}` : `Payment not received · ${item}`,
+    got ? `${e[seller].name} got your payment. Your pass is ready.` : `${e[seller].name} says your payment hasn't arrived. Pay in the app, or sort it in the chat.`, `/?engagement=${e.id}`);
+  event("payment_check", { got });
+  return load(db, e.id);
+}));
+// "It fell through": only before it's paid. Once paid, "Did you get it?" decides — the seller gets a chance to reply.
 app.post("/api/engagements/:id/outcome", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (joinsOnLetter(e)) throw new HttpError(409, "This closes on joining — use the offer card.", "VERSION_CONFLICT");
   if (e.phase !== "agreed") throw new HttpError(400, "no deal yet");
+  if (["paid", "outside"].includes(e.payment?.status ?? "") || ["delivered", "accepted", "disputed"].includes(e.fulfilment?.state ?? ""))
+    throw new HttpError(409, "Once it's paid, use “Did you get it?” on the deal card — they get a chance to reply first.", "VERSION_CONFLICT");
   const side = e.requester.uid === req.uid ? "requester" : "provider";
   (e.outcome ??= {})[side] = req.body?.happened ? "happened" : "fell_through";
   await clearStats(db, e);
@@ -2011,6 +2157,8 @@ app.post("/cron/run", async (req, res, next) => {
     // Planned goals move on when a step's dependency is done (searching only — nothing is committed).
     const planned = ((await db.find(GOALS, [["closed", "==", null]], 100)) as Goal[]).filter(g => g.plan?.some(st => st.state !== "done" && st.state !== "failed")).slice(0, 25);
     for (const g of planned) await advancePlan(db, model, g, ((await db.get(PROFILES, g.owner)) as Profile | null)?.area ?? null, now()).catch(err => log.warn("plan advance failed", { goal: g.id, error: String(err).slice(0, 120) }));
+    // Paid deals whose report window opened with nothing handed over: the buyer is asked "Did you get it?" once.
+    const asked = await askDidYouGetIt(db, now(), (u, t, b, l) => pushTo(u, t, b, l));
     // Recurring goals (search, notify — never buy) and all-or-nothing compensation.
     const open_ = (await db.find(GOALS, [["closed", "==", null]], 200)) as Goal[];
     let rounds = 0, compensated = 0;
@@ -2022,7 +2170,7 @@ app.post("/cron/run", async (req, res, next) => {
       }
       if (g.allOrNothing && !g.compensation && (await compensate(db, g, now()))) compensated++;
     }
-    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, schedules: schedules.length, questioned: unasked.length, plans: planned.length, rounds, compensated });
+    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, schedules: schedules.length, questioned: unasked.length, plans: planned.length, asked, rounds, compensated });
     res.json({ ...r, recovered, calendars: { total: calendars.length, synced } });
   } catch (e) { next(e); }
 });

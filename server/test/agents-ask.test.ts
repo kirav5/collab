@@ -191,6 +191,7 @@ test("random conversations: agents handle the routine, people are asked only whe
       if (e.reservation?.state === "unavailable" && e.events.some((x: any) => x.text.startsWith("Ready to pay"))) problems.push(`${label}: "Ready to pay" though the units aren't there`);
       if (e.reservation?.state !== "unavailable") {
         await as(buyer, `/api/engagements/${e.id}/paid-outside`, {});
+        await as(seller, `/api/engagements/${e.id}/payment-check`, { got: true });
         const pass = await as(buyer, `/api/engagements/${e.id}/pickup`);
         if (pass.quantity !== n) problems.push(`${label}: pass for ${pass.quantity}, deal for ${n}`);
       }

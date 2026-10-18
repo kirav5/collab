@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Docs } from "../docs.ts";
 import type { Engagement } from "./model.ts";
-import { buyerOf, sellerOf } from "./pay.ts";
+import { buyerOf, outsideConfirmed, sellerOf } from "./pay.ts";
 import { kindOf } from "./suggest.ts";
 import { currencyOf } from "../market/types.ts";
 import { rolesFor } from "../market/roles.ts";
@@ -23,12 +23,14 @@ export function passKind(e: Engagement): "pickup" | "booking" | "handover" {
 }
 
 /**
- * A pass exists once the deal is paid: in the app (test mode), or settled outside it (cash, UPI). Outside payments
- * say who marked them, so a seller can check the money arrived before handing over when only the buyer said so.
+ * A pass exists once the deal is paid: in the app (test mode), or settled outside it (cash, UPI) — marked by the
+ * seller, or by the buyer and confirmed by the seller. Outside payments say who marked them. `paused`: the buyer
+ * reported they didn't get it, so nothing is handed over on this pass until that's sorted.
  */
 export function pickupDetails(e: Engagement) {
   const status = e.payment?.status;
   if (e.phase !== "agreed" || !e.payment || (status !== "paid" && status !== "outside")) throw new Error("No pass yet: the deal isn't paid.");
+  if (status === "outside" && !outsideConfirmed(e)) throw new Error("No pass yet: the payment outside the app isn't confirmed.");
   const amount = e.payment.cart?.total ?? { value: e.negotiation.deal?.price ?? e.offer.price ?? 0, currency: currencyOf(e) };
   const markedBy = status === "outside" ? (e.payment.by === sellerOf(e) ? "seller" : "buyer") : null;
   const d = e.negotiation.deal, q = d?.terms?.quantity ?? 1;
@@ -36,11 +38,13 @@ export function pickupDetails(e: Engagement) {
   const roles = rolesFor(e.offer.category);
   return { id: e.id, item: e.offer.title, quantity, amount, buyer: e[buyerOf(e)].name, sellerHandle: e[sellerOf(e)].handle, payee: roles.payee, payer: roles.payer,
     paidAt: e.payment.paidAt ?? null, kind: passKind(e), slot: e.reservation?.slot?.start ?? null,
-    payment: status === "paid" ? "in_app_test" : "outside", markedBy, mode: "test", cancelled: e.fulfilment?.state === "cancelled" };
+    payment: status === "paid" ? "in_app_test" : "outside", markedBy, mode: "test", cancelled: e.fulfilment?.state === "cancelled", paused: e.fulfilment?.state === "disputed" };
 }
 /** A separate transaction document cannot be reset by an older engagement save or simultaneous scan. */
 export async function collect(db: Docs, e: Engagement, uid: string, now: number) {
-  if (pickupDetails(e).cancelled) throw new Error("This booking was cancelled.");
+  const d = pickupDetails(e);
+  if (d.cancelled) throw new Error("This booking was cancelled.");
+  if (d.paused) throw new Error("This deal has a report open — sort it out in the chat first.");
   if (e[sellerOf(e)].uid !== uid) throw new Error("Only the person handing it over can mark it collected.");
   const result = await db.update(PICKUPS, e.id, current => current ? null : { id: e.id, collectedAt: now, collectedBy: uid });
   return { ...(result ?? await db.get(PICKUPS, e.id)), alreadyCollected: !result };

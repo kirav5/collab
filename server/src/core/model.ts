@@ -193,7 +193,8 @@ export interface Engagement {
   agreedAt?: number;
   /** The anonymised deal record is written (once) to `deals`. */
   dealRecorded?: boolean;
-  /** What each side later said became of the deal (a completed payment says "happened" for both). */
+  /** What each side said became of the deal before it was paid (after payment, “Did you get it?” and reports decide;
+   *  payment never sets it). */
   outcome?: Partial<Record<Side, "happened" | "fell_through">>;
   /** Which side sells (is paid). Listings: the provider, unless its owner pays (a job post). A deal offered in a direct
    *  chat: whoever said they'd sell. */
@@ -209,7 +210,15 @@ export interface Engagement {
   screening?: Screening;
   /** What happened after the deal, separate from payment: handed over / delivered, then accepted or disputed by the
    *  buyer. Payment alone never marks a deal fulfilled. */
-  fulfilment?: { state: "not_started" | "delivered" | "accepted" | "disputed" | "cancelled"; deliveredAt?: number; acceptedAt?: number; note?: string };
+  fulfilment?: { state: "not_started" | "delivered" | "accepted" | "disputed" | "cancelled"; deliveredAt?: number; acceptedAt?: number; note?: string;
+    /** How it was handed over: the buyer's pass scanned, or marked by the seller. */
+    how?: "pass" | "marked";
+    /** When the buyer was asked “Did you get it?”. */
+    askedAt?: number;
+    /** The buyer's report that they paid and didn't get it (mirrored from `reports`, see core/reports.ts). */
+    report?: ReportView };
+  /** When the cron asks the buyer “Did you get it?” (deleted once handled). */
+  askAt?: number;
   /** AP2: the cart the seller's agent signed, and the buyer's payment against it. */
   payment?: import("./pay.ts").Payment;
   /** The requester's next turn, when a run stopped before sending it (the next run sends it). */
@@ -240,6 +249,18 @@ export interface Engagement {
   outboxPending?: boolean; outboxAt?: number | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** A buyer's report on a paid deal as both people see it on the deal (core/reports.ts keeps the record). The note and
+ *  the reply's note are only ever shown to the two of them. */
+export interface ReportView {
+  reason: "not_received" | "not_as_agreed"; at: number; replyBy: number;
+  payment: "in_app" | "outside_confirmed" | "outside_unconfirmed" | "outside_denied";
+  /** Whether it can count on the seller's public record (set once, when filed), and why not. */
+  counts: boolean; notCounted?: "guest" | "new_account" | "demo" | "self";
+  note?: string;
+  reply?: { says: "handed_over" | "refunded" | "never_paid"; note?: string; at: number };
+  end?: { how: "withdrawn" | "refunded" | "voided"; at: number };
 }
 
 /** Work only the owner's device can do: answer from private context (with the owner's OK), make a move with a

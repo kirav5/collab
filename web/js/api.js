@@ -120,6 +120,8 @@ export async function signIn() {
         if (auth.currentUser?.isAnonymous) await linkWithPopup(auth.currentUser, provider);
         else await signInWithPopup(auth, provider);
         session.user = auth.currentUser;
+        // A fresh token says Google now, so a report made next counts on the seller's record (a guest's doesn't).
+        await auth.currentUser?.getIdToken(true).catch(() => {});
         return "linked";
       } catch (e) {
         const cred = GoogleAuthProvider.credentialFromError(e);
@@ -195,11 +197,12 @@ export async function api(path, body) {
   if (session.token) headers.authorization = `Bearer ${await session.token()}`;
   const limited = body !== undefined && (path === "/api/price-check"
     || /^\/api\/engagements\/[^/]+\/pay$/.test(path)
-    || /^\/api\/pickup\/[^/]+\/collect$/.test(path));
+    || /^\/api\/pickup\/[^/]+\/collect$/.test(path)
+    || /^\/api\/engagements\/[^/]+\/(report(\/reply)?|payment-check)$/.test(path));
   // Plain reads (not goals, which can run the model) go out at once with the current token, if it's still good.
   // Everything else waits up to 5 s for one; a browser that can't get one (a content blocker, a private window, the
-  // SDK throttling itself) still sends — the server limits unverified calls and refuses only payments, pickups and
-  // price checks, and says why.
+  // SDK throttling itself) still sends — the server limits unverified calls and refuses only payments, pickups,
+  // reports, payment checks and price checks, and says why.
   const plainRead = body === undefined && !/^\/api\/goals(\/|$)/.test(path);
   const tokenFor = async force => {
     if (plainRead) { const t = usableToken(session.appCheckNow(), Date.now()); if (!t) session.appCheckRefresh(); return t; }
