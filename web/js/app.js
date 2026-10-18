@@ -669,11 +669,14 @@ async function openPass(path) {
 }
 
 /** A conversation in the side panel (its card, live: redrawn on every refresh while it's open). */
-/** The chat a conversation came from: the request's card (same brief), a card that names it, else the chat with them. */
+/** The chat a conversation came from: the request's card (same brief), a card that names it, the listing it answers,
+ *  else the chat with them. */
 function chatOf(e) {
   const them = e.requester.uid === session.uid ? e.provider : e.requester;
   for (const s of S.sessions) for (const m of s.messages ?? []) for (const c of m.cards ?? [])
-    if ((e.briefId && c.briefId === e.briefId) || (c.engaged ?? []).includes(e.id) || c.engagementId === e.id) return { s, m };
+    if ((e.briefId && c.briefId === e.briefId) || (c.engaged ?? []).includes(e.id) || c.engagementId === e.id
+      // Someone answering your listing: the chat you listed it in.
+      || (c.type === "offer" && e.offer?.factId && (c.factId === e.offer.factId || (c.step === "published" && c.offer?.title && c.offer.title === e.offer.title)))) return { s, m };
   const direct = S.sessions.find(s => s.to && s.to === them.handle);
   return direct ? { s: direct, m: direct.messages?.at(-1) ?? null } : null;
 }
