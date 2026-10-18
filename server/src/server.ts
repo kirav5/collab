@@ -44,6 +44,7 @@ import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
 import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
 import { type AgentRules, type RulesContext, RulesTask, checkRules, readRules, rulesLines } from "./core/rules.ts";
+import { quote } from "./core/pricing.ts";
 import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
 import { loadPolicy, policy, policyHash, setPolicy } from "./config/policy.ts";
@@ -595,7 +596,8 @@ app.post("/api/people/:handle/order", route(async req => {
 async function delegate(e: Engagement, uid: string, limit: number, autonomy: "close" | "negotiate", extra: { closeAt?: number | null; rulesText?: string } = {}) {
   const side = e.requester.uid === uid ? "requester" : "provider", selling = (e.seller ?? "provider") === side;
   if (side === "provider" && !e.offer.factId) throw new HttpError(400, "Name a price in the chat instead.");
-  const key = side === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
+  // A conversation priced from the web has its own limit; the owner's word here changes that one, not the listing's.
+  const key = side === "provider" ? ((await db.get(LIMITS, `eng:${e.id}`)) ? `eng:${e.id}` : `fact:${e.offer.factId}`) : `brief:${e.briefId}`;
   const mine = side === "provider" ? e.negotiation.provider : e.negotiation.requester, last = mine.at(-1)?.price;
   const opening = selling ? Math.max(limit, e.offer.price ?? limit, last ?? 0) : Math.min(limit, last ?? Math.round(limit * 0.85));
   await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening, limit }, terms: {}, maxRounds: 5 }, autonomy, expires: now() + 7 * 86_400, createdAt: now(),
@@ -620,8 +622,10 @@ function confirmedRules(body: any, words: string, ctx: RulesContext): AgentRules
 async function applySellerRules(f: Fact, uid: string, r: AgentRules, words: string) {
   const o = f.offer!, key = `fact:${f.id}`, existing = (await db.get(LIMITS, key)) as DelegatedLimit | null;
   const floor = r.floor ?? (existing && existing.owner === uid ? existing.mandate.price.limit : null);
-  if (floor != null) await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening: o.price.amount, limit: Math.min(floor, o.price.amount) }, terms: {}, maxRounds: 5 },
-    autonomy: r.autonomy, ...(r.closeAt != null ? { closeAt: r.closeAt } : {}), rulesText: words, expires: now() + 30 * 86_400, createdAt: existing?.createdAt ?? now() });
+  // Web pricing rules ride on the same row; without a lowest price the agent opens at the rule's price and holds it.
+  const priced = r.lookups.length || r.pricing.length ? { lookups: r.lookups, pricing: r.pricing } : {};
+  if (floor != null || Object.keys(priced).length) await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening: o.price.amount, limit: Math.min(floor ?? o.price.amount, o.price.amount) }, terms: {}, maxRounds: 5 },
+    autonomy: r.autonomy, ...(r.closeAt != null ? { closeAt: r.closeAt } : {}), rulesText: words, ...priced, expires: now() + 30 * 86_400, createdAt: existing?.createdAt ?? now() });
   const { maxPerBuyer: _old, ...rest } = o;
   const policies = [...(o.policies ?? []).filter(p => !r.terms.some(t => t.label.toLowerCase() === p.label.toLowerCase())), ...r.terms].slice(0, 8);
   const offer = { ...rest, ...(r.maxPerBuyer ? { maxPerBuyer: r.maxPerBuyer } : {}), ...(policies.length ? { policies } : {}),
@@ -632,7 +636,7 @@ async function applySellerRules(f: Fact, uid: string, r: AgentRules, words: stri
 /** Read an instruction into rules, for the owner to see back and confirm. Nothing is saved here. */
 app.post("/api/rules/read", route(async req => {
   await spend(req.uid, 2);
-  const words = text(req.body?.text, 600).trim();
+  const words = text(req.body?.text, 1500).trim();
   if (words.length < 4) throw new HttpError(400, "Tell your agent a little more.");
   const side = req.body?.side === "buyer" ? "buyer" : "seller";
   let o: { title: string; price: number | null; unit: string | null; currency?: string } | null = null;
@@ -642,10 +646,21 @@ app.post("/api/rules/read", route(async req => {
   const { rules, byModel } = await readRules(model, words, rulesCtx(side, o));
   return { rules, lines: rulesLines(rules, o?.currency ?? "INR", o?.unit ?? null), byModel };
 }));
+/** What the owner's pricing rules come to for one item today: the new price (and parts, repairs) looked up on the web
+ *  with sources, and each rule worked out — for the owner only, to use as their price or lowest, or not. */
+app.post("/api/pricing/quote", route(async req => {
+  await spend(req.uid, 4);
+  const item = text(req.body?.item, 160).trim(), area = text(req.body?.area, 120).trim() || "India";
+  if (item.length < 3) throw new HttpError(400, "Name the item — e.g. “Philips HD9252 air fryer”.");
+  const words = text(req.body?.text, 1500).trim();
+  const r = confirmedRules(req.body, words, rulesCtx("seller", null));
+  if (!r.lookups.length && !r.pricing.length) throw new HttpError(400, "Your rules don't price from the web yet — say what to look up, e.g. “25% under the price on Croma”.");
+  return quote(db, model, req.uid, item, area, r, num(req.body?.listPrice, 0, 1e12), now());
+}));
 app.post("/api/facts/:id/rules", route(async req => {
   const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
   if (!f || f.owner !== req.uid || !f.offer) throw new HttpError(404, "Not one of your offerings.");
-  const words = text(req.body?.text, 600).trim();
+  const words = text(req.body?.text, 1500).trim();
   const r = confirmedRules(req.body, words, rulesCtx("seller", { title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null }));
   const { needsFloor } = await applySellerRules(f, req.uid, r, words);
   return { fact: publicFact((await db.get(FACTS, f.id)) as Fact), lines: rulesLines(r, f.offer.price.currency, f.offer.price.period ?? null), needsFloor };
@@ -656,7 +671,7 @@ app.post("/api/engagements/:id/rules", route(async req => {
   const e = await participant(req.uid, String(req.params.id));
   if (["agreed", "closed", "declined"].includes(e.phase)) throw new HttpError(400, "This conversation has ended.");
   const side = e.requester.uid === req.uid ? "requester" : "provider", selling = (e.seller ?? "provider") === side;
-  const words = text(req.body?.text, 600).trim();
+  const words = text(req.body?.text, 1500).trim();
   const r = confirmedRules(req.body, words, rulesCtx(selling ? "seller" : "buyer", { title: e.offer.title, price: e.offer.price, unit: e.offer.unit }));
   if (selling) {
     const f = e.offer.factId ? ((await db.get(FACTS, e.offer.factId)) as Fact | null) : null;

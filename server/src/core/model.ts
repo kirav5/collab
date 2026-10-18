@@ -291,6 +291,9 @@ export interface DelegatedLimit {
   closeAt?: number | null;
   /** The owner's own words these rules were read from (shown back to them; never to the other side). */
   rulesText?: string;
+  /** Prices the agent looks up on the web and how a quote follows from them, in the owner's own percentages. */
+  lookups?: import("./rules.ts").Lookup[];
+  pricing?: import("./rules.ts").PriceRule[];
   expires?: number | null;
   createdAt?: number;
 }

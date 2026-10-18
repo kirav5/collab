@@ -4,13 +4,13 @@
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, onFreshRead, session, signIn, standalone } from "./api.js";
-import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, prefetchDraft, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
+import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, likeness, offerReply, prefetchDraft, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
 import { local, setOwner } from "./local.js";
 import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.js";
-import { checkoutHTML, dealAmount, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
+import { checkoutHTML, dealAmount, gateOpen, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel as showPanel, panelDetail, startPanel } from "./panel.js";
@@ -1204,7 +1204,9 @@ function onEdit(e) {
     if (k === "floor") f.c.floor = Number(v) || null;
     else if (k === "stock") f.c.stock = v === "" ? null : Number(v);
     else if (k === "missing") { (f.c.missingAnswers ??= {})[el.dataset.key] = v; f.c.answeredMissing = (f.c.missing ?? []).every(m => (f.c.missingAnswers[m.label] ?? "").trim()); }
-    else if (k === "term-label" || k === "term-text") { const t = f.c.terms?.[Number(el.dataset.j)]; if (t) t[k === "term-label" ? "label" : "text"] = v; }
+    // A term the owner rewrote is theirs: the web sources it was suggested from no longer describe it.
+    else if (k === "term-label" || k === "term-text") { const t = f.c.terms?.[Number(el.dataset.j)]; if (t) { t[k === "term-label" ? "label" : "text"] = v; if (k === "term-text") t.sources = []; } }
+    else if (k === "quoteItem") f.c.quoteItem = v;
     else if (k === "basic-price") f.c.basicPrice = v;
     else if (k === "basic-area") f.c.basicArea = v;
     else if (k.startsWith("hours-")) {
@@ -1538,10 +1540,21 @@ async function cardAction(a, el, { s, m, c }) {
     if (words.length < 4) return fieldError(el.parentElement?.querySelector('[data-edit="rulesText"]'), "Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
     busy(el, true, "Reading");
     const o = a === "offer-rules-read" ? c.offer : null;
-    const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
-    if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; }
+    // A seller's terms are read too: how they price ("25% cheaper than Croma while under guarantee") often lives there.
+    const full = o && !ownerPays(c) && c.terms?.length ? `${words}\n${c.terms.map(t => t.text).join("\n")}`.slice(0, 1500) : words;
+    const r = await api("/api/rules/read", { text: full, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
+    if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; c.rulesWords = full; delete c.quote; }
   }
-  if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; c.rulesText = ""; }
+  if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; delete c.rulesWords; delete c.quote; c.rulesText = ""; }
+  if (a === "offer-quote") {
+    const item = String(c.quoteItem ?? c.offer.title.split(" · ")[0]).trim();
+    busy(el, true, "Looking up");
+    c.quote = { loading: true }; await saveSession(s); paintContent(true);
+    c.quote = await api("/api/pricing/quote", { item, area: c.offer.place?.name ?? "", text: c.rulesWords ?? c.rulesText, rules: c.rules.rules, listPrice: c.offer.price.amount })
+      .catch(err => ({ error: err.message }));
+  }
+  if (a === "offer-quote-use") { c.offer.price.amount = Number(el.dataset.val); toast(`Your price is now ${money(c.offer.price.amount)}.`); }
+  if (a === "offer-quote-floor") { c.floor = Number(el.dataset.val); c.floorAsked = true; toast(`Your lowest is now ${money(c.floor)} — private.`); }
   if (a === "brief-rules-ok") {
     // The confirmed rules become the request's: the private limit, where the agent may close, how many, must-be-yes checks.
     const r = c.rules.rules;
@@ -1575,8 +1588,11 @@ async function cardAction(a, el, { s, m, c }) {
       c.gateAnswers = {};
     } else {
       // On an offering it's one more detail buyers see; answered, the gate opens.
-      const lbl = q.question.replace(/\?$/, "").split(/\s+/).slice(0, 4).join(" ");
-      if (!(c.missing ?? []).some(m => m.label === lbl)) (c.missing ??= []).push({ label: lbl, ask: q.question, options: q.options });
+      // The same question already among what buyers ask ("What is the condition?" ↔ "Item condition") takes the answer;
+      // otherwise it joins them, named by the whole question (four words once made "Which specific item are").
+      const like = (c.missing ?? []).find(m => likeness(m.ask, q.question) >= 0.5 || likeness(m.label, q.question) >= 0.5);
+      const lbl = like?.label ?? q.question.replace(/\?$/, "");
+      if (!like) (c.missing ??= []).push({ label: lbl, ask: q.question, options: q.options });
       (c.missingAnswers ??= {})[lbl] = opt;
       if (c.gate.missing.every((_, i) => c.gateAnswers[i])) c.gate = { ...c.gate, ok: true };
     }
@@ -1723,7 +1739,9 @@ async function cardAction(a, el, { s, m, c }) {
     c.starters = (c.starters ?? []).filter(t => !picks.includes(t));
   }
   if (a === "offer-publish") {
-    if (c.offer && c.gate && !c.gate.ok && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
+    // Only questions the card actually shows hold it back (ones answered under "What buyers usually ask" don't): the
+    // check once refused with nothing left to answer above.
+    if (c.offer && gateOpen(c).length && !c.gateOverride) return toast("Answer what's missing above, or tap “Publish as it is”.");
     busy(el, true, "Publishing");
     // The details buyers usually ask about, answered here, join the public text; the terms are saved as the seller's own.
     // All read from the card's state (what was typed is kept there), not from whichever improvement panel is open.
@@ -1753,7 +1771,7 @@ async function cardAction(a, el, { s, m, c }) {
       await api(`/api/facts/${fact.id}/limit`, { mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7 });
     }
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
-    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message, null, "error"));
+    if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesWords ?? c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message, null, "error"));
     c.step = "published"; c.publicText = fact.text; c.factId = fact.id;
   }
   // Accept every suggested answer still open (the owner's own answers stay).

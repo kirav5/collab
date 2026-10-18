@@ -12,6 +12,15 @@ import { orientMandate, payerCue, rolesFor, usualAsks } from "./roles.ts";
 import { contains, grounded, numbers } from "./text.ts";
 import { type Bounds, type DemandFilter, type Mandate, type Need, ONLINE, type Offer, type Place, type ServiceMode, newId } from "./types.ts";
 
+/** The category in a title only when it adds something: never a generic one ("items for sale (new or used)") or one
+ *  the item already says ("Guitar lessons · lessons"). */
+export function categoryWord(label: string, item: string): string | null {
+  const l = label.replace(/\s*\(.*?\)\s*/g, " ").trim().toLowerCase();
+  if (!l || /^(items?|things?|other|anything|stuff)\b/.test(l)) return null;
+  const said = new Set(item.toLowerCase().match(/[a-z]{3,}/g) ?? []);
+  return (l.match(/[a-z]{3,}/g) ?? []).some(w => said.has(w) || said.has(w.replace(/s$/, ""))) ? null : l;
+}
+
 export type ReadSide = "sell" | "find";
 
 // MARK: - Category
@@ -294,7 +303,7 @@ export function build(f: Fields, text: string, d: Domain, side: ReadSide, now: n
     const mandate: Mandate = { price: { opening: f.price, limit }, terms: termBounds(attributes, d, "seller"), maxRounds: policy().negotiation.maxRounds };
     const title = isProperty
       ? `${attributes.bedrooms ? `${attributes.bedrooms}BHK` : "Home"} ${rent ? "for rent" : "for sale"} in ${place.name}`
-      : `${titleCase(f.item)} · ${d.label.toLowerCase()} · ${shortPlace}`;
+      : [titleCase(f.item), categoryWord(d.label, f.item), shortPlace].filter(Boolean).join(" · ");
     if (mandate.price.opening !== mandate.price.limit || Object.keys(mandate.terms).length) attributes.negotiable = "yes";
     if (plan.mode) attributes.mode = plan.mode;
     const offer: Offer = { id: newId(), category: d.id, title, details: text, price: { amount: f.price, currency: "INR", period },

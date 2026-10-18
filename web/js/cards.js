@@ -212,7 +212,7 @@ function priceResultHTML(key) {
 /** Answered already, in these words or others ("What time on Saturday?" ↔ "Which time slot?"). */
 const answeredLike = (c, q) => (c.answered ?? []).some(x => x.question === q.question || likeness(x.question, q.question) >= 0.6);
 /** The gate's questions still open: not answered, in any words, and not one the profile block below already asks. */
-function gateOpen(c) {
+export function gateOpen(c) {
   const g = c.gate;
   if (!g || g.ok || c.gateOverride) return [];
   const prof = c.draft?.profile ?? [], inProfile = q => prof.some(p => likeness(p.question, q.question) >= 0.6 || q.question.toLowerCase().includes(p.label.toLowerCase()));
@@ -468,6 +468,7 @@ function listingSummary(c, o, L, at) {
     <p class="small">${esc(c.publicText ?? c.text)}</p>
     ${answers.length ? `<span class="small">Answered for ${esc(L.responders)}: ${answers.slice(0, 3).map(([k, v]) => `${esc(k)}: <b>${esc(String(v))}</b>`).join(" · ")}${answers.length > 3 ? ` · ${answers.length - 3} more` : ""}</span>` : ""}
     <span class="small faint">${c.floor ? `${L.pays ? "Most" : "Lowest"} ${money(c.floor, o.price.period)} — private. ` : ""}Your agent ${agent}.${c.terms?.length ? ` ${c.terms.length} terms set.` : ""}</span>
+    ${gateBanner(c, at, "offer")}
     <div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><button class="btn quiet" data-act="card-edit" ${at}>Edit details</button></div>
   </div>`;
 }
@@ -531,13 +532,30 @@ function attrValue(k, v) {
 }
 
 /** A common question's answer: tap an option; "Other…" opens a field for your own words. */
+/** Rules that price from the web: try them on an item now — the new price (and parts, repairs) with sources, each
+ *  rule worked out, and the result to use as the price or the lowest, or not. Only the owner sees it. */
+function quoteBlock(c, o, at) {
+  const r = c.rules?.rules;
+  if (!r?.lookups?.length && !r?.pricing?.length) return "";
+  const q = c.quote, item = c.quoteItem ?? o.title.split(" · ")[0];
+  return `<div class="card slim">${label("Price from the web", "sq")}
+    <span class="small muted">${c.gate?.broad ? "You sell many things: your agent prices each one a buyer asks about. Try one:" : "Try your rules on this item:"}</span>
+    <div class="row"><input class="field" style="flex:1;min-width:200px" data-edit="quoteItem" ${at} value="${esc(item)}" aria-label="Item to price" placeholder="e.g. Philips HD9252 air fryer">
+      <button class="btn secondary compact" data-act="offer-quote" ${at}>Price it</button></div>
+    ${q?.loading ? `<span class="row small">${logo("live spinner")} Looking up prices on the web…</span>` : q?.error ? `<span class="small">${esc(q.error)}</span>` : q ? `<div class="stack" style="gap:4px">${q.lines.map(l => `<div class="small"><b>${esc(l.label)}</b> · ${esc(l.text)}</div>`).join("")}
+      ${q.price != null ? `<div class="row"><button class="btn accent compact" data-act="offer-quote-use" data-val="${q.price}" ${at}>Use ${money(q.price)} as my price</button><button class="btn quiet compact" data-act="offer-quote-floor" data-val="${q.price}" ${at}>As my lowest</button></div>` : ""}
+      <span class="small faint">Asking prices on the web, with their sources · only you see this</span></div>` : ""}</div>`;
+}
+
 function askRow(c, m, at) {
   const ans = c.missingAnswers?.[m.label] ?? "", sug = !String(ans).trim() ? c.suggestedAnswers?.[m.label] : null;
   const own = !!c.missingOther?.[m.label] || (ans && !(m.options ?? []).includes(ans));
   // Gemini's answers are already picked (tap another to change); only where it came from your own words is noted.
   const mark = op => (ans === op && c.fromMemory?.[m.label] ? " · from before" : ans === op && c.fromNotes?.[m.label] ? " · from your notes" : "");
   const sugOwn = sug && !(m.options ?? []).includes(sug) ? `<button class="chip" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(sug)}" ${at}>${esc(String(sug).slice(0, 40))}</button>` : "";
-  return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
+  // A label that is just the question's own start ("Which specific item are · Which specific item are you…") isn't repeated.
+  const same = m.ask.toLowerCase().startsWith(m.label.toLowerCase());
+  return `<div class="stack" style="gap:4px"><span class="small">${same ? esc(m.ask) : `<b>${esc(m.label)}</b> · ${esc(m.ask)}`}</span>
     ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" aria-pressed="${ans === op}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}${mark(op)}</button>`).join("")}${sugOwn}<button class="chip ${own ? "on" : ""}" data-act="offer-ask-other" data-key="${esc(m.label)}" ${at}>Other…</button></div>` : ""}
     ${own || !m.options?.length ? `<input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(own ? ans : "")}" aria-label="${esc(m.label)}" placeholder="${m.options?.length ? "In your own words" : esc(m.ask)}">` : ""}</div>`;
 }
@@ -580,7 +598,7 @@ function offerImprovements(c, at) {
     agent: () => `<div class="stack" style="gap:6px">${autonomyPick(c)}
       <div class="row"><input class="field" style="flex:1;min-width:220px" data-edit="rulesText" ${at} value="${esc(c.rulesText ?? "")}" aria-label="Your rules in your words" placeholder="Or in your words: never below ₹400, max 10 per person, close yourself above ₹420">
         <button class="btn secondary compact" data-act="offer-rules-read" ${at}>Read my rules</button></div>
-      ${c.rules ? `${rulesList(c.rules.lines)}<div class="row">${c.rulesOk ? `<span class="small" style="color:var(--fresh)">✓ Applied when you publish</span>` : `<button class="btn accent compact" data-act="offer-rules-ok" ${at}>Looks right</button>`}<button class="btn quiet compact" data-act="offer-rules-clear" ${at}>Clear</button></div>` : ""}</div>`,
+      ${c.rules ? `${rulesList(c.rules.lines)}<div class="row">${c.rulesOk ? `<span class="small" style="color:var(--fresh)">✓ Applied when you publish</span>` : `<button class="btn accent compact" data-act="offer-rules-ok" ${at}>Looks right</button>`}<button class="btn quiet compact" data-act="offer-rules-clear" ${at}>Clear</button></div>${quoteBlock(c, o, at)}` : ""}</div>`,
     instant: () => `<label class="row small" style="gap:6px"><input type="checkbox" data-instant-new data-edit="instant" ${at} ${c.instant ? "checked" : ""}> ${kind === "booking" ? "Accept bookings at my listed price automatically" : "Accept orders at my listed price automatically — no need to confirm each one"}</label>`,
     prices: () => `<div class="stack" style="gap:4px">${(c.insights ?? []).map(l => `<div class="small">${esc(l)}</div>`).join("")}</div>`,
     privacy: () => `<div class="privacy-split">
