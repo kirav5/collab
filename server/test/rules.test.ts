@@ -79,6 +79,6 @@ test("'negotiates inside my limit; I confirm the deal' is how the agent bargains
   const { checkRules } = await import("../src/core/rules.ts");
   const words = "My always-on agent negotiates inside my limit; I confirm the deal. Never below ₹8,000.";
   const r = checkRules({ side: "seller", floor: 8000, limit: null, closeAt: null, autonomy: "negotiate", maxPerBuyer: null, quantity: null, terms: [], mustAsk: [], lookups: [], pricing: [],
-    unsupported: ["My always-on agent negotiates inside my limit; I confirm the deal"] }, words, { side: "seller", price: 9245 })!;
+    unsupported: ["My always-on agent negotiates inside my limit; I confirm the deal", "Owner confirms deal", "Listed at 9245 (no floor/limit explicitly specified)"] }, words, { side: "seller", price: 9245 })!;
   assert.deepEqual(r.unsupported, []);
 });
