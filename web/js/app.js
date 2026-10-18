@@ -799,7 +799,9 @@ async function openDirect(handle) {
   const p = await person(handle);
   if (!p) return toast(`No one is called @${handle}.`);
   if (p.profile.uid === session.uid) return previewCard();
-  const card = storeCardOf(p);
+  // Already one of their people: the card says so instead of offering "Add to people" again.
+  const contacts = await cached("/api/contacts", 30_000).catch(() => []);
+  const card = { ...storeCardOf(p), inPeople: (Array.isArray(contacts) ? contacts : contacts?.contacts ?? []).some(x => x.handle === handle) };
   let cur = S.sessions.find(x => x.to === handle);
   if (!cur) {
     cur = { id: id(), title: `${p.profile.name} (@${handle})`, to: handle, toName: p.profile.name, updatedAt: now(),

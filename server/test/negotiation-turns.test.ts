@@ -162,3 +162,10 @@ test("a demo person's agent answers for itself and holds its best price — nobo
   assert.equal((await db.find(INBOX, [["engagementId", "==", e.id]])).length, 0);
   assert.match(cur.events.at(-1)!.text, /₹2,400\/night is our best/);
 });
+
+test("an answer that waits on details is never read as a 'no' to a must-have", async () => {
+  const { JudgeTask } = await import("../src/market/answer.ts");
+  const i = { question: "Is the studio available next week?", answer: "We cannot check live calendar availability directly through this chat, but please send us your exact dates so we can confirm for you." };
+  assert.equal(JudgeTask.validate!("unmet" as any, i as any), "unclear");
+  assert.equal(JudgeTask.validate!("unmet" as any, { question: "Is it available next week?", answer: "No, we're fully booked next week." } as any), "unmet");
+});

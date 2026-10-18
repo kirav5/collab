@@ -85,7 +85,7 @@ export function storeCard(c, { preview = false } = {}) {
   const items = c.shop ?? fallbackItems(c);
   const off = preview ? "disabled" : "";
   const head = `<div class="row eng-head">${avatarHTML(p.name, p.handle, 36)}<div class="eng-who"><b>${esc(p.name)}</b><span class="small faint">@${esc(p.handle)}${p.bio ? ` · ${esc(p.bio)}` : ""}</span></div>
-      ${preview ? tag("Your card · preview", "accent") : `<button class="btn secondary compact end" data-act="add-contact-direct" data-handle="${esc(p.handle)}">Add to people</button>`}</div>`;
+      ${preview ? tag("Your card · preview", "accent") : c.inPeople ? `<span class="end">${tag("✓ In your people", "fresh")}</span>` : `<button class="btn secondary compact end" data-act="add-contact-direct" data-handle="${esc(p.handle)}">Add to people</button>`}</div>`;
   const record = recordLine(c.record, p);
   if (c.paused) return `<div class="card">${head}${record}<span class="small">${esc(p.name)} isn't taking requests right now.</span></div>`;
   if (!items.length) {
