@@ -5,7 +5,7 @@ Status: [x] done · [~] in progress · [ ] to do
 ## Earlier asks
 - [x] Panel resizer (drag, keys, double-click reset, remembered) — deployed da408c7
 - [x] Pull latest main (PR #10, #11 merged) before changes
-- [ ] Hackathon: "Where AI runs" default → "My devices, else Gemini" (waiting on your yes)
+- [x] "Where AI runs" defaults to Gemini; Gemma on the device is an opt-in feature (Settings › Privacy & AI › Advanced)
 
 ## Request card context ("2–3 years" asked again)
 - [x] Gemini's questions come back answered from the request's own words (evidence-checked)
