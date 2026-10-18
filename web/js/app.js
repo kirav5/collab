@@ -443,7 +443,7 @@ export const STARTERS = [
   { label: "Haircut this Saturday", category: "beauty", text: "Men's haircut in Indiranagar this Saturday afternoon, up to ₹420" },
   { label: "Deep clean my 2BHK", category: "tasks", text: "Deep clean of my 2BHK in Koramangala this Saturday morning, kitchen and two bathrooms, up to ₹3,300" },
   { label: "Eggless birthday cake", category: "food", text: "Eggless 1 kg chocolate birthday cake, simple design with Happy Birthday written on it, delivered in Whitefield this Sunday evening, up to ₹1,050" },
-  { label: "AC service", category: "tasks", text: "AC service for one 1.5 ton split AC in HSR Layout this Saturday, up to ₹560" },
+  { label: "AC service", category: "tasks", text: "AC service for one 1.5 ton split AC in HSR Layout this Saturday, it isn't cooling well, up to ₹560" },
   { label: "Guitar lessons", category: "lessons", text: "Guitar lessons for a beginner adult, at my home in Indiranagar, weekday evenings, up to ₹750 an hour" },
   { label: "Rent a camera", category: "equipment-rental", text: "Rent a Sony mirrorless camera with a lens for this Saturday, pickup in Koramangala, up to ₹1,650 a day" },
   { label: "Street food walk", category: "events", text: "Weekend street food walk in Basavanagudi for 2 people this Saturday evening, up to ₹1,100 each" },
