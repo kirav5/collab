@@ -18,7 +18,7 @@ import { scan, screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
 import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon, FEATURES } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
-import { landing, returning, shouldLand, tried } from "./landing.js";
+import { inApp, landing, opening, shouldLand } from "./landing.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
 // Incognito (Settings): remembered on this device only as the on/off choice itself.
@@ -1996,8 +1996,8 @@ navigator.serviceWorker?.addEventListener("message", e => {
 // Anything that stops start-up shows a way back instead of a blank page.
 try {
 // Someone new to Collab in a browser sees the front page first — before sign-in, so it makes no account.
-tried();
-if (shouldLand(location.search, { installed: standalone(), before: returning() })) await landing();
+if (shouldLand(location.search, { installed: standalone(), opened: inApp() })) await landing();
+opening();
 // What the address and its history entry said at the start: a link to open, or (a reload) what was open.
 const startQuery = location.search, startState = history.state;
 await signIn();
