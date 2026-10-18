@@ -54,6 +54,9 @@ const RETRYABLE = /\b(429|500|503|504|404)\b|UNAVAILABLE|RESOURCE_EXHAUSTED|DEAD
 
 const list = (v: string | undefined, d: string) => (v || d).split(",").map(s => s.trim()).filter(Boolean);
 
+/** How long a call runs before a copy is sent alongside it (see hedged). */
+const HEDGE_CHEAP_MS = 5_000, HEDGE_MS = 8_000;
+
 /** Cheap tasks try the cheap models first, then the standard ones as a safety net. */
 export const modelsFor = (tier: "cheap" | "standard" | undefined, standard: string[], cheap: string[]): string[] =>
   tier === "cheap" ? [...new Set([...cheap, ...standard])] : standard;
@@ -183,13 +186,28 @@ export function geminiFromEnv(env = process.env): (Model & { status(): ModelStat
     },
     async complete(req) {
       const started = Date.now();
-      const r = await attempt(req);
+      const r = await hedged(req);
       const ms = Date.now() - started;
       meter.record({ task: req.task ?? req.instructions.slice(0, 40), model: r !== null ? lastModel! : modelsFor(req.tier, models, cheap)[0], ms, usage: r?.usage ?? null, ok: r !== null });
       if (r) log.info("gemini", { task: req.task ?? req.instructions.slice(0, 40), model: lastModel, ms, tokens: r.usage });
       return r?.text ?? null;
     },
   };
+
+  /** A call that hasn't answered in a few seconds gets one copy sent alongside it; the first answer wins. Most calls
+   *  answer in 1–3 s, but now and then one takes 15 s (the timeout): the copy usually comes back in the usual time, so
+   *  one slow call no longer holds up a request. Only the slow ones cost a second call. */
+  async function hedged(req: CompleteRequest): Promise<{ text: string | null; usage: Usage } | null> {
+    const first = attempt(req);
+    const wait = req.tier === "cheap" ? HEDGE_CHEAP_MS : HEDGE_MS;
+    const early = await Promise.race([first, new Promise<"late">(res => setTimeout(res, wait, "late"))]);
+    if (early !== "late") return early;
+    const second = attempt(req);
+    return new Promise(resolve => {
+      let left = 2;
+      for (const p of [first, second]) p.then(r => { if (r) resolve(r); else if (--left === 0) resolve(null); }, () => { if (--left === 0) resolve(null); });
+    });
+  }
 
   async function attempt(req: CompleteRequest): Promise<{ text: string | null; usage: Usage } | null> {
     const choices = modelsFor(req.tier, models, cheap);
