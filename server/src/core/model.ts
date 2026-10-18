@@ -153,7 +153,7 @@ export interface QA {
   answer?: string;
   /** Where the answer came from: the brief, a Public or Protected fact, or the owner. */
   source?: "brief" | "public" | "protected" | "owner" | "listing" | "memory" | "private";
-  status: "open" | "answered" | "pending" | "declined";
+  status: "open" | "answered" | "pending" | "declined" | "moot";
   /** The asker's judgement of the answer (requester's must-asks). */
   verdict?: "met" | "unmet" | "unclear";
   /** Only the person answers (an interview's days and times): their agent never answers it from what's on file. */

@@ -504,6 +504,13 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
     if (!paid && mandate.price.opening >= e.offer.price) mandate = { ...mandate, price: { ...mandate.price, opening: Math.round(e.offer.price * 0.92) } };
     if (paid && mandate.price.opening <= e.offer.price) mandate = { ...mandate, price: { ...mandate.price, opening: Math.max(mandate.price.limit, Math.round(e.offer.price * 1.08)) } };
   }
+  // A first offer people would say: ₹1,04,90,000 or ₹1,780, not ₹1,04,96,900 or ₹1,784 — rounded in the owner's
+  // favour, never past their limit.
+  if (!(s === "provider" ? e.negotiation.provider : e.negotiation.requester).length) {
+    const { opening, limit } = mandate.price, step = 10 ** Math.max(0, Math.floor(Math.log10(Math.max(opening, 1))) - 2), up = limit > opening;
+    const nice = up ? Math.floor(opening / step) * step : Math.ceil(opening / step) * step;
+    if (nice > 0 && (up ? nice <= limit : nice >= limit)) mandate = { ...mandate, price: { ...mandate.price, opening: nice } };
+  }
   const c = ctx(e, s, mandate, listing);
   const m = await decide(model, NegotiateTask, { ctx: c, listPrice: e.offer.price ?? mandate.price.opening });
   const mv = m.output;
@@ -790,11 +797,16 @@ export async function autoConfirm(db: Docs, e: Engagement, s: Side) {
   await save(db, e);
 }
 
+/** For tests: the same rule that turns a doubly-confirmed deal into an agreed one. */
+export const settleForTest = (e: Engagement) => settle(e);
 function settle(e: Engagement) {
   if (e.phase === "deal" && e.negotiation.confirmed.requester && e.negotiation.confirmed.provider) {
     e.phase = "agreed";
     e.agreedAt = now();
     e.waiting = { requester: null, provider: null };
+    // A question nobody answered before the deal closed isn't waiting on anyone any more: the record says so, so it
+    // doesn't read "asked you" with no one being asked.
+    for (const q of e.qa) if (q.status === "open" || q.status === "pending") { q.status = "moot"; q.answer = "Not needed — the deal was agreed."; }
     say(e, "system", "Deal agreed by both owners.");
   }
 }
