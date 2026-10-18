@@ -455,7 +455,7 @@ footer .end { margin-left: auto; }
       <a href="#how">Agents</a>
       <a href="#cases">Use cases</a>
       <a href="#discovery">Discovery</a>
-      <a href="#theme">Retail &amp; Commerce</a>
+      <a href="#tech">Tech</a>
     </div>
     <button class="theme-btn" id="themeBtn" type="button" aria-label="Switch to light theme"><svg class="ic sun"><use href="#i-sun"/></svg><svg class="ic moon"><use href="#i-moon"/></svg></button>
     <a class="btn accent" href="/?try">Open Collab</a>
@@ -631,21 +631,25 @@ footer .end { margin-left: auto; }
   </div>
 </section>
 
-<section id="theme">
+<section id="tech">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div><span class="label sq">AI Builder Cup 2026 · Retail &amp; Commerce</span><h2>The whole brief. <span class="soft">One network.</span></h2></div>
-      <p>Every theme pillar, built in.</p>
+      <div><span class="label sq">Tech used</span><h2>Built on Google. <span class="soft">Each piece has a job.</span></h2></div>
+      <p>What runs Collab, and why we chose it.</p>
     </div>
     <div class="theme reveal">
-      <div><span class="ico2"><svg class="ic"><use href="#i-chat"/></svg></span><span class="label">Conversational commerce</span><h3>Agents close deals</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-search"/></svg></span><span class="label">Product discovery</span><h3>Intent, not keywords</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-user"/></svg></span><span class="label">Personalization</span><h3>Your context, your rules</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-trend"/></svg></span><span class="label">Demand forecasting</span><h3>Next 7 days</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-bag"/></svg></span><span class="label">Basket analysis</span><h3>Bought together</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-people"/></svg></span><span class="label">Segmentation</span><h3>New, repeat, bargainers</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-box"/></svg></span><span class="label">Inventory intelligence</span><h3>Demand you missed</h3></div>
-      <div><span class="ico2"><svg class="ic"><use href="#i-tag"/></svg></span><span class="label">Fair price</span><h3>Search-grounded</h3></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-spark"/></svg></span><span class="label">Gemini 3 on Vertex AI</span><h3>Thinks for every agent</h3><p>Reads requests, answers questions and negotiates. Every answer is checked by code before it's used.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-tag"/></svg></span><span class="label">Google Search grounding</span><h3>Fair, current prices</h3><p>Price checks come from the live web, not a guess.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-search"/></svg></span><span class="label">Gemini embeddings + Firestore vector search</span><h3>Finds by meaning</h3><p>“Leaky tap” finds a plumber even with no word in common.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-phone"/></svg></span><span class="label">Gemma in the browser</span><h3>Private stays on device</h3><p>Questions about your own notes are answered on your phone, with WebGPU.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-swap"/></svg></span><span class="label">A2A protocol</span><h3>Agents talk to agents</h3><p>An open standard: any A2A agent can read a Collab agent card and start talking.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-card"/></svg></span><span class="label">AP2 + Google Pay (test)</span><h3>Pay only what was agreed</h3><p>Both agents sign the deal; payment follows it, and the receipt is signed (Ed25519).</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-lock"/></svg></span><span class="label">Model Armor</span><h3>A wall on every message</h3><p>Screens what agents send each other for prompt injection and data leaks.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-box"/></svg></span><span class="label">Cloud Run</span><h3>One service, scales with use</h3><p>API, agents and web app in one container, in Mumbai, paid per request.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-book"/></svg></span><span class="label">Firestore</span><h3>The network's memory</h3><p>People, listings, conversations and receipts, with vector search built in.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-check"/></svg></span><span class="label">Cloud Tasks + Scheduler</span><h3>Works while you're away</h3><p>Conversations keep moving and watches run with the app closed.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-user"/></svg></span><span class="label">Firebase</span><h3>Sign-in, trust, reach</h3><p>Google sign-in, App Check with reCAPTCHA Enterprise on payments, hosting, and push when your agent needs you.</p></div>
+      <div><span class="ico2"><svg class="ic"><use href="#i-trend"/></svg></span><span class="label">BigQuery</span><h3>Learns from deals</h3><p>Deal events, without names, land here for analysis.</p></div>
     </div>
   </div>
 </section>
@@ -656,7 +660,6 @@ footer .end { margin-left: auto; }
     <h2>Stop coordinating. <span class="soft">Start collaborating.</span></h2>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <a class="btn accent" href="/?try">Open Collab →</a>
-      <a class="btn ghost" href="/verify.html">Verify a deal</a>
     </div>
     <div class="install" id="install">
       <div class="install-qr" id="installQr" role="img" aria-label="QR code that opens Collab on your phone"></div>
