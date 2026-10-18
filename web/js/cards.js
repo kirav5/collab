@@ -89,14 +89,14 @@ export function storeCard(c, { preview = false } = {}) {
   const record = recordLine(c.record, p);
   if (c.paused) return `<div class="card">${head}${record}<span class="small">${esc(p.name)} isn't taking requests right now.</span></div>`;
   if (!items.length) {
-    const qs = c.suggestions?.length ? c.suggestions.map(x => x.text) : ["What are you looking for right now?", "Are you free this weekend?"];
+    const qs = (c.suggestions ?? []).map(x => x.text);
     return `<div class="card">${head}${record}
-      <span class="small faint">${first} hasn't listed anything yet. Their agent answers from what they share and passes anything else to them.</span>
-      <div class="row">${qs.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}" ${off}>${esc(q)}</button>`).join("")}</div></div>`;
+      <span class="small faint">${first} hasn't listed anything. Ask their agent anything below — it answers from what ${first} shares and passes anything else to them.</span>
+      ${qs.length ? `<div class="row">${qs.map(q => `<button class="chip" data-act="send-text" data-text="${esc(q)}" ${off}>${esc(q)}</button>`).join("")}</div>` : ""}</div>`;
   }
   const shown = items.slice(0, 3), more = items.slice(3);
   return `<div class="card">${head}${record}
-    ${preview ? `<span class="small muted">This is what customers see when they scan your QR. Buttons are off in the preview.</span>` : ""}
+    ${preview ? `<span class="small muted">This is what people see when they scan your QR. Buttons are off in the preview.</span>` : ""}
     ${shown.map(it => shopItem(it, p, off)).join("")}
     ${more.length ? `<details class="more"><summary>${more.length} more on offer</summary>${more.map(it => shopItem(it, p, off)).join("")}</details>` : ""}
     <span class="small faint">Or type any question below — ${esc(p.name)}'s agent answers from what they share and asks them the rest. No queue.</span>
@@ -706,6 +706,9 @@ export function dealAmount(e) {
 /** On the seller's side: what the buyer asked for, at a glance, and the moves a seller usually makes next. */
 function sellerRequest(e, mine) {
   if (mine !== "provider" || !["asking", "negotiating"].includes(e.phase)) return "";
+  // A plain question sent straight to you ("Are you free this weekend?" from your card or QR) isn't a request: no
+  // listing, no request behind it — it's answered in the conversation, with no prices or "budget" to weigh.
+  if (!e.briefId && !e.offer?.factId) return "";
   // An application to the employer's own job post is handled from the applicants board (shortlist, interview, not this time).
   if (rolesOf(e.offer.category).flow === "hire" && e.seller === "requester" && e.offer.factId) return "";
   const b = e.brief ?? {}, id = esc(e.id), P = partyRoles(e, mine), asker = partyRoles(e, "requester");

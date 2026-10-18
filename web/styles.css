@@ -795,3 +795,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; max-heigh
 .session-del:hover { color: var(--danger); background: var(--surface2); }
 @media (pointer: coarse) { .session-del { opacity: 1; width: 44px; height: 44px; } }
 @media (pointer: coarse) { .resizer { width: 24px; left: -12px; } .resizer::after { left: 11px; } .resizer::before { left: 9px; } }
+/* The open screen's title row: menu (or Back), title and close share one centre line. */
+#panel-title { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+#panel-title .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

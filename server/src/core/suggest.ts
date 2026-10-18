@@ -53,17 +53,13 @@ export function forOffer(f: Fact, tracked: Tracked = null): Suggestion[] {
 
 /**
  * What a visitor might ask: one offering → its three questions; several → whether the first two are there, the first
- * one's price, and what else they have; nothing offered (a person, not a shop) → questions about them, which their
- * agent answers from what they share or takes to them.
+ * one's price, and what else they have; nothing offered → none (the visitor writes their own
+ * question; their agent answers from what they share or takes it to them).
  */
 export function suggestionsFor(name: string, facts: Fact[], tracked: Record<string, Tracked> = {}): Suggestion[] {
   const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold").sort((a, b) => b.updatedAt - a.updatedAt);
-  if (!offers.length) {
-    const first = name.split(" ")[0] || "them";
-    return [{ label: "Looking for", text: "What are you looking for right now?", offerId: null },
-      { label: "Free?", text: "Are you free this weekend?", offerId: null },
-      { label: "About", text: `What do you do, ${first}?`, offerId: null }];
-  }
+  // Nothing offered (a person, not a listing): no made-up questions — the visitor asks their agent in their own words.
+  if (!offers.length) return [];
   if (offers.length === 1) return forOffer(offers[0], tracked[offers[0].id] ?? null);
   const [a, b] = offers.map(f => forOffer(f, tracked[f.id] ?? null));
   return [a[0], b[0], a[1], { label: "More", text: "What else do you have?", offerId: null }];

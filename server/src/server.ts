@@ -879,6 +879,9 @@ app.post("/api/contacts", route(async req => {
   if (!p || p.uid === req.uid) throw new HttpError(404, "no one by that handle");
   const c: Contact = { owner: req.uid, uid: p.uid, handle: p.handle, name: p.name, addedAt: now() };
   await db.set(CONTACTS, `${req.uid}_${p.uid}`, c);
+  // People know each other both ways: they see who added them (only a list entry — it shares nothing by itself).
+  const meP = await me(req.uid);
+  await db.update(CONTACTS, `${p.uid}_${req.uid}`, (cur: Contact | null) => cur ?? { owner: p.uid, uid: req.uid, handle: meP.handle, name: meP.name, addedAt: now(), addedYou: true });
   return c;
 }));
 app.post("/api/contacts/remove", route(async req => { await db.delete(CONTACTS, `${req.uid}_${text(req.body?.uid, 128)}`); return { ok: true }; }));
