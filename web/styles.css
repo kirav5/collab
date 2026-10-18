@@ -1,13 +1,15 @@
 /* Collab's visual language (CollabUI/Theme.swift): near-black canvas (off-white in light mode), hairline rules
    instead of shadows, a large two-tone grotesk headline, small monospaced uppercase labels, square controls, and one
-   pink accent (--accent; --accent-ink for text). Periwinkle (--peri; --peri-ink for text) marks things that stay on the device. */
+   pink accent (--accent; --accent-ink for text). Private and in-progress things are marked in neutral ink and grey
+   (--peri-ink / --peri-fill, --talk / --talk-fill): the palette is pink, black and white. --peri stays only for the
+   logo's offer square. */
 :root {
   --bg: #f7f7f5; --surface: #ffffff; --surface2: #efefec; --hairline: #deded9;
   --text: #0a0a0a; --text2: #55554f; --text3: #6b6b66;
-  --accent: #ff3ea5; --accent-ink: #c4126e; --peri: #5b5fd6; --peri-fill: #e6e7fb; --peri-ink: #4d51c8;
+  --accent: #ff3ea5; --accent-ink: #c4126e; --peri: #5b5fd6; --peri-fill: #efefec; --peri-ink: #55554f;
   --fresh: #087a45; --stale: #9c4872; --danger: #c9302c; --inverse: #0a0a0a; --on-inverse: #f7f7f5; --on-accent: #0a0a0a;
   /* States of what your agents are doing (tiles): waiting on you, agents negotiating, agreed, ended. */
-  --wait: #c4126e; --wait-fill: #ffe4f1; --talk: #5b5fd6; --talk-fill: #e6e7fb; --done-fill: #e2f4ea; --hot: #c9302c;
+  --wait: #c4126e; --wait-fill: #ffe4f1; --talk: #55554f; --talk-fill: #efefec; --done-fill: #e2f4ea; --hot: #c9302c;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
   color-scheme: light;
@@ -17,16 +19,16 @@
 :root[data-look="dark"] {
   --bg: #0a0a0a; --surface: #121212; --surface2: #1a1a1a; --hairline: #262626;
   --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
-  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --peri-ink: #a5a8f0; --fresh: #3ddc97; --stale: #e58bbd; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
-  --wait: #ff6dbb; --wait-fill: #2b0f1e; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
+  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1a1a1a; --peri-ink: #a3a3a3; --fresh: #3ddc97; --stale: #e58bbd; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
+  --wait: #ff6dbb; --wait-fill: #2b0f1e; --talk: #a3a3a3; --talk-fill: #1a1a1a; --done-fill: #0b2519; --hot: #ff5a4e;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-look]) {
     --bg: #0a0a0a; --surface: #121212; --surface2: #1a1a1a; --hairline: #262626;
   --text: #f4f4f4; --text2: #a3a3a3; --text3: #8a8a8a;
-  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1d1e33; --peri-ink: #a5a8f0; --fresh: #3ddc97; --stale: #e58bbd; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
-  --wait: #ff6dbb; --wait-fill: #2b0f1e; --talk: #a5a8f0; --talk-fill: #1d1e33; --done-fill: #0b2519; --hot: #ff5a4e;
+  --accent: #ff3ea5; --accent-ink: #ff6dbb; --on-accent: #0a0a0a; --peri: #a5a8f0; --peri-fill: #1a1a1a; --peri-ink: #a3a3a3; --fresh: #3ddc97; --stale: #e58bbd; --danger: #ff5a4e; --inverse: #f4f4f4; --on-inverse: #0a0a0a;
+  --wait: #ff6dbb; --wait-fill: #2b0f1e; --talk: #a3a3a3; --talk-fill: #1a1a1a; --done-fill: #0b2519; --hot: #ff5a4e;
   color-scheme: dark;
   }
 }
@@ -80,7 +82,7 @@ span.chip:not(.req) { cursor: default; } /* shown, not pressed */
 /* Containers: hairline-bordered surfaces only */
 .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
 .card.accent { border-color: var(--accent); }
-.card.peri { background: var(--peri-fill); border-color: color-mix(in srgb, var(--peri) 40%, transparent); }
+.card.peri { background: var(--peri-fill); border-color: var(--hairline); }
 .card.peri .faint { color: var(--text2); }
 .card.slim { padding: 10px 12px; gap: 6px; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; margin: 0; }
@@ -278,7 +280,7 @@ details.more[open] { display: grid; gap: 10px; }
 .match-row { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--hairline); }
 :not(.match-row) + .match-row { border-top: 0; }
 .match-main { display: grid; gap: 2px; min-width: 0; }
-.match-main .fits { color: var(--peri); overflow-wrap: anywhere; } /* "Fits you" — from private notes, so the private colour */
+.match-main .fits { color: var(--peri-ink); overflow-wrap: anywhere; } /* "Fits you" — from private notes, so the private colour */
 .chart { display: grid; gap: 4px; }
 
 /* QR code */
@@ -339,7 +341,7 @@ label.mic { cursor: pointer; }
 @media (max-width: 520px) { .ins-tiles { grid-template-columns: 1fr 1fr; } }
 .ins-tile { --edge: var(--text3); display: grid; gap: 4px; align-content: start; min-width: 0; padding: 8px 10px; border: 1px solid var(--hairline); border-radius: 4px;
   background: color-mix(in srgb, var(--edge) 6%, var(--surface)); box-shadow: inset 3px 0 0 var(--edge); }
-.ins-tile.wait { --edge: var(--wait); } .ins-tile.talk { --edge: var(--talk); } .ins-tile.fresh { --edge: var(--fresh); } .ins-tile.accent { --edge: var(--accent); } .ins-tile.peri { --edge: var(--peri); }
+.ins-tile.wait { --edge: var(--wait); } .ins-tile.talk { --edge: var(--talk); } .ins-tile.fresh { --edge: var(--fresh); } .ins-tile.accent { --edge: var(--accent); } .ins-tile.peri { --edge: var(--peri-ink); }
 .ins-tile.wide { grid-column: 1 / -1; }
 .ins-note { font-size: 11px; margin-top: -3px; }
 .ins-row { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; font-size: 13px; min-width: 0; }

@@ -30,7 +30,7 @@ async function sharedLog() {
  * Insights, at the top of My card, for someone with at least one public offering: what to do first (Gemini's lines, or
  * the plain reading of the numbers when the model isn't there — the server checks every number either way), then the
  * numbers behind it in small tiles, each edged by what it is: wait (pink) for demand you missed, accent for demand you
- * could meet (asked near you, bought alongside yours), talk (periwinkle) for what people ask and what's coming, green for deals done.
+ * could meet (asked near you, bought alongside yours), talk (grey) for what people ask and what's coming, green for deals done.
  * Other people only ever appear as counts — the server sends nothing else. Read at most once a minute (each read is a
  * metered call); an empty part is left out, and a forecast is shown only when the response has one.
  */
