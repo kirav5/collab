@@ -453,11 +453,11 @@ function attrValue(k, v) {
 function askRow(c, m, at) {
   const ans = c.missingAnswers?.[m.label] ?? "", sug = !String(ans).trim() ? c.suggestedAnswers?.[m.label] : null;
   const own = !!c.missingOther?.[m.label] || (ans && !(m.options ?? []).includes(ans));
-  // Gemini's likely answer is marked on its option (a guess says so); the owner's tap makes it theirs.
-  const mark = op => (ans === op && c.fromMemory?.[m.label] ? " · from before" : ans === op && c.fromNotes?.[m.label] ? " · from your notes" : sug === op ? (c.guessedAnswers?.[m.label] ? " · guess — check" : " · suggested") : "");
-  const sugOwn = sug && !(m.options ?? []).includes(sug) ? `<button class="chip suggested" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(sug)}" ${at}>${esc(String(sug).slice(0, 40))}${c.fromMemory?.[m.label] ? " · you said before" : " · suggested"}</button>` : "";
+  // Gemini's answers are already picked (tap another to change); only where it came from your own words is noted.
+  const mark = op => (ans === op && c.fromMemory?.[m.label] ? " · from before" : ans === op && c.fromNotes?.[m.label] ? " · from your notes" : "");
+  const sugOwn = sug && !(m.options ?? []).includes(sug) ? `<button class="chip" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(sug)}" ${at}>${esc(String(sug).slice(0, 40))}</button>` : "";
   return `<div class="stack" style="gap:4px"><span class="small"><b>${esc(m.label)}</b> · ${esc(m.ask)}</span>
-    ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : sug === op ? "suggested" : ""}" aria-pressed="${ans === op}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}${mark(op)}</button>`).join("")}${sugOwn}<button class="chip ${own ? "on" : ""}" data-act="offer-ask-other" data-key="${esc(m.label)}" ${at}>Other…</button></div>` : ""}
+    ${m.options?.length ? `<div class="row">${m.options.map(op => `<button class="chip ${ans === op ? "on" : ""}" aria-pressed="${ans === op}" data-act="offer-ask-pick" data-key="${esc(m.label)}" data-val="${esc(op)}" ${at}>${esc(op)}${mark(op)}</button>`).join("")}${sugOwn}<button class="chip ${own ? "on" : ""}" data-act="offer-ask-other" data-key="${esc(m.label)}" ${at}>Other…</button></div>` : ""}
     ${own || !m.options?.length ? `<input class="field" data-missing="${esc(m.label)}" data-edit="missing" data-key="${esc(m.label)}" ${at} value="${esc(own ? ans : "")}" aria-label="${esc(m.label)}" placeholder="${m.options?.length ? "In your own words" : esc(m.ask)}">` : ""}</div>`;
 }
 
@@ -479,10 +479,9 @@ function offerImprovements(c, at) {
   const o = c.offer, kind = passKind({ offer: { category: o.category } }), L = listingRoles(c);
   // Each part: [key, title, done, shown, what it says now] — the status line means nothing has to be opened to know.
   const answered = (c.missing ?? []).filter(m => String(c.missingAnswers?.[m.label] ?? "").trim()).length;
-  const pending = (c.missing ?? []).filter(m => !String(c.missingAnswers?.[m.label] ?? "").trim() && c.suggestedAnswers?.[m.label]).length;
   const mode = { "": "Asks you every move", negotiate: "Bargains inside your limit; you confirm", close: "Bargains and agrees inside your limit" }[autonomyOf(c) || ""];
   const parts = [
-    ["questions", `What ${L.responders} usually ask`, !(c.missing?.length) || answered === c.missing.length, !!c.missing?.length, `${answered} of ${c.missing?.length ?? 0} answered${pending ? ` · ${pending} suggested` : ""}`],
+    ["questions", `What ${L.responders} usually ask`, !(c.missing?.length) || answered === c.missing.length, !!c.missing?.length, `${answered} of ${c.missing?.length ?? 0} answered`],
     ["terms", "Your terms", !!c.terms?.length, true, c.termsLoading && Date.now() - c.termsLoading < 60_000 ? "Finding what others state…" : c.terms?.length ? `${c.terms.length} set — edit any` : "None yet"],
     ["agent", "How your agent bargains", !!autonomyOf(c) || !!c.rulesOk, true, `${mode}${c.rulesOk ? " · your rules" : ""}`],
     ["instant", kind === "booking" ? "Instant booking" : "Instant orders", !!c.instant, !L.pays, c.instant ? "On — your listed price is accepted at once" : "Off — you confirm each"],
@@ -491,7 +490,7 @@ function offerImprovements(c, at) {
   ].filter(p => p[3]);
   const open = c.openParts ?? {};
   const body = {
-    questions: () => `<div class="stack" style="gap:8px">${pending ? `<div class="row"><button class="btn accent compact" data-act="offer-use-suggested" ${at}>Use these ${pending} suggested answers</button><span class="small faint">From your words, or Gemini's best guess — tap any to change</span></div>` : ""}${c.missing.map(m => askRow(c, m, at)).join("")}<span class="small faint">Public — answered once, so others' agents don't ask you.</span></div>`,
+    questions: () => `<div class="stack" style="gap:8px">${c.missing.map(m => askRow(c, m, at)).join("")}<span class="small faint">Public — answered once, so others' agents don't ask you.</span></div>`,
     terms: () => `<div class="stack" style="gap:6px"><span class="small muted">Shown on your card and in every receipt. Edit or clear any.</span>
       ${(c.terms ?? []).map((t, j) => `<div class="term-edit"><input class="field term-label" data-term-label data-edit="term-label" data-j="${j}" ${at} value="${esc(t.label)}" aria-label="Term name"><textarea class="field term-text" rows="2" data-term-text data-edit="term-text" data-j="${j}" ${at} aria-label="${esc(t.label)}">${esc(t.text)}</textarea></div>
         ${t.sources?.length ? `<span class="small faint">As ${esc(L.owner)}s state it: ${t.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || "source")}</a>`).join(" · ")}</span>` : ""}`).join("")}

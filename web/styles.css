@@ -258,7 +258,7 @@ dialog::backdrop { background: rgb(0 0 0 / 45%); }
 .status { margin: 0; display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .status .spinner { flex: none; }
 .keyline { margin: 0; border-left: 2px solid var(--hairline); padding-left: 10px; }
-.deal { display: grid; gap: 8px; padding: 12px; border: 1px solid color-mix(in srgb, var(--fresh) 45%, transparent); border-radius: 6px; }
+.deal { display: grid; gap: 8px; padding: 12px 12px 12px 14px; background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--accent); border-radius: 6px; }
 .deal-price { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
 /* Amounts and counts line up in a column and keep their width as they change. */
 .deal-price, .stats b, .share-stats b, .net-grid b, .co-order .end, .co-total, .price-list b, .receipt-card .breakdown .end, .rrow-side b, .pass-kv dd { font-variant-numeric: tabular-nums; }
@@ -367,7 +367,7 @@ label.mic { cursor: pointer; }
 .eng-row[open] > summary { margin-bottom: 10px; }
 .eng-row.ended { box-shadow: inset 3px 0 0 var(--text3); }
 .tile-agreed { box-shadow: inset 3px 0 0 var(--fresh); }
-.deal { background: color-mix(in srgb, var(--done-fill) 60%, transparent); }
+
 .deal-chat { border-top: 1px solid var(--hairline); padding-top: 8px; }
 .chat-line { padding: 6px 8px; border-radius: 6px; background: var(--surface2); max-width: 90%; min-width: 0; overflow-wrap: anywhere; }
 .chat-line.me { justify-self: end; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }

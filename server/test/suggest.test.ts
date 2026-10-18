@@ -154,3 +154,19 @@ test("terms suggested from the web keep their sources, and go through the same c
   assert.deepEqual(none.terms, [], "without the model, nothing is presented as suggested by it");
   assert.ok(none.starters.some(t => t.label === "Cancellation"), "but the seller still has common terms to start from");
 });
+
+test("terms: the quick reading answers at once when the web search is slow, and the search result is kept for next time", async () => {
+  const prev = process.env.DECIDE_CACHE; process.env.DECIDE_CACHE = "1";
+  const { suggestTerms } = await import("../src/core/terms.ts");
+  let searched = 0;
+  const model: any = { name: "t", complete: async () => JSON.stringify({ terms: [{ label: "Returns", text: "No returns once it's handed over." }, { label: "Inspection", text: "Test it before you pay." }] }),
+    search: () => { searched++; return new Promise(res => setTimeout(() => res({ text: "Returns: No returns after pickup.\nInspection: Check it before paying.", sources: [] }), 7_500)); } };
+  const t0 = Date.now();
+  const first = await suggestTerms(model, "goods", "Selling a wooden study table in Koramangala, quick test " + t0);
+  assert.ok(Date.now() - t0 < 7_000, "doesn't wait for the slow search");
+  assert.equal(first.grounded, false); assert.ok(first.terms.length >= 1);
+  const again = await suggestTerms(model, "goods", "Selling a wooden study table in Koramangala, quick test " + t0);
+  assert.equal(searched, 1, "one search however many ask");
+  process.env.DECIDE_CACHE = prev;
+  void again;
+});

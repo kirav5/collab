@@ -259,12 +259,12 @@ export async function offerReply(text, d, extra = {}) {
   const fromDraft = d.answers && typeof d.answers === "object" ? d.answers : null;
   const suggested = fromDraft ? { suggestedAnswers: Object.fromEntries(Object.entries(fromDraft).map(([k, v]) => [k, String(v).split("\u0000")[0]])),
     guessedAnswers: Object.fromEntries(Object.entries(fromDraft).filter(([, v]) => String(v).endsWith("\u0000guess")).map(([k]) => [k, true])), answersTried: "draft" } : {};
-  // What the listing's words or the owner's own notes say is filled in at once (they can change it before publishing);
-  // only a guess waits for a tap.
+  // Gemini's answers are filled in at once — from the listing's words, the owner's notes, or the usual answer for this
+  // kind of listing — and the owner changes any before publishing.
   const fromNotes = {};
   for (const [k, v] of Object.entries(fromDraft ?? {})) {
     const [answer, from] = String(v).split("\u0000");
-    if (missingAnswers[k] || from === "guess" || !(d.missing ?? []).some(m => m.label === k)) continue;
+    if (missingAnswers[k] || !(d.missing ?? []).some(m => m.label === k)) continue;
     missingAnswers[k] = answer;
     if (from === "context") fromNotes[k] = true;
   }

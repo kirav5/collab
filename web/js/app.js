@@ -606,6 +606,9 @@ async function prefillAnswers(sid, mid, i) {
   const remembered = Object.fromEntries(Object.entries(now_.c.suggestedAnswers ?? {}).filter(([k]) => now_.c.fromMemory?.[k]));
   now_.c.suggestedAnswers = { ...Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, String(v).split("\u0000")[0]])), ...remembered };
   now_.c.guessedAnswers = Object.fromEntries(Object.entries(r.answers).filter(([, v]) => String(v).includes("\u0000")).map(([k]) => [k, true]));
+  // …and filled in, where the owner hasn't answered yet (they change any before publishing).
+  for (const [k, v] of Object.entries(r.answers)) if (!String(now_.c.missingAnswers?.[k] ?? "").trim()) (now_.c.missingAnswers ??= {})[k] = String(v).split("\u0000")[0];
+  now_.c.answeredMissing = (now_.c.missing ?? []).every(m => String(now_.c.missingAnswers?.[m.label] ?? "").trim());
   await saveSession(now_.s); paintContent(true);
 }
 
