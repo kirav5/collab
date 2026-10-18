@@ -192,8 +192,10 @@ export function checkRules(r: AgentRules, text: string, c: RulesContext): AgentR
   const covered = (u: string) => out.terms.some(t => { const w = words(u), tw = new Set(words(`${t.label} ${t.text}`)); return w.length > 0 && w.filter(x => tw.has(x) || tw.has(x.replace(/s$/, ""))).length / w.length >= 0.6; })
     || out.mustAsk.some(q => words(u).every(x => q.toLowerCase().includes(x.replace(/s$/, ""))));
   // A web lookup that became a rule isn't unsupported either.
+  // How the agent bargains is itself a rule ("negotiates inside my limit; I confirm the deal"), never "can't follow".
+  const howItBargains = (u: string) => /\b(negotiat\w*|bargain\w*)\b[^.]*\b(limit|lowest|floor)\b|\b(i|we) (confirm|give the final yes|approve)\b|\bclose (deals? |it )?(yourself|on your own)\b/i.test(u);
   const looked = (u: string) => out.lookups.length > 0 && new RegExp(WEB, "i").test(u) && /price|cost|part|repair|servic/i.test(u);
-  out.unsupported = r.unsupported.filter(x => x.length >= 3 && x.length <= 120 && !covered(x) && !looked(x)).slice(0, 3);
+  out.unsupported = r.unsupported.filter(x => x.length >= 3 && x.length <= 120 && !covered(x) && !looked(x) && !howItBargains(x)).slice(0, 3);
   if (out.closeAt != null) out.autonomy = "close";
   const anything = out.floor ?? out.limit ?? out.closeAt ?? out.maxPerBuyer ?? out.quantity;
   return anything != null || out.terms.length || out.mustAsk.length || out.lookups.length || out.pricing.length || out.unsupported.length || out.autonomy === "close" ? out : null;

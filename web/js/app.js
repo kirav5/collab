@@ -1541,8 +1541,9 @@ async function cardAction(a, el, { s, m, c }) {
     busy(el, true, "Reading");
     const o = a === "offer-rules-read" ? c.offer : null;
     // A seller's terms are read too: how they price ("25% cheaper than Croma while under guarantee") often lives there.
-    const full = o && !ownerPays(c) && c.terms?.length ? `${words}\n${c.terms.map(t => t.text).join("\n")}`.slice(0, 1500) : words;
-    const r = await api("/api/rules/read", { text: full, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
+    const pricingText = o && !ownerPays(c) && c.terms?.length ? c.terms.map(t => t.text).join("\n").slice(0, 1500) : "";
+    const full = pricingText ? `${words}\n${pricingText}`.slice(0, 1500) : words;
+    const r = await api("/api/rules/read", { text: words, pricingText, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
     if (r) { c.rules = { rules: r.rules, lines: r.lines }; c.rulesOk = false; c.rulesWords = full; delete c.quote; }
   }
   if (a === "brief-rules-clear" || a === "offer-rules-clear") { delete c.rules; delete c.rulesOk; delete c.rulesWords; delete c.quote; c.rulesText = ""; }
