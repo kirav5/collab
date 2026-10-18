@@ -70,7 +70,8 @@ async function insightsCard() {
     <div class="ins-board">${panels.join("")}</div></div>`;
 }
 
-const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h2 class="headline">${title}</h2></div>${body}`;
+// The screen's name is already the panel's title; the headline says what it's for (the name above it was a repeat).
+const frame = (_lbl, title, body) => `<div class="stack" style="gap:6px"><h2 class="headline">${title}</h2></div>${body}`;
 
 /** Every fact the owner has — all tiers live on the server under their account; Private is never shared. */
 async function allFacts() {
