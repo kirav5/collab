@@ -816,3 +816,24 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; max-heigh
 /* In-app QR scanner over the chat */
 .scan-overlay { position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--bg) 92%, transparent); display: grid; place-items: center; padding: 16px; }
 .scan-overlay .scan-card { width: min(440px, 100%); display: grid; gap: 10px; }
+
+/* The front page (landing.js): what Collab is, a way in, and a QR to install it on a phone. */
+.landing { width: min(960px, 100%); margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 28px; }
+.landing-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.landing-hero { display: flex; flex-direction: column; gap: 14px; padding-top: clamp(12px, 6vw, 56px); }
+.landing-hero .headline { font-size: clamp(30px, 6vw, 52px); max-width: 18ch; }
+.landing-lede { margin: 0; font-size: clamp(16px, 2.2vw, 19px); line-height: 1.5; color: var(--text2); max-width: 60ch; }
+.landing-cta { display: flex; flex-wrap: wrap; gap: 10px; }
+.landing-cta .btn { min-height: 46px; padding: 0 22px; font-size: 16px; text-decoration: none; display: inline-flex; align-items: center; }
+.landing-phone { display: flex; flex-direction: row; align-items: center; gap: 18px; padding: 18px; }
+.landing-phone.lit { outline: 2px solid var(--accent); }
+.landing-phone p { margin: 6px 0 0; }
+.landing-qr { flex: none; width: 150px; height: 150px; background: #fff; border-radius: 10px; padding: 6px; }
+.landing-qr svg { width: 100%; height: 100%; display: block; }
+.landing-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.landing-steps .card { gap: 6px; padding: 16px; }
+.landing-steps p { margin: 0; }
+.landing-num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent, #fff); font-weight: 700; font-size: 13px; }
+.landing-foot { text-align: center; }
+@media (max-width: 560px) { .landing-phone { flex-direction: column; align-items: flex-start; } }
+.landing [hidden] { display: none !important; }
