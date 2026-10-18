@@ -783,7 +783,6 @@ export const screens = {
         setTimeout(() => { row.open = true; row.querySelector('[data-act="eng-receipt"]')?.click(); }, 0);
         return true;
       }
-      if (a === "deals-filter") { S.dealsFilter = el.dataset.k; h.paint(); return true; }
       if (a === "radar") { S.radar = el.dataset.k; h.paint(); return true; }
       if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ block: "center" }); c?.classList.add("landed"); setTimeout(() => c?.classList.remove("landed"), 1600); return true; }
       if (a === "watch-stop") { busy(el, true); await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
@@ -846,11 +845,6 @@ export const screens = {
         return Object.entries(m).filter(([, v]) => v).map(([c, v]) => money(v, null, c)).join(" + "); };
       const soldSum = paidBy(sold), boughtSum = paidBy(bought);
       // Find a deal fast: what still needs doing, what you sold, what you bought, what's finished.
-      // Open: still to pay, hand over or confirm. Won: paid or handed over as agreed. Lost: cancelled or fell through.
-      const DEAL_FILTERS = [["open", "Open"], ["won", "Won"], ["lost", "Lost"], ["all", "All"]];
-      const finishedDeal = e => ["accepted", "disputed"].includes(e.fulfilment?.state) || off(e) || (handed(e) && sellerOf(e) === me(e));
-      const dealIn = (e, k) => k === "all" || (k === "open" ? !finishedDeal(e) : k === "lost" ? off(e) : finishedDeal(e) && !off(e));
-      const dealFilter = DEAL_FILTERS.some(([k]) => k === S.dealsFilter) ? S.dealsFilter : "open";
       const STAGE = e => dealStage(e, me(e));
       const dealRow = e => {
         const side = me(e), them = side === "provider" ? e.requester : e.provider, mineSold = sellerOf(e) === side;

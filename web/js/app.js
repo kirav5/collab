@@ -677,16 +677,14 @@ function showEngagement(id) {
   openPanel({ engagement: id, title: `Your agent ⇄ ${them.name}'s agent`, render:() => { const x = live.engagements.get(id); return x ? `<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}` : ""; } });
 }
 
-/** What the agents said, as a stream: one conversation, or every conversation, newest last, with filters. */
-function logStream(ids, filter = "all") {
+/** What the agents said, as a stream: one conversation, or every conversation, newest last. */
+function logStream(ids) {
   const mine = e => (e.requester.uid === session.uid ? "requester" : "provider");
   const rows = [];
   for (const id of ids) {
     const e = live.engagements.get(id); if (!e) continue;
     const side = mine(e), them = side === "requester" ? e.provider : e.requester;
-    const state = e.phase === "agreed" ? "won" : ["closed", "declined"].includes(e.phase) ? "lost" : "open";
-    if (filter !== "all" && filter !== state) continue;
-    for (const ev of e.events) rows.push({ at: ev.at, who: ev.who, text: ev.text, by: ev.by, them: them.name, id: e.id, side, state });
+    for (const ev of e.events) rows.push({ at: ev.at, who: ev.who, text: ev.text, by: ev.by, them: them.name, id: e.id, side });
   }
   rows.sort((a, b) => a.at - b.at);
   const who = r => (r.who === "system" ? "" : r.who.startsWith(r.side) ? (r.who.endsWith("_agent") ? "your agent" : "you") : `${r.them.split(" ")[0]}'s agent`);
@@ -697,16 +695,15 @@ function logStream(ids, filter = "all") {
 }
 function showLog(id = null) {
   const ids = id ? [id] : [...live.engagements.keys()];
-  S.panelLog = { id, filter: S.panelLog?.id === id ? S.panelLog.filter ?? "all" : "all" }; S.panelEng = null;
+  S.panelLog = { id }; S.panelEng = null;
   const draw = () => {
-    const f = S.panelLog.filter, n = ids.map(x => live.engagements.get(x)).filter(Boolean);
+    const n = ids.map(x => live.engagements.get(x)).filter(Boolean);
     const won = n.filter(e => e.phase === "agreed").length, lost = n.filter(e => ["closed", "declined"].includes(e.phase)).length, open = n.length - won - lost;
-    return `<div class="row small"><span class="muted"><b>${n.length}</b> conversation${n.length === 1 ? "" : "s"} · ${won} ✓ · ${lost} ✕ · ${open} open</span>
-      <span class="seg end">${[["all", "all"], ["won", "won"], ["lost", "lost"], ["open", "open"]].map(([k, t]) => `<button class="${f === k ? "on" : ""}" data-act="log-filter" data-k="${k}">${t}</button>`).join("")}</span></div>
-      <div class="lg-stream">${logStream(ids, f)}</div>`;
+    return `<div class="row small"><span class="muted"><b>${n.length}</b> conversation${n.length === 1 ? "" : "s"}${won ? ` · ${won} agreed` : ""}${lost ? ` · ${lost} ended` : ""}${open ? ` · ${open} going on` : ""}</span></div>
+      <div class="lg-stream">${logStream(ids)}</div>`;
   };
   const e = id ? live.engagements.get(id) : null, them = e ? (e.requester.uid === session.uid ? e.provider : e.requester).name : null;
-  openPanel({ title: them ? `Agent log · ${them}` : "Agent log", render: draw, handle: ev => { const b = ev.target.closest('[data-act="log-filter"]'); if (b) { S.panelLog.filter = b.dataset.k; paintContent(true); } } });
+  openPanel({ title: them ? `Agent log · ${them}` : "Agent log", render: draw });
   const body = document.querySelector("#panel .lg-stream"); if (body) body.scrollTop = body.scrollHeight;
 }
 
