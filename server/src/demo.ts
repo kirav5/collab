@@ -240,14 +240,15 @@ async function seedHiring(db: Docs, model: Model | null, now: number) {
 const SEEDED = "demo-v9";
 
 /** Demo sellers with a schedule always have bookable times for the coming week (checked at every start). */
-async function refreshDemoSlots(db: Docs, now: number) {
+export async function refreshDemoSlots(db: Docs, now: number) {
   for (const p of PEOPLE.filter(x => x.slots)) {
     const factId = `demo-${p.handle}-offer`, r = await resourceFor(db, factId);
-    if (r && r.slots.some(s => s.start > now + 3 * 86_400)) continue;
+    // Two weeks of times, refilled when less than eight days are left: "this Saturday" is always on the calendar.
+    if (r && r.slots.some(s => s.start > now + 8 * 86_400)) continue;
     if (r) await db.delete(RESOURCES, r.id);
     const IST = 19_800, day0 = Math.floor((now + IST) / 86_400) * 86_400 - IST, { from, to, minutes } = p.slots!;
     const slots = [];
-    for (let d = 0; d < 7; d++) for (let m = from * 60; m + minutes <= to * 60; m += minutes) {
+    for (let d = 0; d < 14; d++) for (let m = from * 60; m + minutes <= to * 60; m += minutes) {
       const start = day0 + d * 86_400 + m * 60;
       if (start > now + 1800) slots.push({ start, end: start + minutes * 60, capacity: 1 });
     }
