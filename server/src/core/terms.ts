@@ -165,6 +165,11 @@ export function termsFromSearch(g: GroundedResult): WebTerm[] {
  * `starters`: the common terms for this kind of listing, to tap in. Nothing is saved until the owner saves it.
  * `ownerPays` unknown: read from the listing's own words.
  */
+/** A listing's words with every amount of money taken out: the terms search never needs a price, and a private floor
+ *  written in the listing must never reach it. */
+export const withoutMoney = (t: string) => t.replace(/(?:₹|\brs\.?|\binr\b)\s*[\d,.]+\s*(?:k|thousand|lakhs?|l|crores?|cr)?\b/gi, "")
+  .replace(/\b\d[\d,]{2,}(?:\.\d+)?\s*(?:k|lakhs?|crores?)?\b/gi, "").replace(/\s{2,}/g, " ").trim();
+
 type Suggested = { terms: WebTerm[]; starters: SuggestedTerm[]; byModel: boolean; grounded: boolean };
 /** Same kind of listing, same words → the same suggestion for 12 h (one search however many ask; in flight is shared). */
 const TERMS_TTL_MS = 12 * 3600_000, TERMS_WAIT_MS = 6_000;

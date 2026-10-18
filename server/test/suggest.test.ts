@@ -170,3 +170,10 @@ test("terms: the quick reading answers at once when the web search is slow, and 
   process.env.DECIDE_CACHE = prev;
   void again;
 });
+
+test("the terms search never sees an amount of money from the listing", async () => {
+  const { withoutMoney } = await import("../src/core/terms.ts");
+  const out = withoutMoney("Selling my cycle in Koramangala for ₹4,500, lowest 3800, or Rs 4k");
+  assert.doesNotMatch(out, /4,?500|3800|4k|₹|rs\b/i); assert.match(out, /Selling my cycle in Koramangala/);
+  assert.equal(withoutMoney("2BHK, 3rd floor, 2 bathrooms"), "2BHK, 3rd floor, 2 bathrooms");
+});

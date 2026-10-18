@@ -36,7 +36,7 @@ import { CapacityError, RESOURCES, type Resource, available as availableIn, comm
 import { capabilities } from "./core/capabilities.ts";
 import { GOALS, type Goal, backfillGoals, cancelGoal, createGoal, goalView, linkTask } from "./core/goals.ts";
 import { type Tracked, suggestionsFor } from "./core/suggest.ts";
-import { suggestTerms } from "./core/terms.ts";
+import { suggestTerms, withoutMoney } from "./core/terms.ts";
 import { distanceKm } from "./market/geo.ts";
 import { type Available, AnswersTask, StartIdeasTask, NoteIdeasTask, SellerAsksTask, buyerQuestions, qualityOf } from "./core/intake.ts";
 import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.ts";
@@ -1055,6 +1055,10 @@ app.post("/api/offers/draft", route(async req => {
   // What the owner already told their agent answers the listing's questions too (read alongside the classification).
   const [c, context] = await Promise.all([model ? decide(model, ClassifyTask, { text: t }).then(d => d.output) : null, notesFor(req.uid)]);
   const dom0 = c ? domainOf(c !== "none" ? c : transaction ? "other" : "") : null, roles0 = listingRoles(dom0?.id, payerCue(t) === "writer");
+  // The owner's terms start now too, beside the reading (they used to start only once the card was drawn). The web
+  // search behind them never sees an amount: every price and number of money is taken out of its text first.
+  const termsSoon = dom0 && transaction ? suggestTerms(model, dom0.id, withoutMoney(t), payerCue(t) === "writer").catch(() => null) : Promise.resolve(null);
+  const termsBy = async () => Promise.race([termsSoon, new Promise<null>(res => setTimeout(res, 1_500, null))]);
   // What the people answering this kind of listing would otherwise ask, picked by Gemini, with tap-to-answer options;
   // the likely answers come back with the questions (the card shows them at once).
   const asking = async (d: Domain | null, roles: typeof roles0, attrs: Record<string, unknown>) => {
@@ -1082,7 +1086,7 @@ app.post("/api/offers/draft", route(async req => {
     // written floor is kept for the card, never in the text.
     const pays = payerCue(t) === "writer", written = statedLimit(t, pays);
     const [{ missing, answers }, gate] = await Promise.all([asked({}), judged && sameKind ? judged : qualityOf(model, t, "sell", dom.label, [])]);
-    return { offer: null, floor: written, ownerPays: pays, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, answers, gate,
+    return { offer: null, floor: written, ownerPays: pays, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, answers, gate, terms: await termsBy(),
       basics: { category: dom.id, label: dom.label, unit: dom.priceUnit ?? null, area: here?.name ?? null } };
   }
   // The model reads a stated limit; a written one ("lowest 600", "won't go below 600"; for an owner who pays, "can
@@ -1099,7 +1103,7 @@ app.post("/api/offers/draft", route(async req => {
   const [jd, { missing, answers }, gate] = await Promise.all([ownerPays && rolesFor(o.category).flow === "hire" ? decide(model, JDTask, { text: publicText }) : null, asked(o.attributes),
     judged && sameKind ? judged : qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
   const requirements = jd?.output;
-  return { offer: { ...o, details: publicText, ...(requirements ? { requirements } : {}) }, floor, ownerPays, publicText, missing, answers, gate };
+  return { offer: { ...o, details: publicText, ...(requirements ? { requirements } : {}) }, floor, ownerPays, publicText, missing, answers, gate, terms: await termsBy() };
 }));
 
 // What others charge for this kind of thing near here, for the price a seller is about to set: Google-grounded
@@ -1126,7 +1130,7 @@ app.post("/api/offers/price-hints", route(async req => {
 app.post("/api/terms/suggest", route(async req => {
   await spend(req.uid, 2);
   const ownerPays = typeof req.body?.ownerPays === "boolean" ? req.body.ownerPays : undefined;
-  const out = await suggestTerms(model, text(req.body?.category, 40), text(req.body?.text, 600), ownerPays);
+  const out = await suggestTerms(model, text(req.body?.category, 40), withoutMoney(text(req.body?.text, 600)), ownerPays);
   return { terms: out.terms, starters: out.starters, byModel: out.byModel, grounded: out.grounded };
 }));
 
