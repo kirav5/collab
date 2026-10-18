@@ -178,3 +178,9 @@ test("rupee amounts in agents' messages read the Indian way", async () => {
   assert.equal(indianRupees("₹3,299 per task, or ₹ 720000"), "₹3,299 per task, or ₹7,20,000");
   assert.equal(indianRupees("₹1,35,00,000 stays"), "₹1,35,00,000 stays");
 });
+
+test("a single item's price isn't repeated as its total", async () => {
+  const { oneTotal } = await import("../src/core/engage.ts");
+  assert.equal(oneTotal("We can come down to ₹3,250 per unit, which comes to ₹3,250 in total."), "We can come down to ₹3,250.");
+  assert.equal(oneTotal("₹225 per piece, which comes to ₹22,500 in total."), "₹225 per piece, which comes to ₹22,500 in total.");
+});

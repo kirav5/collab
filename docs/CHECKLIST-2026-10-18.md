@@ -24,22 +24,22 @@ Status: [x] done · [~] in progress · [ ] to do
 - [x] Daily agent: summarises your activity each day into your private context (scheduler + "Summarise my last day now" in About me)
 
 ## UI/UX (ui-ux-pro-max audit: 143 findings, 129 verified to fix)
-- [~] 7 fixers applying them — 6 done (css 48, cards 14, screens 13, shell 9, agent 6, server 6); app.js running
-- [x] 45 of 56 cross-file handoffs applied (rest are app.js)
-- [~] Burger menu: 44px, centred, drawn icon (CSS + icon done; app.js markup pending)
-- [~] Delete a chat: server done (tombstone, syncs to all devices); sidebar button pending
+- [x] 7 fixers applied them (css 48, app 29, cards 14, screens 13, shell 9, agent 6, server 6)
+- [x] Cross-file handoffs and the integration review's 11 problems fixed (container-query layout left for a visual pass)
+- [x] Burger menu: 44px, centred with the title, drawn icon; drawer takes focus, Esc closes
+- [x] Delete a chat (menu, confirm, all devices; old copies can't bring it back) — tested on production
 - [x] Privacy → Add rule works (type a topic when you have no Protected facts; errors shown; no stuck spinner)
-- [~] Close (×) buttons: 44px targets and larger glyph (CSS done; app.js icon pending)
+- [x] Close (×) buttons: 44px targets, drawn icon, every screen
 - [x] Agent card sideways scroll fixed (developer JSON was 3,188px wide)
-- [ ] Re-check every screen at 375px on production
-- [~] Agent card "JSON for developers" contained (wraps, scrolls inside its box) — label wording pending
+- [x] Every screen at 375px on production: no sideways scroll (sections expanded)
+- [x] Agent card "JSON for developers": wraps inside its box, relabelled "machine-readable card" with a plain explanation
 
 ## Performance / prefetch
 - [x] Drafting a request: one Gemini round fewer; start ideas carry their category
-- [~] Prefetch screens and start-idea drafts; service worker cache-first; modulepreload
+- [x] Prefetch screens and start-idea drafts; service worker cache-first; modulepreload — first paint 576 → 40 ms
 
 ## Ship
-- [ ] Server checks pass
-- [ ] Deployed to production
-- [ ] Full production test run (27 journeys + provider side) and report
-- [ ] PR opened and merged to main
+- [x] Server checks pass (248 tests)
+- [x] Deployed to production (4d4a6ef)
+- [x] Production test run: 27 drafts, 6 negotiations (all deals, no limit leaks), demo customers on a listing, every new feature — docs/TEST-REPORT-2026-10-18-prod.md
+- [~] PR #12 opened, CI green — merge after the production run

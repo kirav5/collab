@@ -141,7 +141,9 @@ const checking = (e: Engagement, s: Side) => {
 };
 /** Rupee amounts read the Indian way, however the model grouped them: "₹13,500,000" → "₹1,35,00,000". */
 export const indianRupees = (t: string) => t.replace(/₹\s?(\d{1,3}(?:,\d{3})+|\d{6,})(?![\d,])/g, (_, n: string) => `₹${Number(n.replace(/,/g, "")).toLocaleString("en-IN")}`);
-const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: indianRupees(text).slice(0, 600), ...(by ? { by } : {}) }); };
+/** One item's price isn't also its total: "₹3,250 per unit, which comes to ₹3,250 in total" → "₹3,250". */
+export const oneTotal = (t: string) => t.replace(/(₹[\d,]+)\s*(?:per|\/)\s*(?:unit|item|piece)[^.₹]{0,30}?(?:comes to|for a total of|totalling|totaling|total of)\s*\1(?:\s*in total)?/gi, "$1");
+const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: oneTotal(indianRupees(text)).slice(0, 600), ...(by ? { by } : {}) }); };
 const agentOf = (s: Side): Event["who"] => (s === "requester" ? "requester_agent" : "provider_agent");
 const by = (m: boolean): Event["by"] => (m ? "gemini" : "rules");
 const uidOf = (e: Engagement, s: Side) => (s === "requester" ? e.requester.uid : e.provider.uid);
