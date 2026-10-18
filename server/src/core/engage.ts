@@ -139,7 +139,9 @@ const checking = (e: Engagement, s: Side) => {
   const roles = rolesFor(e.offer.category);
   return `The ${s === sellerOf(e) ? roles.payee : roles.payer}'s agent is checking with ${shortName(e[s].name)}.`;
 };
-const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: text.slice(0, 600), ...(by ? { by } : {}) }); };
+/** Rupee amounts read the Indian way, however the model grouped them: "₹13,500,000" → "₹1,35,00,000". */
+export const indianRupees = (t: string) => t.replace(/₹\s?(\d{1,3}(?:,\d{3})+|\d{6,})(?![\d,])/g, (_, n: string) => `₹${Number(n.replace(/,/g, "")).toLocaleString("en-IN")}`);
+const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: indianRupees(text).slice(0, 600), ...(by ? { by } : {}) }); };
 const agentOf = (s: Side): Event["who"] => (s === "requester" ? "requester_agent" : "provider_agent");
 const by = (m: boolean): Event["by"] => (m ? "gemini" : "rules");
 const uidOf = (e: Engagement, s: Side) => (s === "requester" ? e.requester.uid : e.provider.uid);

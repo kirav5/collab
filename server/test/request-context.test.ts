@@ -171,3 +171,10 @@ test("a detail added to an open request is kept only in the message's words; ans
   assert.deepEqual(r.add, [{ label: "Experience", value: "2-3 years" }], "a value not in the message is dropped");
   assert.deepEqual(r.answers, [{ question: "Remote or in office?", answer: "Remote" }], "an answer to a question that isn't pending is dropped");
 });
+
+test("rupee amounts in agents' messages read the Indian way", async () => {
+  const { indianRupees } = await import("../src/core/engage.ts");
+  assert.equal(indianRupees("We can offer it at ₹13,500,000."), "We can offer it at ₹1,35,00,000.");
+  assert.equal(indianRupees("₹3,299 per task, or ₹ 720000"), "₹3,299 per task, or ₹7,20,000");
+  assert.equal(indianRupees("₹1,35,00,000 stays"), "₹1,35,00,000 stays");
+});
