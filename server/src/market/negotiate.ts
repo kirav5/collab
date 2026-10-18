@@ -259,6 +259,10 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         if (theirs && dir * (theirs.price - p.price) > 0) return null;                      // past their offer
         // Pacing: no faster than the schedule allows by the next round, with a little slack.
         if (Math.abs(opening - limit) > 0.5 && (opening - p.price) / (opening - limit) > concession(ctx.mine.length + 1, ctx.mandate.maxRounds) + 0.15) return null;
+        // …and no slower than it either (with slack): an agent that crawls (₹1,720, ₹1,650, ₹1,610, ₹1,600 against a
+        // ₹1,500 floor) runs out of offers above its limit and misses a deal the owner wanted. The rules' offer, which
+        // reaches the limit on schedule, is used instead.
+        if (Math.abs(opening - limit) > 0.5 && (opening - p.price) / (opening - limit) < concession(ctx.mine.length, ctx.mandate.maxRounds) - 0.2) return null;
         for (const [k, v] of Object.entries(p.terms)) if (direction(ctx, k) * (v - ctx.mandate.terms[k].opening) > 0.0001) return null;
         const said = clean(move.message);
         const sized = n && n > 1 ? { ...p, terms: { ...p.terms, quantity: n } } : p;
