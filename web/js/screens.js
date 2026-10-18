@@ -256,7 +256,8 @@ export const screens = {
       };
       // Linking a calendar so its busy times block bookings: Google through its own sign-in (when the server has an
       // OAuth client); any calendar through its private iCal address (Google's "Secret address in iCal format").
-      const calendarLink = rid => `<div class="row small"><button class="btn secondary compact" data-act="gcal-link" data-id="${esc(rid)}">Link Google Calendar</button><button class="btn quiet compact" data-act="cal-other" data-id="${esc(rid)}">Other calendar</button><span class="faint">busy times then block bookings</span></div>
+      // Google Calendar only where this server has it set up; otherwise any calendar's iCal address (Google's included).
+      const calendarLink = rid => `<div class="row small">${session.config?.googleCalendar ? `<button class="btn secondary compact" data-act="gcal-link" data-id="${esc(rid)}">Link Google Calendar</button><button class="btn quiet compact" data-act="cal-other" data-id="${esc(rid)}">Other calendar</button>` : `<button class="btn secondary compact" data-act="cal-other" data-id="${esc(rid)}">Link your calendar</button>`}<span class="faint">busy times then block bookings</span></div>
         <div class="card slim stack" data-cal-other="${esc(rid)}" hidden style="gap:6px">
           <span class="small muted">Any calendar can share busy times through its private iCal address. In Google Calendar: Settings → your calendar → <b>Integrate calendar</b> → <b>Secret address in iCal format</b>.</span>
           <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}" aria-label="Secret iCal address"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link</button></div>
@@ -296,10 +297,11 @@ export const screens = {
         <div class="card slim">${label("Your daily agent", "peri")}<span class="small muted">Once a day it notes what you did — requests, deals, listings, answers — in your private context, so your agent remembers. Never shown to anyone.</span>
           ${days.slice(0, 3).map(f => `<div class="mem-row"><span class="small" style="flex:1;min-width:0">${esc(f.text)}</span><button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this summary">Forget</button></div>`).join("")}
           <div class="row"><button class="btn secondary compact" data-act="summary-now">Summarise my last day now</button>${days.length > 3 ? `<span class="small faint">${days.length - 3} older</span>` : ""}</div></div>
-        ${learned.length ? `<details class="card slim memory"><summary class="row"><span class="small"><b>${learned.length}</b> thing${learned.length === 1 ? "" : "s"} your agent learned from your chats and answers</span><span class="small faint end">Review ›</span></summary>
+        ${learned.length ? `<details class="card slim memory" ${(S.learnedShown ?? 10) > 10 ? "open" : ""}><summary class="row"><span class="small"><b>${learned.length}</b> thing${learned.length === 1 ? "" : "s"} your agent learned from your chats and answers</span><span class="small faint end">Review ›</span></summary>
           <span class="small faint">Kept so you're never asked twice — used to answer others within your limits, never listed publicly.</span>
-          ${learned.map(f => `<div class="mem-row"><div class="stack" style="gap:2px;min-width:0;flex:1"><span class="small">${esc(f.source === "answer" ? f.answer : String(f.text).replace(/^Asked: “[^”]*” — answer:\s*/, ""))}</span>${f.source === "answer" ? `<span class="small faint">${esc(f.question)}</span>` : ""}</div>
-            <button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this">Forget</button></div>`).join("")}</details>` : ""}
+          ${learned.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, S.learnedShown ?? 10).map(f => `<div class="mem-row"><div class="stack" style="gap:2px;min-width:0;flex:1"><span class="small">${esc(f.source === "answer" ? f.answer : String(f.text).replace(/^Asked: “[^”]*” — answer:\s*/, ""))}</span>${f.source === "answer" ? `<span class="small faint">${esc(f.question)}</span>` : ""}</div>
+            <button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this">Forget</button></div>`).join("")}
+          ${learned.length > (S.learnedShown ?? 10) ? `<button class="btn quiet compact" data-act="learned-more">Show ${Math.min(10, learned.length - (S.learnedShown ?? 10))} more · ${learned.length - (S.learnedShown ?? 10)} left</button>` : ""}</details>` : ""}
         <div class="stack">${own.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           ${factText(f)}
           ${f.tier !== "public" ? `<div class="row small"><span class="faint">Your agent ${f.noShare ? "never uses this" : /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|price limit|lowest|floor price|price floor|at most|go below|go above|won'?t (go|pay|take)|can'?t (go|pay)|afford|kam se kam|best price|cost(s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b|\b(limit|budget|max|min)\b[^.]{0,12}\d|\b(up ?to|under|below|above|over|at least)\s*\d/i.test(f.text) ? "never repeats this (it mentions money)" : "answers others from this"}</span>
@@ -455,6 +457,7 @@ export const screens = {
         try { await api(`/api/resources/${el.dataset.id}/slots`, { slots: [{ start, end: start + mins * 60, capacity: 1 }] }); h.toast("Slot added."); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
+      if (a === "learned-more") { S.learnedShown = (S.learnedShown ?? 10) + 10; h.paint(); return true; }
       if (a === "summary-now") {
         busy(el, true, "Summarising");
         try { const r = await api("/api/me/summary", {}); h.toast(r.fact ? "Noted in your private context." : "Nothing to note from the last day yet."); }

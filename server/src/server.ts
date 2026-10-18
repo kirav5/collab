@@ -268,7 +268,9 @@ app.get("/health", route(async () => ({ ok: true, build: env.BUILD_ID ?? "local"
   modelArmor: armor ? { on: true, ...armor.stats } : { on: false },
   security: { appCheck: APPCHECK, replayProtection: APPCHECK !== "enforce" && APPCHECK !== "strict" ? "off" : consumeUnavailable ? "degraded — sensitive actions refused" : "on", verification: appCheckStats } }), false));
 app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? JSON.parse(env.FIREBASE_WEB_CONFIG) : null, devAuth: env.DEV_AUTH === "1", model: model?.name ?? null,
-  a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null, roles: roleTable() }), false));
+  a2aBase: `${cfg.publicUrl}/a2a`, appCheckSiteKey: env.RECAPTCHA_SITE_KEY ?? null, roles: roleTable(),
+  // What this server can link to: the app offers Google Calendar only where it's set up (else the iCal address).
+  googleCalendar: !!gcal }), false));
 
 // Goals: what the owner wants done, with each conversation as a task and a state that follows from them.
 app.get("/api/goals", route(async req => {

@@ -16,7 +16,10 @@ import { limitPast, listingRoles } from "./roles.js";
 
 // The on-device engine's state, shown in Settings › AI engine. `here` = Gemma is downloaded on this device.
 // `mode` is where private-note questions may be answered (processing.js): "device-only", "my-devices", "cloud" (default), "cloud-only".
-const savedMode = () => { try { return normalizeMode(localStorage.getItem("collab.processing")); } catch { return "cloud"; } };
+// Gemini became the default (Gemma is a feature you turn on): a choice saved before that, when "My devices only" was
+// the default, is moved to it once; a choice made since is kept.
+const MODE_V = "2";
+const savedMode = () => { try { return localStorage.getItem("collab.processing.v") === MODE_V ? normalizeMode(localStorage.getItem("collab.processing")) : "cloud"; } catch { return "cloud"; } };
 export const engine = { here: false, canRun: true, status: "checking", progress: null, reason: null, mode: savedMode() };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
 export const needsLimit = new Set(); // move items this device has no limit for (the owner sets one)
@@ -38,7 +41,7 @@ export async function downloadModel(onProgress) {
 
 export function setProcessingMode(mode) {
   engine.mode = normalizeMode(mode);
-  try { localStorage.setItem("collab.processing", engine.mode); } catch {}
+  try { localStorage.setItem("collab.processing", engine.mode); localStorage.setItem("collab.processing.v", MODE_V); } catch {}
 }
 
 // A copy of the owner's private notes on this device, so questions about them can be answered offline (on device).
