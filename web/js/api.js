@@ -214,12 +214,16 @@ export async function api(path, body) {
   if (body !== undefined && !KEEPS.test(path)) { reads.clear(); kept.clear(); }
   const send = async force => {
     const t = await tokenFor(force);
-    return fetch(path, { method: body === undefined ? "GET" : "POST", headers: t ? { ...headers, "x-firebase-appcheck": t } : headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    // No token: say why this browser couldn't get one ("appCheck/throttled", "appCheck/recaptcha-error"…), so the
+    // server's log and the refusal can name it.
+    const why = !t && session.appCheckError ? { "x-appcheck-error": session.appCheckError.code } : {};
+    return fetch(path, { method: body === undefined ? "GET" : "POST", headers: t ? { ...headers, "x-firebase-appcheck": t } : { ...headers, ...why }, body: body === undefined ? undefined : JSON.stringify(body) });
   };
   let res = await send(false);
   let data = await res.json().catch(() => ({}));
   // Refused by the browser check (before the request was handled, so nothing ran): once more with a fresh token.
   if (res.status === 401 && data.code === "APP_CHECK" && !plainRead) { res = await send(true); data = await res.json().catch(() => ({})); }
+  if (res.status === 401 && data.code === "APP_CHECK" && session.appCheckError) data.error = `${data.error} (${session.appCheckError.code})`;
   if (!res.ok) { const e = new Error(data.error ?? `Request failed (${res.status})`); e.status = res.status; e.code = data.code; e.data = data; throw e; }
   return data;
 }
