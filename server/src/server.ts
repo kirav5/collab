@@ -43,7 +43,7 @@ import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.
 import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
 import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
-import { type AgentRules, LOOKUPS, type RulesContext, RulesTask, checkRules, readPricingPlain, readRules, rulesLines } from "./core/rules.ts";
+import { type AgentRules, LOOKUPS, type RulesContext, RulesTask, checkRules, readPricingPlain, readRules, restates, rulesLines } from "./core/rules.ts";
 import { quote } from "./core/pricing.ts";
 import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
@@ -627,7 +627,9 @@ async function applySellerRules(f: Fact, uid: string, r: AgentRules, words: stri
   if (floor != null || Object.keys(priced).length) await db.set(LIMITS, key, { key, owner: uid, mandate: { price: { opening: o.price.amount, limit: Math.min(floor ?? o.price.amount, o.price.amount) }, terms: {}, maxRounds: 5 },
     autonomy: r.autonomy, ...(r.closeAt != null ? { closeAt: r.closeAt } : {}), rulesText: words, ...priced, expires: now() + 30 * 86_400, createdAt: existing?.createdAt ?? now() });
   const { maxPerBuyer: _old, ...rest } = o;
-  const policies = [...(o.policies ?? []).filter(p => !r.terms.some(t => t.label.toLowerCase() === p.label.toLowerCase())), ...r.terms].slice(0, 8);
+  // A rule's term that only repeats one the owner already wrote (in part, or in other words) never replaces theirs.
+  const fresh = r.terms.filter(t => !restates(t, o.policies ?? []));
+  const policies = [...(o.policies ?? []).filter(p => !fresh.some(t => t.label.toLowerCase() === p.label.toLowerCase())), ...fresh].slice(0, 8);
   const offer = { ...rest, ...(r.maxPerBuyer ? { maxPerBuyer: r.maxPerBuyer } : {}), ...(policies.length ? { policies } : {}),
     ...(floor != null && floor < o.price.amount ? { attributes: { ...o.attributes, negotiable: "yes" } } : {}) };
   await db.set(FACTS, f.id, { ...f, offer, updatedAt: now() });
