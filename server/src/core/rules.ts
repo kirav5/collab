@@ -63,7 +63,8 @@ const sentence = (s: string) => { const t = s.trim().replace(/^(and|also|but|the
 /** The common ways people say it, read without the model (the fallback, and what tests rely on). */
 export function readRulesPlain(text: string, c: RulesContext): AgentRules {
   const t = text.toLowerCase(), r = EMPTY(c.side);
-  const clauses = text.split(/[.;]|,\s*(?=(?:and\s+)?(?:max|no more|only|pick|deliver|cash|upi|pay|close|agree|accept|don|never|not|lowest|minimum|up to|warranty|return))|\band\b(?=\s+(?:close|agree|accept|pick|deliver|only|max))/i).map(s => s.trim()).filter(Boolean);
+  // A line break ends a clause too; a full stop inside a number ("12.5% of the price") doesn't.
+  const clauses = text.split(/(?<!\d)\.|\.(?!\d)|[;\n]|,\s*(?=(?:and\s+)?(?:max|no more|only|pick|deliver|cash|upi|pay|close|agree|accept|don|never|not|lowest|minimum|up to|warranty|return))|\band\b(?=\s+(?:close|agree|accept|pick|deliver|only|max))/i).map(s => s.trim()).filter(Boolean);
   if (c.side === "seller") {
     r.floor = num(t.match(new RegExp(String.raw`(?:not|never|don'?t|do not|won'?t)\s+(?:go|sell|accept|take)?\s*(?:anything\s+)?(?:below|under|less than|lower than)\s*${RS}${NUM}`)))
       ?? num(t.match(new RegExp(String.raw`(?:lowest|minimum|min|floor|bottom)\s*(?:price)?\s*(?:is|of|:)?\s*${RS}${NUM}`)));
@@ -92,6 +93,13 @@ export function readRulesPlain(text: string, c: RulesContext): AgentRules {
   if (/\b(close|agree|accept|confirm|finali[sz]e)\b[^.;]*\b(yourself|on your own|without asking|for me)\b/.test(t) || r.closeAt != null) r.autonomy = "close";
   if (c.side === "seller") Object.assign(r, readPricingPlain(text));
   return r;
+}
+
+/** A term that only repeats one the owner already wrote (in other words or in part): theirs is kept, not this. */
+export function restates(t: { label: string; text: string }, own: { label: string; text: string }[]): boolean {
+  const words = (x: string) => x.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+  const w = words(t.text);
+  return w.length > 0 && own.some(p => { const pw = new Set(words(`${p.label} ${p.text}`)); return w.filter(x => pw.has(x) || pw.has(x.replace(/s$/, ""))).length / w.length >= 0.6; });
 }
 
 const WEB = String.raw`(?:internet|web|online|google|croma|amazon|flipkart|reliance digital|vijay sales|site|website)`;
