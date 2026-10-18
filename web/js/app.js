@@ -718,7 +718,8 @@ function logStream(ids) {
   }
   rows.sort((a, b) => a.at - b.at);
   const who = r => (r.who === "system" ? "" : r.who.startsWith(r.side) ? (r.who.endsWith("_agent") ? "your agent" : "you") : `${r.them.split(" ")[0]}'s agent`);
-  const kind = r => (r.who === "system" ? "note" : /offer|counter|\₹|price/i.test(r.text) ? "propose" : /confirm|agreed|accept/i.test(r.text) ? "accept" : /declin|walk|no deal|end/i.test(r.text) ? "decline" : "say");
+  // Whole words only: "recommendations" once made an opening line a DECLINE, "interested" an "end".
+  const kind = r => (r.who === "system" ? "note" : /\boffers?\b|\bcounter|₹|\bprice\b/i.test(r.text) ? "propose" : /\bconfirm|\bagreed\b|\baccept/i.test(r.text) ? "accept" : /\bdeclin|\bwalk(?:s|ed|ing)? away\b|\bno deal\b|\bend(?:s|ed)?\b/i.test(r.text) ? "decline" : "say");
   return rows.length ? rows.map(r => `<div class="lg ${r.who === "system" ? "sys" : r.who.startsWith(r.side) ? "me" : "them"}"><span class="lg-t">${new Date(r.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</span>
     <span class="lg-who">${ids.length > 1 ? `<span class="lg-name">${esc(r.them.split(" ")[0])}</span> ` : ""}${esc(who(r))}${r.who === "system" ? "" : ` → <span class="lg-kind ${kind(r)}">${kind(r)}</span>`}</span>
     <span class="lg-text">${esc(r.text)}</span></div>`).join("") : `<p class="small muted">Nothing here yet.</p>`;
