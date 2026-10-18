@@ -15,8 +15,8 @@ import { saveNote } from "./outbox.js";
 import { limitPast, listingRoles } from "./roles.js";
 
 // The on-device engine's state, shown in Settings › AI engine. `here` = Gemma is downloaded on this device.
-// `mode` is where private-note questions may be answered (processing.js): "device-only", "my-devices" (default), "cloud".
-const savedMode = () => { try { return normalizeMode(localStorage.getItem("collab.processing")); } catch { return "my-devices"; } };
+// `mode` is where private-note questions may be answered (processing.js): "device-only", "my-devices", "cloud" (default), "cloud-only".
+const savedMode = () => { try { return normalizeMode(localStorage.getItem("collab.processing")); } catch { return "cloud"; } };
 export const engine = { here: false, canRun: true, status: "checking", progress: null, reason: null, mode: savedMode() };
 export const drafts = new Map(); // inbox item id → { text, notes } drafted from private notes
 export const needsLimit = new Set(); // move items this device has no limit for (the owner sets one)

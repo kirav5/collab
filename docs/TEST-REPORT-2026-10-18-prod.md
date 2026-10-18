@@ -110,4 +110,3 @@ condition, size and wood type stayed marked as guesses.
 - The test harness's own canned answers were crude in two places (a T-shirt size answered "25 kg bags"); the app
   handled them, but a real person's answers would be better context.
 - Container-query layout for the 900–1180 px side-by-side widths (layout-nav-07) needs a visual pass before shipping.
-- Hackathon: switching the default "Where AI runs" to "My devices, else Gemini" waits for your yes.

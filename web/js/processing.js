@@ -1,14 +1,15 @@
 // Where a question about the owner's private notes is answered. Pure, so it can be tested outside a browser.
 //   mode:   "device-only" — Gemma on this device, nothing else
-//           "my-devices"  — Gemma here, or on another of the person's own devices; never the cloud (the default)
-//           "cloud"       — also Gemini in the cloud when no Gemma of theirs can answer (only if they choose it)
+//           "my-devices"  — Gemma here, or on another of the person's own devices; never the cloud (if they choose it)
+//           "cloud"       — Gemini, unless they've added Gemma on a device of theirs (the default: on-device is a feature
+//                           someone turns on, and a fresh phone without the download still answers)
 //           "cloud-only"  — always Gemini in the cloud, never Gemma (if they choose it)
 //   here:   Gemma is downloaded on this device · remote: another of their devices with Gemma is online
 // → "here" · "remote" · "cloud" · "limitation" (nothing allowed can answer: the owner is told, nothing is sent)
 export const MODES = ["device-only", "my-devices", "cloud", "cloud-only"];
 
 /** Where questions about the owner's private notes are read, for each choice (requests are always read by Gemini). */
-export const notesReadBy = mode => ({ "device-only": "Gemma, this device only", "my-devices": "Gemma on your devices", cloud: "Gemma on your devices, else Gemini", "cloud-only": "Gemini (cloud)" })[normalizeMode(mode)] ?? "Gemma on your devices";
+export const notesReadBy = mode => ({ "device-only": "Gemma, this device only", "my-devices": "Gemma on your devices", cloud: "Gemini, or Gemma where you've added it", "cloud-only": "Gemini (cloud)" })[normalizeMode(mode)] ?? "Gemini, or Gemma where you've added it";
 
 /** Stored where · processed where · shared with whom — the three promises, kept apart and true to the setting. */
 export const privacyFacts = mode => [
@@ -17,8 +18,8 @@ export const privacyFacts = mode => [
   ["Shared", "Answers from your context — never your limits, money in private notes, or contact details"],
 ];
 
-/** Saved choices from before Gemma ("device-first" let the cloud answer) become "my-devices": Gemma only. */
-export const normalizeMode = m => (MODES.includes(m) ? m : "my-devices");
+/** No choice yet, or one from before Gemma ("device-first" let the cloud answer), is the default: "cloud". */
+export const normalizeMode = m => (MODES.includes(m) ? m : "cloud");
 
 export function decideProcessing(mode, { here = false, remote = false } = {}) {
   if (mode === "cloud-only") return "cloud";

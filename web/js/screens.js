@@ -971,7 +971,7 @@ export const screens = {
           </div>
           <details class="more"><summary>Advanced · your own questions about your notes</summary>
             <span class="small muted">When you ask your agent about your own notes ("what's my landlord's number?"), Gemma — Google's open model — can answer on your phone or laptop instead, even offline.</span>
-            <div class="seg wide">${[["device-only", "Only this device"], ["my-devices", "My devices only"], ["cloud", "My devices, else Gemini"], ["cloud-only", "Gemini"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" aria-pressed="${engine.mode === v}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
+            <div class="seg wide">${[["cloud", "Gemini (default)"], ["cloud-only", "Gemini only"], ["my-devices", "My devices only"], ["device-only", "Only this device"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" aria-pressed="${engine.mode === v}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
             <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
           </details>
 </div>
@@ -1017,7 +1017,7 @@ export const screens = {
       if (a === "gemma-remove") { busy(el, true); await removeGemma(); await detectEngine(); refreshServing(); h.toast(`${MODEL.label} removed from this device.`); h.paint(); return true; }
       if (a === "processing") {
         setProcessingMode((el.dataset.value ?? el.value));
-        h.toast((el.dataset.value ?? el.value) === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : (el.dataset.value ?? el.value) === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : (el.dataset.value ?? el.value) === "cloud-only" ? "Your notes are answered by Gemini in the cloud." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
+        h.toast((el.dataset.value ?? el.value) === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : (el.dataset.value ?? el.value) === "cloud" ? `Gemini answers. Add ${MODEL.label} below and your notes are read on your device first.` : (el.dataset.value ?? el.value) === "cloud-only" ? "Your notes are answered by Gemini in the cloud." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
         h.paint(); return true;
       }
       if (a === "device-rename") { busy(el, true); await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }
