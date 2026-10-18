@@ -178,7 +178,8 @@ let onNewer = () => {};
 export const onFreshRead = fn => { onNewer = fn; };
 export function cached(path, ttl = 10_000) {
   const hit = reads.get(path);
-  if (hit && Date.now() - hit.at < ttl) return hit.p;
+  // A screen opened while its warm-up read is still out draws from the copy kept before, and repaints when it's in.
+  if (hit && Date.now() - hit.at < ttl) return kept.has(path) ? Promise.resolve(kept.get(path)) : hit.p;
   const p = api(path).then(v => {
     const before = kept.get(path); kept.set(path, v);
     if (before !== undefined && JSON.stringify(before) !== JSON.stringify(v)) onNewer();
@@ -190,24 +191,27 @@ export function cached(path, ttl = 10_000) {
   return kept.has(path) ? Promise.resolve(kept.get(path)) : p;
 }
 
+/** POSTs that leave every cached read as it was: chat-history syncs, push registration, and the model's readings and
+ *  suggestions (routing, drafts, answers, terms, rules). A route goes here only if it writes nothing a GET returns. */
+const KEEPS = /^\/api\/(chats(\/.*)?|push\/token|route|think|briefs\/(draft|refine)|offers\/(draft|answers|price-hints)|terms\/suggest|rules\/read)$/;
 export async function api(path, body) {
   const headers = { "content-type": "application/json" };
   if (session.token) headers.authorization = `Bearer ${await session.token()}`;
   const limited = body !== undefined && (path === "/api/price-check"
     || /^\/api\/engagements\/[^/]+\/pay$/.test(path)
     || /^\/api\/pickup\/[^/]+\/collect$/.test(path));
-  // Plain reads (not goals, which can run the model) go out at once with the current token, if it's still good.
+  // Plain reads (not a goal's own page, which can run the model) go out at once with the current token, if it's still good.
   // Everything else waits up to 5 s for one; a browser that can't get one (a content blocker, a private window, the
   // SDK throttling itself) still sends — the server limits unverified calls and refuses only payments, pickups and
   // price checks, and says why.
-  const plainRead = body === undefined && !/^\/api\/goals(\/|$)/.test(path);
+  const plainRead = body === undefined && !/^\/api\/goals\/./.test(path);
   const tokenFor = async force => {
     if (plainRead) { const t = usableToken(session.appCheckNow(), Date.now()); if (!t) session.appCheckRefresh(); return t; }
     if (!session.appCheck) return null;
     return Promise.race([session.appCheck(limited, force), new Promise(r => setTimeout(() => r(null), 5000))]).catch(() => null);
   };
-  // A write may change anything a cached read shows — except chat-history syncs and push registration, which don't.
-  if (body !== undefined && !/^\/api\/(chats|push\/token)(\/|$)/.test(path)) { reads.clear(); kept.clear(); }
+  // A write may change anything a cached read shows — except the calls in KEEPS, which don't.
+  if (body !== undefined && !KEEPS.test(path)) { reads.clear(); kept.clear(); }
   const send = async force => {
     const t = await tokenFor(force);
     return fetch(path, { method: body === undefined ? "GET" : "POST", headers: t ? { ...headers, "x-firebase-appcheck": t } : headers, body: body === undefined ? undefined : JSON.stringify(body) });

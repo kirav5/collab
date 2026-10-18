@@ -4,7 +4,7 @@
  * visit; writes, and reads that can run the model (a goal's plan advances on read), still need it.
  */
 export function appCheckRequired(method: string, path: string): boolean {
-  return method !== "GET" || /^\/goals(\/|$)/.test(path);
+  return method !== "GET" || /^\/goals\/./.test(path);
 }
 
 export function replayProtected(method: string, path: string): boolean {

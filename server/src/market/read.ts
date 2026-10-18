@@ -128,8 +128,8 @@ JSON:`; },
 interface FiltersInput { text: string; side: ReadSide; category: string; knownKeys: string[] }
 export interface DemandPlan { mode: ServiceMode | null; filters: DemandFilter[] }
 
-const KINDS = ["place", "price", "number", "choice", "text"];
-const COMPARISONS = ["equals", "atMost", "atLeast", "oneOf", "mentions"];
+export const KINDS = ["place", "price", "number", "choice", "text"];
+export const COMPARISONS = ["equals", "atMost", "atLeast", "oneOf", "mentions"];
 
 export const DemandFiltersTask: Task<FiltersInput, DemandPlan> = {
   name: "demand.filters",

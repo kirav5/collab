@@ -42,7 +42,8 @@ export interface Roles {
 }
 
 /** One profile question: `options` to tap (empty: the person types it). */
-export interface ProfileAsk { label: string; question: string; options: string[] }
+/** `multi`: several can be picked (skills). */
+export interface ProfileAsk { label: string; question: string; options: string[]; multi?: boolean }
 
 const HANDOVER: Close = { agreed: "Deal agreed", confirmAsk: "Confirm the deal?", confirmedLine: "confirmed it arrived as agreed", mark: "Mark delivered", marked: "Marked as delivered.", markedBy: "handed it over", confirm: "Received it ✓",
   confirmed: "Received it — all good.", todo: "Hand it over.", waiting: "Waiting for the handover.", confirmTodo: "Confirm you received it.", done: "Done — received as agreed." };
@@ -77,7 +78,7 @@ const ROLES: Record<string, Roles> = {
     // What an employer screens for, so the candidate's agent can answer it without asking them.
     profile: [
       { label: "Experience", question: "How many years of relevant experience do you have?", options: ["Fresher", "1–2 years", "3–5 years", "5+ years"] },
-      { label: "Skills", question: "What are your main skills?", options: [] },
+      { label: "Skills", question: "What are your main skills?", options: [], multi: true },
       { label: "Notice period", question: "When could you join?", options: ["Right away", "Within 15 days", "Within 30 days", "In 60+ days"] },
       { label: "Work mode", question: "Remote, hybrid or on-site?", options: ["Remote", "Hybrid", "On-site", "Any"] },
     ] }),

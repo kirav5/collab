@@ -11,7 +11,7 @@ import { savedKey } from "../market/answer.ts";
 import type { Fact } from "./model.ts";
 import { FACTS } from "./policy.ts";
 
-export interface Remembered { question: string; answer: string; about?: string; reuse?: boolean }
+export interface Remembered { question: string; answer: string; about?: string; reuse?: boolean; label?: string; category?: string }
 
 const STOP = new Set(["a", "an", "the", "do", "does", "did", "is", "are", "you", "your", "i", "my", "me", "we", "of", "for", "to", "in", "on", "at",
   "what", "which", "how", "would", "will", "can", "could", "should", "it", "this", "that", "and", "or", "be", "have", "has", "any", "prefer", "like", "want"]);
@@ -39,6 +39,7 @@ export async function rememberAnswer(db: Docs, owner: string, r: Remembered, now
   if (prev && prev.owner !== owner) return null;
   const fact: Fact = { id, owner, text: `${question.replace(/\?*$/, "?")} — ${answer}`, tier: "private", topics: [], offer: null, source: "answer",
     question, answer, ...(r.about ? { about: String(r.about).slice(0, 80) } : prev?.about ? { about: prev.about } : {}),
+    ...(r.label ? { label: String(r.label).slice(0, 30) } : prev?.label ? { label: prev.label } : {}), ...(r.category ? { category: String(r.category).slice(0, 40) } : prev?.category ? { category: prev.category } : {}),
     reuse: r.reuse !== false && !hasContact(answer), createdAt: prev?.createdAt ?? now, updatedAt: now };
   await db.set(FACTS, id, fact);
   return fact;

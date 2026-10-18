@@ -104,6 +104,10 @@ gcloud run deploy "$SERVICE" --quiet \
 
 # The version open apps compare against when they come back to the front (they reload into a new one).
 echo "$BUILD_ID" > web/version.txt
+# The service worker serves the shell from the device: its cache is named for this build, so every deploy installs a
+# new worker that fetches the new shell and reloads open apps into it. The tracked file is put back afterwards.
+cp web/sw.js web/.sw.js.orig && trap 'mv -f web/.sw.js.orig web/sw.js' EXIT
+sed -i.bak "s/^const SHELL = \"collab-shell-[^\"]*\";/const SHELL = \"collab-shell-$BUILD_ID\";/" web/sw.js && rm -f web/sw.js.bak
 # Point-in-time recovery: the database can be restored to any moment in the last 7 days (best effort: needs the
 # Datastore owner role on the deploying account).
 gcloud firestore databases update --database='(default)' --enable-pitr --project "$PROJECT" >/dev/null 2>&1 || true

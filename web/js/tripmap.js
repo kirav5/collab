@@ -56,7 +56,7 @@ export async function drawTrips(root) {
     const r = await route(a, b);
     if (!box.isConnected) continue;
     L.polyline(r.line, { color: css("--talk") || "#06c", weight: 4, opacity: 0.9, dashArray: r.road ? null : "6 6" }).addTo(map);
-    dot(a, css("--talk")); dot(b, css("--accent"));
+    L.circleMarker(a, { radius: 7, color: css("--talk"), weight: 3, fillColor: css("--surface") || "#fff", fillOpacity: 1 }).addTo(map); dot(b, css("--accent"));
     map.fitBounds(L.latLngBounds(r.line), { padding: [24, 24] });
     const eta = box.closest("[data-post]")?.querySelector(".trip-eta");
     if (eta) eta.textContent = `${r.road ? "" : "about "}${r.km < 10 ? r.km.toFixed(1) : Math.round(r.km)} km · ${r.min < 60 ? `${Math.round(r.min)} min` : `${Math.floor(r.min / 60)} h ${Math.round(r.min % 60)} min`} by road${r.road ? "" : " (estimate)"}`;

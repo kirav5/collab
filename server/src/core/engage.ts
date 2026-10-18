@@ -27,7 +27,7 @@ import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, trackRecord } from "./deals.ts";
 import { matchSaved, savedAnswers } from "./memory.ts";
-import { hasContact } from "../market/text.ts";
+import { contains, hasContact } from "../market/text.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
@@ -337,10 +337,12 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
   }
-  // An answer the owner gave before and said their agent may give again: their exact words, no model.
+  // An answer the owner gave before and said their agent may give again: their exact words, no model — unless this
+  // request says it itself (today's "2–3 years" over an earlier request's "5+ years"; the old answer is still a fact).
   if (!paused && owner) {
     const mine = matchSaved(await savedAnswers(db, owner), q.question, true);
-    if (mine?.answer) return { text: mine.answer, src: "memory", review: false, byModel: false };
+    const briefSays = s === "requester" && [...e.brief.requirements, ...(e.brief.about ?? [])].some(r => r.label.length >= 4 && contains(q.question, r.label));
+    if (mine?.answer && !briefSays) return { text: mine.answer, src: "memory", review: false, byModel: false };
   }
   const key = s === "provider" && e.offer.factId ? docId(`${e.offer.factId}:${savedKey(q.question)}`) : null;
   const allowed = owner ? await allowedFor(db, owner, asker, now()) : [];

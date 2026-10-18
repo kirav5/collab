@@ -12,19 +12,22 @@ test('version updates reload changed versions, defer while editing and tolerate 
   assert.equal(shouldReload('one', null, false), false);
   assert.equal(shouldReload(null, 'two', false), false);
 });
-test('service worker does not cache pickup status, public receipts or version checks; new shell wins', async () => {
-  const handlers: any = {}, cached: any[] = [];
+test('service worker does not cache pickup status, public receipts or version checks; the shell opens from the device, the rest from the network', async () => {
+  const handlers: any = {};
+  let stored: Response | undefined = new Response('old version');
   runInNewContext(readFileSync(new URL('../../web/sw.js', import.meta.url), 'utf8'), {
     self: { addEventListener: (name: string, fn: any) => handlers[name] = fn }, location: { origin: 'https://collab.test' }, URL, Response,
     fetch: async () => new Response('new version', { status: 200 }),
-    caches: { match: async () => new Response('old version'), open: async () => ({ put: (...args: any[]) => cached.push(args) }) },
+    caches: { match: async () => stored, open: async () => ({ put: () => {} }) },
     setTimeout: () => {}, importScripts: () => { throw new Error('local'); },
   });
-  for (const path of ['/public/pickup/id?code=secret', '/public/receipts/id?code=secret', '/api/chats', '/version.txt', '/pickup.html', '/verify.html']) {
-    let intercepted = false; handlers.fetch({ request: { method: 'GET', url: 'https://collab.test' + path }, respondWith: () => intercepted = true });
-    assert.equal(intercepted, false, path);
-  }
-  let response: any;
-  handlers.fetch({ request: { method: 'GET', url: 'https://collab.test/js/app.js' }, respondWith: (r: any) => response = r });
-  assert.equal(await (await response).text(), 'new version');
+  const get = (path: string) => { let response: any = null;
+    handlers.fetch({ request: { method: 'GET', url: 'https://collab.test' + path }, respondWith: (r: any) => response = r, waitUntil: () => {} });
+    return response; };
+  for (const path of ['/public/pickup/id?code=secret', '/public/receipts/id?code=secret', '/api/chats', '/version.txt', '/pickup.html', '/verify.html'])
+    assert.equal(get(path), null, path);
+  assert.equal(await (await get('/js/app.js')).text(), 'old version', 'a shell file opens from the device at once (a deployment brings a new shell)');
+  assert.equal(await (await get('/js/not-in-shell.js')).text(), 'new version', 'anything else: network first');
+  stored = undefined;
+  assert.equal(await (await get('/js/app.js')).text(), 'new version', 'no device copy yet: the network');
 });

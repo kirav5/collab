@@ -752,3 +752,35 @@ test("deleting an account: the agent stops, what they kept is gone, the handle i
   assert.equal(theirs.phase, "closed"); assert.match(theirs.events.at(-1).text, /closed their account/);
   await as("del-c", "/api/me", { handle: "del-anu", name: "New Anu", areaName: "Indiranagar" });
 });
+
+test("a range in a reviewed request survives sending: its upper end is kept; an unknown kind or comparison isn't", async () => {
+  await as("rg-a", "/api/me", { handle: "range-asker", name: "Range Asker", areaName: "Indiranagar" });
+  const f = (x: object) => ({ id: "experience_years", label: "Experience", kind: "number", comparison: "atLeast", value: "2", unit: "years", strength: "required", source: "stated", ...x });
+  const sent = await as("rg-a", "/api/briefs", { need: { id: "n1", category: "lessons", place: { name: "Indiranagar", lat: 12.97, lon: 77.64 }, radiusKm: 5, maxPrice: 900, attributes: {}, mustAsk: [], mode: "in_person",
+    filters: [f({ upTo: "3" }), f({ id: "level", label: "Level", kind: "weird", comparison: "between", value: "beginner", upTo: "1" })] },
+    shared: { title: "Guitar teacher", summary: "Looking for a guitar teacher", requirements: [{ label: "Experience", value: "2–3 years", strength: "required" }], questions: [] } });
+  const [range, level] = sent.brief.need.filters;
+  assert.equal(range.value, "2"); assert.equal(range.upTo, "3", "the range's upper end is kept");
+  assert.equal(level.kind, "text"); assert.equal(level.comparison, "equals"); assert.equal(level.upTo, undefined, "no range without a number above the start");
+  assert.equal(sent.brief.shared.requirements[0].value, "2–3 years");
+});
+
+test("routing a message answers the same as before, and the request drafted from it reads the same", async () => {
+  await as("rt-a", "/api/me", { handle: "route-asker", name: "Route Asker", areaName: "Indiranagar" });
+  const said = "I need a guitar teacher in Indiranagar";
+  const r = await as("rt-a", "/api/route", { text: said, recent: [] });
+  assert.deepEqual(Object.keys(r).sort(), ["find", "intent", "reply", "tier"]);
+  assert.equal(r.intent, "request");
+  const d = await as("rt-a", "/api/briefs/draft", { text: said });
+  assert.equal(d.draft.need.category, "lessons");
+});
+
+test("making a listing: the questions and their likely answers come together, with the gate", async () => {
+  await as("ls-a", "/api/me", { handle: "listing-maker", name: "Listing Maker", areaName: "Koramangala" });
+  const d = await as("ls-a", "/api/offers/draft", { text: "Selling my used iPhone 13 in Koramangala for ₹32,000" });
+  assert.equal(d.offer.price.amount, 32000);
+  assert.ok(d.missing.length >= 1 && d.missing.every((m: any) => m.label && m.ask.endsWith("?")));
+  assert.ok(Object.keys(d.answers).every(k => d.missing.some((m: any) => m.label === k)), "answers only for questions asked");
+  assert.ok(d.gate && typeof d.gate.ok === "boolean");
+  assert.equal(d.offer.requirements, undefined, "not a job post: no requirements read");
+});

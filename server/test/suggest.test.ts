@@ -87,7 +87,8 @@ test("fair-price sources are labelled without repeating their price", () => {
 test("App Check: writes and model-running reads need it; plain reads don't wait for it", () => {
   assert.equal(appCheckRequired("POST", "/me"), true);
   assert.equal(appCheckRequired("POST", "/engagements/x/pay"), true);
-  assert.equal(appCheckRequired("GET", "/goals"), true);
+  assert.equal(appCheckRequired("GET", "/goals"), false);
+  assert.equal(appCheckRequired("GET", "/goals/abc/steps/s1/matches"), true);
   assert.equal(appCheckRequired("GET", "/goals/abc"), true);
   assert.equal(appCheckRequired("GET", "/me"), false);
   assert.equal(appCheckRequired("GET", "/people/bottle-store"), false);

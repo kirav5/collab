@@ -40,15 +40,15 @@
   ],
   "shortcuts": [
     {
-      "name": "Requests",
+      "name": "Activity",
       "url": "/?screen=requests"
     },
     {
-      "name": "Scan a shop's QR",
+      "name": "My card",
       "url": "/?screen=people"
     },
     {
-      "name": "My context",
+      "name": "About me",
       "url": "/?screen=context"
     }
   ]
