@@ -2,7 +2,7 @@
 // wrote, limits that make sense together, and what can't be enforced said back rather than dropped.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkRules, readRulesPlain, restates, rulesLines, RulesTask } from "../src/core/rules.ts";
+import { checkRules, readPricingPlain, readRulesPlain, restates, rulesLines, RulesTask, withoutBuyBack } from "../src/core/rules.ts";
 
 const SELLER = "Don't go below ₹400 a lamp, max 10 per buyer, pickups only on weekdays after 5 pm, and close deals yourself above ₹420";
 
@@ -108,4 +108,37 @@ test("terms that only repeat the owner's own are recognised, so theirs are kept"
   assert.ok(restates({ label: "Returns", text: "No returns or refunds once the items are inspected and handed over." }, OWN_TERMS));
   assert.ok(restates({ label: "Payment", text: "Check and test all appliances and devices on the spot before making payment." }, OWN_TERMS));
   assert.ok(!restates({ label: "Warranty", text: "Six months' warranty on the screen and battery." }, OWN_TERMS), "a new term still replaces");
+});
+
+// The same listing's Warranty term: a buy-back ("we source item from user at component cost / with 50% lower") is what
+// the seller pays a customer, not a selling price, so it must never become "Price: 50% under the new price".
+const PRICING_TERMS = "price is determined by croma site listing. since i'm selling old, buyer usually wants lower price than that\n"
+  + "i'll go 25% cheaper if within manufacturer guarantee.\n"
+  + "now, repair cost also looked up over internet, and 25% markup over that service - talent development fee\n"
+  + "this, sold as insurance for 12.5% price\n"
+  + "Sold as-is with no warranty unless covered under an existing manufacturer guarantee.\n"
+  + "yes, but did you buy insurance\n"
+  + "if no, we have buy back policy - where we source item from user at component cost\n"
+  + "with 50% lower when looked over internet";
+
+test("a buy-back is not a selling-price rule; the seller's real pricing rules stay", () => {
+  const p = readPricingPlain(PRICING_TERMS);
+  assert.ok(!p.pricing.some(x => x.percent === 50), JSON.stringify(p.pricing));
+  assert.ok(p.pricing.some(x => x.label === "Price" && x.percent === 25 && /manufacturer guarantee/.test(x.when ?? "")));
+  assert.ok(p.pricing.some(x => x.label === "Repair service" && x.percent === 25));
+  assert.ok(p.pricing.some(x => x.label === "Insurance" && x.percent === 12.5));
+  assert.ok(!withoutBuyBack(PRICING_TERMS).includes("50%"), "the line that carries on from the buy-back goes too");
+});
+
+test("a 50% rule the model reads from a buy-back is dropped; a real 50% selling rule is kept", () => {
+  const ctx = { side: "seller" as const, price: 9245 };
+  const model = { side: "seller" as const, floor: null, limit: null, closeAt: null, autonomy: "negotiate" as const, maxPerBuyer: null, quantity: null, terms: [], mustAsk: [], unsupported: [],
+    lookups: ["new price" as const], pricing: [
+      { label: "Price", basis: "new price" as const, percent: 25, how: "off" as const, when: "within manufacturer guarantee" },
+      { label: "Price", basis: "new price" as const, percent: 50, how: "off" as const, when: "looked over internet" }] };
+  const r = checkRules(model, PRICING_TERMS, ctx)!;
+  assert.deepEqual(r.pricing.map(x => x.percent), [25]);
+  const sale = "look up the new price online; sell at 50% under the new price if the box is damaged";
+  const kept = checkRules({ ...model, pricing: [{ label: "Price", basis: "new price", percent: 50, how: "off", when: "the box is damaged" }] }, sale, ctx)!;
+  assert.deepEqual(kept.pricing.map(x => x.percent), [50]);
 });
