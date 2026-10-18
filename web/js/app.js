@@ -669,12 +669,39 @@ async function openPass(path) {
 }
 
 /** A conversation in the side panel (its card, live: redrawn on every refresh while it's open). */
+/** The chat a conversation came from: the request's card (same brief), a card that names it, else the chat with them. */
+function chatOf(e) {
+  const them = e.requester.uid === session.uid ? e.provider : e.requester;
+  for (const s of S.sessions) for (const m of s.messages ?? []) for (const c of m.cards ?? [])
+    if ((e.briefId && c.briefId === e.briefId) || (c.engaged ?? []).includes(e.id) || c.engagementId === e.id) return { s, m };
+  const direct = S.sessions.find(s => s.to && s.to === them.handle);
+  return direct ? { s: direct, m: direct.messages?.at(-1) ?? null } : null;
+}
+
+/** That chat in view, at the card where the conversation started (marked for a moment). */
+function showChatOf(e) {
+  const found = chatOf(e);
+  if (!found) return false;
+  S.current = found.s.id;
+  if (!sideBySide()) openScreen("chat"); else paint({ keepChat: false });
+  requestAnimationFrame(() => {
+    const at = found.m && document.querySelector(`#content [data-msg="${CSS.escape(found.m.id)}"]`)?.closest(".card, .msg-agent, .msg-user");
+    if (!at) return;
+    at.scrollIntoView({ block: "center" }); at.classList.add("landed"); setTimeout(() => at.classList.remove("landed"), 1600);
+  });
+  return true;
+}
+
 function showEngagement(id) {
   const e = live.engagements.get(id);
   if (!e) return toast("That conversation isn't loaded yet.");
   const them = e.requester.uid === session.uid ? e.provider : e.requester;
   S.panelLog = null;
-  openPanel({ engagement: id, title: `Your agent ⇄ ${them.name}'s agent`, render:() => { const x = live.engagements.get(id); return x ? `<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}` : ""; } });
+  // Opened beside the chat: the chat it came from comes into view with it, for reference.
+  const from = chatOf(e);
+  if (from && sideBySide() && S.current !== from.s.id) showChatOf(e);
+  openPanel({ engagement: id, title: `Your agent ⇄ ${them.name}'s agent`, render:() => { const x = live.engagements.get(id); if (!x) return ""; const src = chatOf(x);
+    return `${src ? `<button class="linkish small from-chat" data-act="open-chat-of" data-id="${esc(id)}">From your chat: <b>${esc(src.s.title ?? "chat")}</b> ›</button>` : ""}<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}`; } });
 }
 
 /** What the agents said, as a stream: one conversation, or every conversation, newest last. */
@@ -1209,6 +1236,7 @@ async function onClick(e) {
     // A new or earlier chat replaces the chat only — Activity (or whatever is open beside it) stays on a wide screen;
     // on a phone the chat takes over, as Back to chat does.
     if (a === "new-chat") { S.current = null; setNav(false); return sideBySide() ? paint() : openScreen("chat"); }
+    if (a === "open-chat-of") { const e = live.engagements.get(el.dataset.id); if (!e || !showChatOf(e)) toast("That chat isn't on this device."); return; }
     if (a === "delete-session") {
       // Like any chat app: gone from this device and every other one (the account keeps a marker so an old copy can't
       // bring it back). Conversations and deals it started stay in Activity.

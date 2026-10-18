@@ -807,3 +807,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; max-heigh
    colour tints only icon badges). */
 .note-ico .logo { color: var(--text); }
 .note-ico:has(.logo) { background: var(--surface2); }
+/* A conversation names the chat it came from (tap to see it, at the card it started from). */
+.from-chat { display: inline-flex; gap: 4px; align-items: center; margin-bottom: 6px; color: var(--text2); }
+.from-chat b { color: var(--text); font-weight: 600; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
