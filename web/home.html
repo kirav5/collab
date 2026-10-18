@@ -116,7 +116,7 @@ span.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; 
 .who b { display: block; font-size: 14px; font-weight: 600; }
 .who > div:not(.avatar) > span { font-size: 12px; color: var(--text3); }
 .ctx { border: 1px solid var(--hairline); border-radius: 5px; padding: 10px 11px; display: grid; gap: 7px; font-size: 13px; background: var(--bg); }
-.ctx .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.ctx .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; min-height: 1.55em; }
 .ctx .row .k { color: var(--text3); }
 .ctx.private { border-color: color-mix(in srgb, var(--peri) 40%, transparent); background: var(--peri-fill); }
 .ctx.private .v { color: var(--peri); font-family: var(--mono); font-size: 12px; }
@@ -188,12 +188,16 @@ span.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; 
   .side.left { border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
   .side.right { border-left: 0; border-bottom: 1px solid var(--hairline); }
   .channel { grid-column: 1 / -1; grid-row: 2; }
-  .feed { height: 380px; }
+  /* A fixed-height chat: as a flex item it would grow with every message and push the page down. */
+  .feed { flex: none; height: 380px; }
+  /* Switching example empties these for a moment: they keep their room so nothing below moves. */
+  .side .ctx:not(.private) { min-height: calc(1.55em + 22px); }
   .status { margin-top: 0; }
   .ctx .optional { display: none; }
 }
 @media (max-width: 520px) {
   .who > div:not(.avatar) > span { display: none; }
+  .side .ctx:not(.private) { min-height: calc(1.55em + 18px); }
   .ctx { font-size: 12px; padding: 8px; }
   .msg { max-width: 92%; font-size: 13.5px; }
 }
@@ -255,9 +259,13 @@ footer .end { margin-left: auto; }
 .mcard.out { opacity: .55; padding: 7px 12px; }
 .mcard.out .t { font-weight: 500; font-size: 13px; }
 .mcard.out .t .s { color: var(--text3); }
-@media (max-width: 900px) { .disc { grid-template-columns: 1fr; } .matches { min-height: 0; } }
+@media (max-width: 900px) { .disc { grid-template-columns: 1fr; } .matches { min-height: 380px; } }
 
 @media (max-width: 640px) { .track .label { flex-direction: column; gap: 4px; } }
+@media (max-width: 600px) {
+  .stage-head .proto { width: 100%; margin-left: 0; }
+  #sTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1em; }
+}
 
 /* Theme coverage */
 .theme { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
