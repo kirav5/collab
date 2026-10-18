@@ -25,7 +25,7 @@ import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./cor
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { rememberAnswer } from "./core/memory.ts";
 import { JDTask, JoinError, hiringStatus, isApplication, joiningEffects, joiningMove, joinsOnLetter, requirementsFrom, screen } from "./core/hiring.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck, pruneWaiting, afterAnswers, hasContent } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -2152,11 +2152,42 @@ app.post("/cron/recover", async (req, res, next) => {
     const got = Buffer.from(String(req.headers["x-collab-cron"] ?? "")), want = Buffer.from(cronToken(cfg.secret));
     if (got.length !== want.length || !timingSafeEqual(got, want)) return res.status(401).json({ error: "not the scheduler" });
     const recovered = await recoverOutbox(db, now(), queue ? queue.enqueue : null, id => sendTurn(cfg, id, null));
+    const unstuck = await unstick().catch(err => { log.warn("unstick failed", { error: String(err).slice(0, 160) }); return 0; });
     const decisions = await expireDecisions(db, now(), i => pushTo(i.owner, "Still waiting for you", i.question ?? "A decision is due — tap to decide.", `/?engagement=${i.engagementId}`).then(() => {}));
-    if (recovered.found || decisions.lapsed || decisions.reminded) log.info("minute jobs", { recovered, decisions });
+    if (recovered.found || decisions.lapsed || decisions.reminded || unstuck) log.info("minute jobs", { recovered, decisions, unstuck });
     res.json({ ...recovered, decisions });
   } catch (e) { next(e); }
 });
+
+/**
+ * The watchdog for conversations that stopped: every minute, one quiet for 2+ minutes whose waiting list points only at
+ * closed items is cleaned up and its agents carry on; one where nobody is waiting and it's the provider's move is woken
+ * once (every 10 minutes at most). No conversation depends on someone opening the app to get going again.
+ */
+async function unstick(): Promise<number> {
+  const t = now();
+  let n = 0;
+  for (const phase of ["asking", "negotiating"]) {
+    for (const e of (await db.find(ENGAGEMENTS, [["phase", "==", phase]], 100)) as Engagement[]) {
+      if (t - (e.updatedAt ?? t) < 120 || e.outbox) continue;
+      if (await pruneWaiting(db, e)) {
+        for (const s of ["provider", "requester"] as const) {
+          if (e.waiting[s] || ["agreed", "closed", "declined", "deal"].includes(e.phase)) continue;
+          const out: Turn = { kind: "collab.turn/v1", from: s, engagementId: e.id };
+          await afterAnswers(db, model, e, s, out);
+          await saveEngagement(db, e);
+          if (hasContent(out)) await (s === "requester" ? sendTurn(cfg, e.id, out) : deliverProviderTurn(cfg, a2a.store, e.id, out)).catch(err => log.warn("unstick turn failed", { id: e.id, error: String(err).slice(0, 120) }));
+        }
+        n++;
+      } else if (!e.waiting.requester && !e.waiting.provider && myTurnToMove(e, "provider") && t - ((e as any).wokenAt ?? 0) > 600) {
+        await db.merge(ENGAGEMENTS, e.id, { wokenAt: t });
+        await sendTurn(cfg, e.id, { kind: "collab.turn/v1", from: "requester", engagementId: e.id }).catch(() => {});
+        n++;
+      }
+    }
+  }
+  return n;
+}
 
 /** Push for a new alert (Firebase Cloud Messaging); the app also shows alerts when opened. */
 async function notifyAlert(a: Alert) { await pushTo(a.owner, `New match: ${a.title}`, a.text, "/?alerts=1"); }
