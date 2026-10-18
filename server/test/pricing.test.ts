@@ -25,3 +25,27 @@ test("a quote looks up the new price on the web and says where it came from; no 
   assert.equal(none.price, null);
   assert.equal(quoteMessage(none, null), null);
 });
+
+test("a seller who prices from the web opens on the item this buyer asked about, says how, and keeps its floor ratio", async () => {
+  const { fresh, save, load, priceFromWeb, LIMITS } = await import("../src/core/engage.ts");
+  const db = memoryDocs();
+  await db.set(LIMITS, "fact:f1", { key: "fact:f1", owner: "s1", mandate: { price: { opening: 9245, limit: 8321 }, terms: {}, maxRounds: 5 }, autonomy: "negotiate",
+    lookups: ["new price"], pricing: [{ label: "Price", basis: "new price", percent: 25, how: "off", when: "within manufacturer guarantee" }, { label: "Insurance", basis: "price", percent: 12.5, how: "of", when: null }] });
+  const brief: any = { title: "Used 43 inch LED TV", summary: "Looking for a used 43 inch LED TV.", category: "goods", mode: null, area: "Bengaluru", requirements: [], budget: null, questions: [] };
+  const e: any = fresh({ briefId: "b1", brief, requester: { uid: "u1", handle: "u1", name: "Asha" }, provider: { uid: "s1", handle: "devices", name: "Ravi Electronics" },
+    offer: { factId: "f1", title: "Electronic devices · Bengaluru", price: 9245, unit: null, category: "goods" } });
+  await save(db, e);
+  const asked: string[] = [];
+  const model: any = { grounded: async (item: string) => { asked.push(item); return {
+    text: JSON.stringify({ items: [{ label: "43 inch LED TV at Croma", price: 24990, unit: "each" }, { label: "43 inch LED TV at Flipkart", price: 23990, unit: "each" }] }),
+    supports: [{ text: "43 inch LED TV at Croma 24990", indices: [0] }, { text: "43 inch LED TV at Flipkart 23990", indices: [1] }],
+    sources: [{ title: "croma.com", url: "https://www.croma.com/tv" }, { title: "flipkart.com", url: "https://www.flipkart.com/tv" }], searchEntryPoint: null }; } };
+  const cur = await load(db, e.id);
+  await priceFromWeb(db, model, cur);
+  assert.equal(asked[0], "Used 43 inch LED TV new", "a shop of many things prices what this buyer asked for");
+  const row: any = await db.get(LIMITS, `eng:${e.id}`);
+  assert.equal(row.mandate.price.opening, 18_400, "25% under ₹24,490 (₹18,367.50, said as ₹18,400)");
+  assert.equal(row.mandate.price.limit, 16_600, "the owner's floor ratio (₹8,321 of ₹9,245 = 90%)");
+  assert.match(cur.events.at(-1)!.text, /^New, it's usually ₹24,490 \(croma\.com, flipkart\.com\)\. Within manufacturer guarantee, we sell at 25% under that: ₹18,400\. Optional cover: 12\.5% of the price \(₹2,300\)\.$/);
+  assert.doesNotMatch(cur.events.at(-1)!.text, /16,600/, "the limit is never said");
+});

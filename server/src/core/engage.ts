@@ -631,7 +631,7 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
 /** A seller whose rules price from the web ("25% under the new price"): before its first offer, its agent looks up the
  *  item this buyer asked about and opens at the owner's rule — the owner's floor keeps its ratio to the listed price,
  *  and the owner still confirms. The buyer is told how the price was set. Nothing is said when the web has too little. */
-async function priceFromWeb(db: Docs, model: Model | null, e: Engagement) {
+export async function priceFromWeb(db: Docs, model: Model | null, e: Engagement) {
   const row = (await db.get(LIMITS, `fact:${e.offer.factId}`)) as DelegatedLimit | null;
   if (!row?.pricing?.some(p => p.basis !== "price" && p.how === "off") || (await db.get(LIMITS, `eng:${e.id}`))) return;
   // The listing's own item when the request is about it; for a shop of many things, what this buyer asked for.
