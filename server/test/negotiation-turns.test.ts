@@ -94,3 +94,13 @@ test("when a deal is agreed, a question nobody answered is marked not needed (th
   assert.equal(e.qa[0].status, "moot"); assert.match(e.qa[0].answer, /not needed/i);
   assert.equal(e.qa[1].status, "answered", "answers stay as they were");
 });
+
+test("an agent's own offer can't crawl: too slow toward the limit, and the scheduled offer is used", async () => {
+  const { NegotiateTask } = await import("../src/market/negotiate.ts");
+  const ctx: any = { side: "seller", mandate: { price: { opening: 1800, limit: 1500 }, terms: {}, maxRounds: 5 }, catalog: { buyerPrefersLower: () => true, termLabel: (k: string) => k, termUnit: () => null }, unit: null,
+    mine: [{ id: "a", price: 1800, terms: {}, round: 0 }, { id: "b", price: 1720, terms: {}, round: 1 }, { id: "c", price: 1650, terms: {}, round: 2 }], theirs: [{ id: "t", price: 1480, terms: {}, round: 2 }] };
+  const crawl = NegotiateTask.validate({ action: "propose", proposal: { id: "x", price: 1610, terms: {}, round: 3 }, message: "We can do ₹1,610." } as any, { ctx, listPrice: 1800 });
+  assert.equal(crawl, null, "₹1,610 on the 4th offer is too slow toward a ₹1,500 floor");
+  const onTime = NegotiateTask.validate({ action: "propose", proposal: { id: "y", price: 1500, terms: {}, round: 3 }, message: "We can do ₹1,500." } as any, { ctx, listPrice: 1800 });
+  assert.equal(onTime?.action, "propose");
+});

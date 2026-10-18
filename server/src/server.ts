@@ -2179,7 +2179,9 @@ async function unstick(): Promise<number> {
   const t = now();
   let n = 0;
   for (const phase of ["asking", "negotiating"]) {
-    for (const e of (await db.find(ENGAGEMENTS, [["phase", "==", phase]], 100)) as Engagement[]) {
+    // Newest first: unordered, the read returned the oldest 100 and a newer stalled conversation was never looked at.
+    const recent = (await db.find(ENGAGEMENTS, [["phase", "==", phase]], 200, "updatedAt").catch(() => db.find(ENGAGEMENTS, [["phase", "==", phase]], 200))) as Engagement[];
+    for (const e of recent) {
       if (t - (e.updatedAt ?? t) < 120 || e.outbox) continue;
       if (await pruneWaiting(db, e)) {
         for (const s of ["provider", "requester"] as const) {
