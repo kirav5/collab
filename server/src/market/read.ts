@@ -50,7 +50,7 @@ export const ListingFieldsTask: Task<FieldsInput, Fields> = {
   instructions: `Read a marketplace message in any language and return only JSON with what it actually says; use null for anything not said, never guess.
 {"item": "what is offered or wanted, 1-3 words", "place": "the place exactly as written, or null", "place_latin": "that place in English/Latin letters as on a map, or null", "place_to": "destination exactly as written, or null",
  "price": number or null, "price_scale": "rupees|thousand|lakh|crore", "price_per": "the unit the price is per, or null",
- "limit": number or null, "limit_scale": "rupees|thousand|lakh|crore", "attributes": {"term key": "value"}, "questions": ["question the writer wants answered"],
+ "limit": number or null, "limit_scale": "rupees|thousand|lakh|crore", "attributes": {"term key": "value"}, "questions": ["question the writer wants the other side to answer — about what they offer, never about the writer's own place, time or needs"],
  "payer": "writer" | "other" | null}
 place: a real place name (a neighbourhood, city or landmark) — not a word like offline, online, home, here or nearby; null if none is named.
 payer: who pays money in the deal. "writer" when the writer pays (hiring someone, buying, paying for a service); "other" when the writer is paid (selling, renting out, offering a service, looking for a job); null if the message doesn't make it clear. Posting a listing doesn't decide it: an employer posting a job is the writer who pays.
@@ -114,7 +114,9 @@ JSON:`; },
     // providers: it's what they're answering already.
     const said = new Set(i.text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2));
     const restated = (q: string) => { const w = q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(x => x.length > 2); return w.length >= 4 && w.filter(x => said.has(x)).length / w.length >= 0.8; };
-    out.questions = f.questions.map(q => q.trim()).filter(q => q.length >= 8 && q.length <= 140 && !/phone|@/i.test(q) && !restated(q));
+    // …nor a question only the other side would ask the writer ("Where is the home located?" — the writer knows).
+    const theirsToAsk = (q: string) => i.side === "find" && /\b(the|my|your) (home|house|flat|apartment|place)\b|\bwhere (is|are) (the|my) |\bwhen do (i|we) need\b/i.test(q);
+    out.questions = f.questions.map(q => q.trim()).filter(q => q.length >= 8 && q.length <= 140 && !/phone|@/i.test(q) && !restated(q) && !theirsToAsk(q));
     if (out.item.length > 40) out.item = i.domain.label.toLowerCase();
     // The writer's own words outrank the model's reading ("we're hiring" pays, "selling my bike" is paid).
     out.payer = payerCue(i.text) ?? f.payer;

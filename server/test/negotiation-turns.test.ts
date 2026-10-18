@@ -61,3 +61,26 @@ test("while their agent checks with its owner, their questions for us are still 
   const asked = (await db.find("inbox", [["owner", "==", "u1"]])).map((i: any) => i.question);
   assert.ok(q2.status === "answered" || asked.includes("What quantity of bottles are you looking to order?"));
 });
+
+test("a side waiting only on closed or settled items is no longer waiting — the conversation can move", async () => {
+  const { memoryDocs } = await import("../src/docs.ts");
+  const { pruneWaiting } = await import("../src/core/engage.ts");
+  const db = memoryDocs();
+  await db.set("inbox", "copy", { id: "copy", status: "open", qaId: "q2", kind: "answer", engagementId: "e1" });
+  await db.set("inbox", "old", { id: "old", status: "done", qaId: "q2", kind: "answer", engagementId: "e1" });
+  const e: any = { id: "e1", qa: [{ id: "q2", from: "requester", question: "Where is it?", status: "declined" }],
+    waiting: { requester: null, provider: { kind: "answer", inbox: ["copy", "old"], text: "Where is it?" } } };
+  assert.equal(await pruneWaiting(db, e), true);
+  assert.equal(e.waiting.provider, null, "nothing open is left to wait on");
+  assert.equal((await db.get("inbox", "copy")).status, "done", "the stray copy is closed");
+});
+
+test("a request never asks the provider about the requester's own home", async () => {
+  const { ListingFieldsTask } = await import("../src/market/read.ts");
+  const { domain } = await import("../src/market/domains.ts");
+  const { decide } = await import("../src/ai/decide.ts");
+  const text = "Need a deep clean for my 2BHK this Saturday";
+  const m: any = { name: "t", complete: async () => JSON.stringify({ item: "deep clean", place: "", price: null, limit: null, attributes: {}, questions: ["Where is the home located?", "Do you bring your own supplies?"] }) };
+  const d = await decide(m, ListingFieldsTask, { text, domain: domain("tasks")!, side: "find" });
+  assert.deepEqual(d.output.questions, ["Do you bring your own supplies?"]);
+});

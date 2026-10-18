@@ -212,6 +212,29 @@ export async function doneConfirms(db: Docs, e: Engagement, s: Side) {
   e.waiting[s] = left.length ? { ...e.waiting[s]!, inbox: left } : null;
 }
 
+/**
+ * Each side's waiting list without what is no longer open: an item closed elsewhere (a copy of the same question
+ * answered through another item, an answer from another device), or one whose question is already answered or
+ * declined. A side left waiting on nothing never moves again — that's how a conversation got stuck. True if changed.
+ */
+export async function pruneWaiting(db: Docs, e: Engagement): Promise<boolean> {
+  let changed = false;
+  for (const s of ["requester", "provider"] as Side[]) {
+    const w = e.waiting[s];
+    if (!w?.inbox?.length) continue;
+    const keep: string[] = [];
+    for (const id of w.inbox) {
+      const i = (await db.get(INBOX, id)) as InboxItem | null;
+      const q = i?.qaId ? e.qa.find(x => x.id === i.qaId) : null;
+      const settled = !!q && (q.status === "answered" || q.status === "declined");
+      if (i?.status === "open" && !settled) keep.push(id);
+      else if (i?.status === "open") await db.update(INBOX, id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null));
+    }
+    if (keep.length !== w.inbox.length) { changed = true; e.waiting[s] = keep.length ? { ...w, inbox: keep } : null; }
+  }
+  return changed;
+}
+
 /** Whether a side has a device that can be asked (our users and demo people do; an outside A2A agent doesn't). */
 // An owner who can be asked: a person, not an anonymous outside agent.
 const hasOwner = (e: Engagement, s: Side) => { const u = uidOf(e, s); return !!u && !u.startsWith("anon:"); };
@@ -697,10 +720,10 @@ export async function requesterTurn(db: Docs, model: Model | null, e: Engagement
   return hasContent(out) ? out : null;
 }
 
-const hasContent = (t: Turn) => !!(t.answers?.length || t.questions?.length || t.declined?.length || t.proposal || t.accept || t.confirm || t.decline || t.brief);
+export const hasContent = (t: Turn) => !!(t.answers?.length || t.questions?.length || t.declined?.length || t.proposal || t.accept || t.confirm || t.decline || t.brief);
 
 /** After answering: move if it's this side's turn and nothing is open; confirm a deal. */
-async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
+export async function afterAnswers(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   if (pendingFor(e, s) || e.offer.price == null) return;
   if (e.phase === "deal" && hireDeal(e)) {
     if (!e.negotiation.confirmed[s] && !e.waiting[s]?.inbox.length) await askConfirm(db, e, s);
@@ -933,6 +956,8 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
     w.inbox = w.inbox.filter(x => x !== item.id);
     if (!w.inbox.length) e.waiting[s] = null;
   }
+  // Copies of the same question, or items already settled another way, don't keep this side waiting.
+  await pruneWaiting(db, e);
   // With nothing else waiting on this side, its agent carries on (answers done → its move, if it's its turn).
   if (!e.waiting[s] && !out.decline && !["agreed", "closed", "declined"].includes(e.phase)) await afterAnswers(db, model, e, s, out);
   await save(db, e);
