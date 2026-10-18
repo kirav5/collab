@@ -1,4 +1,4 @@
-# Collab — production test report, 18 Oct 2026 (build 4d4a6ef)
+# Collab — production test report, 18 Oct 2026 (tested on 4d4a6ef; fixes found here shipped in 4cb1721)
 
 Everything below ran on production (https://collab-55.web.app) — no local build — as the signed-in test account
 `@sellertest816`, against the live Gemini API and the live demo agents (demo data v9). The account's rate limit (a burst
@@ -101,9 +101,9 @@ condition, size and wood type stayed marked as guesses.
 | The request's own sentence sent to providers as a must-ask | The request restated is dropped from questions | ✅ 4d4a6ef |
 | "Let me check with …" posted twice | Once per turn | ✅ 4d4a6ef |
 | Provider asked "which neighbourhood?" though the request named it | Providers' agents get the area | ✅ 4d4a6ef |
-| Clarifying question asked a freelancer's annual income | Money questions refused | ✅ after merge (see below) |
-| A property offer read "₹13,500,000" | Rupees grouped the Indian way (₹1,35,00,000) | ✅ after merge (see below) |
-| "₹3,250 per unit, which comes to ₹3,250 in total" for one item | Said once | ✅ after merge (see below) |
+| Clarifying question asked a freelancer's annual income | Money questions refused | ✅ 4cb1721 |
+| A property offer read "₹13,500,000" | Rupees grouped the Indian way (₹1,35,00,000) | ✅ 4cb1721 |
+| "₹3,250 per unit, which comes to ₹3,250 in total" for one item | Said once | ✅ 4cb1721 |
 
 ## 7. Still open
 
