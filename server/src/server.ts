@@ -25,7 +25,7 @@ import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./cor
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { rememberAnswer } from "./core/memory.ts";
 import { JDTask, JoinError, hiringStatus, isApplication, joiningEffects, joiningMove, joinsOnLetter, requirementsFrom, screen } from "./core/hiring.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck, pruneWaiting, reaskPending, afterAnswers, hasContent } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck, pruneWaiting, reaskPending, demoReply, isDemoSide, afterAnswers, hasContent } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -2185,6 +2185,22 @@ async function unstick(): Promise<number> {
     const recent = (await db.find(ENGAGEMENTS, [["phase", "==", phase]], 200, "updatedAt").catch(() => db.find(ENGAGEMENTS, [["phase", "==", phase]], 200))) as Engagement[];
     for (const e of recent) {
       if (t - (e.updatedAt ?? t) < 120 || e.outbox) continue;
+      // A demo person's question left for whoever was trying them (from before demo agents answered for themselves):
+      // their agent answers it now.
+      let answeredForDemo = false;
+      for (const s of ["provider", "requester"] as const) {
+        if (!isDemoSide(e, s) || e.waiting[s]?.kind !== "answer") continue;
+        for (const id of e.waiting[s]!.inbox) {
+          const item = (await db.get(INBOX, id)) as InboxItem | null;
+          if (item?.status !== "open" || item.kind !== "answer" || !item.question) continue;
+          const reply = await demoReply(db, model, e, s, item.question);
+          const r = await resolveItem(db, model, item, { text: reply.text }).catch(err => { log.warn("demo answer failed", { id: e.id, error: String(err).slice(0, 120) }); return null; });
+          await db.update(INBOX, item.id, (x: InboxItem | null) => (x?.status === "open" ? { ...x, status: "done" } : null));
+          if (r?.turn) await (s === "requester" ? sendTurn(cfg, e.id, r.turn) : deliverProviderTurn(cfg, a2a.store, e.id, r.turn)).catch(() => {});
+          answeredForDemo = true;
+        }
+      }
+      if (answeredForDemo) { n++; continue; }
       if (await reaskPending(db, e)) { await saveEngagement(db, e); n++; continue; }
       if (await pruneWaiting(db, e)) {
         for (const s of ["provider", "requester"] as const) {

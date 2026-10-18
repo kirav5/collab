@@ -99,16 +99,19 @@ export function describe(p: Proposal, ctx: Pick<Context, "catalog" | "unit">): s
   return parts.join(" · ");
 }
 
-function blockers(p: Proposal, ctx: Context): string {
-  const out: string[] = [];
-  if (direction(ctx) * (p.price - ctx.mandate.price.limit) < -0.5) {
-    out.push(`price ${moneyText({ amount: p.price, currency: "INR", period: ctx.unit })} (your limit ${moneyText({ amount: ctx.mandate.price.limit, currency: "INR", period: ctx.unit })})`);
-  }
+/** What the owner reads when no deal fits: their latest and the owner's own limit, in plain numbers — always these
+ *  words, never the model's (it once wrote "I need to check with Atishay… ₹2,000 is our maximum authorized limit"
+ *  to Atishay, beside a different price on the same card). */
+export function escalation(ctx: Context): string {
+  const r = ctx.mine.length, t = ctx.theirs.at(-1), lim = moneyText({ amount: ctx.mandate.price.limit, currency: "INR", period: ctx.unit });
+  if (!t) return `No offer from them yet after your ${r}. Your limit is ${lim}.`;
+  const terms: string[] = [];
   for (const [k, b] of Object.entries(ctx.mandate.terms).sort()) {
-    const v = p.terms[k];
-    if (v !== undefined && direction(ctx, k) * (v - b.limit) < -0.0001) out.push(`${ctx.catalog.termLabel(k)} ${v} (your limit ${b.limit})`);
+    const v = t.terms[k];
+    if (v !== undefined && direction(ctx, k) * (v - b.limit) < -0.0001) terms.push(`${ctx.catalog.termLabel(k)} ${v} (your limit ${b.limit})`);
   }
-  return out.length ? ` Blocking: ${out.join("; ")}.` : "";
+  const priceOut = direction(ctx) * (t.price - ctx.mandate.price.limit) < -0.5;
+  return `Their latest is ${moneyText({ amount: t.price, currency: "INR", period: ctx.unit })}${priceOut ? `; your limit is ${lim}` : ""} — no deal inside your limit after ${r} offers.${terms.length ? ` Also outside it: ${terms.join("; ")}.` : ""}`;
 }
 
 /** This side's line for a move, in its role's words ("Thanks — Ravi is looking for ₹38,000/month."). */
@@ -133,7 +136,7 @@ export function next(ctx: Context): Move {
     if (r >= ctx.mandate.maxRounds || atLeastAsGood(t, plan, ctx) || close) return { action: "accept", acceptId: t.id, message: line(ctx, "accept", describe(t, ctx)) };
   }
   if (r >= ctx.mandate.maxRounds) {
-    return { action: "escalate", message: `No deal inside your limits after ${r} offers. Their latest: ${t ? describe(t, ctx) : "nothing yet"}.${t ? blockers(t, ctx) : ""}` };
+    return { action: "escalate", message: escalation(ctx) };
   }
   return { action: "propose", proposal: plan, message: line(ctx, moveKind(ctx, plan.price), describe(plan, ctx)) };
 }
@@ -249,7 +252,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         return { ...move, message: (said && !leaks(said, ctx) && !invents(said, t) && !misnames(said) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
       }
       case "escalate":
-        return move.message ? { ...move, message: move.message.slice(0, 240) } : null;
+        return { ...move, message: escalation(ctx) };
       case "propose": {
         const p: Proposal = { ...move.proposal, terms: Object.fromEntries(Object.entries(move.proposal.terms).filter(([k]) => ctx.mandate.terms[k])), round: ctx.mine.length };
         // How many it's for (dropped from the terms above when it isn't negotiated): a message may say the total.

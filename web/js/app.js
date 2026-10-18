@@ -763,30 +763,35 @@ async function installApp() {
     <ol class="install-steps">${steps.map(x => `<li>${x}</li>`).join("")}</ol></div>` });
 }
 
-async function showAgentCard() {
-  const url = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`, link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
-  const [c, rec, facts] = await Promise.all([fetch(url).then(r => r.json()).catch(() => null),
-    cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null), cached("/api/facts").catch(() => [])]);
-  if (!c) return toast("Couldn't load your agent card.");
+/** An agent card, read as a person would: yours, or anyone's (a contact's "agent card" opens this, not the raw JSON). */
+async function showAgentCard(handle = S.profile.handle) {
+  handle = String(handle).replace(/^@/, "").toLowerCase();
+  const mine = handle === S.profile.handle;
+  const url = `${location.origin}/a2a/${encodeURIComponent(handle)}/.well-known/agent-card.json`, link = `${location.origin}/?to=${encodeURIComponent(handle)}`;
+  const [c, rec, facts, p] = await Promise.all([fetch(url).then(r => r.json()).catch(() => null),
+    cached(`/public/people/${encodeURIComponent(handle)}/record`, 60_000).catch(() => null), mine ? cached("/api/facts").catch(() => []) : Promise.resolve([]),
+    mine ? Promise.resolve(null) : person(handle)]);
+  if (!c) return toast(mine ? "Couldn't load your agent card." : "Couldn't load their agent card.");
+  const who = mine ? S.profile : { name: p?.profile?.name ?? handle, handle, bio: p?.profile?.bio ?? "", area: null };
   // What any agent reading the card learns, said plainly: who, its record, what it can do, what's on offer, what it never says.
-  const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
+  const offers = (mine ? facts : p?.facts ?? []).filter(f => (mine ? f.tier === "public" : true) && f.offer && f.offer.status !== "sold");
   const examples = (c.skills ?? []).find(x => x.id === "engage")?.examples ?? [];
   const ap2 = (c.capabilities?.extensions ?? []).some(x => /AP2/.test(x.uri ?? ""));
-  const caps = ["Answers questions from what you share", "Asks you what it can't answer", "Negotiates inside your private limits",
+  const caps = [mine ? "Answers questions from what you share" : "Answers questions from what they share", mine ? "Asks you what it can't answer" : "Asks them what it can't answer", mine ? "Negotiates inside your private limits" : "Negotiates inside their private limits",
     offers.some(f => f.offer.instant) ? "Takes bookings at your price" : null, ap2 ? "Test payments (AP2)" : null, c.capabilities?.streaming ? "Live updates" : null].filter(Boolean);
   const since = rec?.since ? new Date(rec.since * 1000).toLocaleDateString([], { month: "short", year: "numeric" }) : null;
-  openPanel({ title: "Your agent card", html: `
-    <div class="card"><div class="ac-head">${avatarHTML(S.profile.name, S.profile.handle, 48)}<div class="stack" style="gap:2px;min-width:0"><b style="font-size:18px">${esc(S.profile.name)}'s agent</b>
-      <span class="small faint">@${esc(S.profile.handle)}${S.profile.area?.name ? ` · ${esc(S.profile.area.name)}` : ""} · A2A ${esc(c.supportedInterfaces?.[0]?.protocolVersion ?? "1.0")}${c.signatures?.length ? " · signed" : ""}</span></div></div>
-      ${S.profile.bio ? `<span class="small muted">${esc(S.profile.bio)}</span>` : ""}
+  openPanel({ title: mine ? "Your agent card" : `${shortName(who.name)}'s agent card`, html: `
+    <div class="card"><div class="ac-head">${avatarHTML(who.name, who.handle, 48)}<div class="stack" style="gap:2px;min-width:0"><b style="font-size:18px">${esc(who.name)}'s agent</b>
+      <span class="small faint">@${esc(who.handle)}${who.area?.name ? ` · ${esc(who.area.name)}` : ""} · A2A ${esc(c.supportedInterfaces?.[0]?.protocolVersion ?? "1.0")}${c.signatures?.length ? " · signed" : ""}</span></div></div>
+      ${who.bio ? `<span class="small muted">${esc(who.bio)}</span>` : ""}
       <div class="share-stats"><div><b>${rec?.verified ?? 0}</b><span>verified deals</span></div><div><b>${rec?.handedOver ?? 0}</b><span>handed over</span></div><div><b>${rec?.problems ?? 0}</b><span>problems</span></div></div>
-      ${since ? `<span class="small faint">On Collab since ${esc(since)} · from signed receipts — no names or prices</span>` : `<span class="small faint">Your record grows with every signed receipt.</span>`}
-      <div class="row"><button class="btn accent compact" data-act="share-link" data-link="${esc(link)}">Share</button><button class="btn secondary compact" data-act="copy" data-text="${esc(url)}">Copy card link</button><button class="btn quiet compact" data-act="copy" data-text="${esc(JSON.stringify(c, null, 2))}">Copy JSON</button></div></div>
+      ${since ? `<span class="small faint">On Collab since ${esc(since)} · from signed receipts — no names or prices</span>` : `<span class="small faint">${mine ? "Your record grows" : "Their record grows"} with every signed receipt.</span>`}
+      <div class="row">${mine ? "" : `<button class="btn accent compact" data-act="open-direct" data-handle="${esc(handle)}">Open their shop</button>`}<button class="btn ${mine ? "accent" : "secondary"} compact" data-act="share-link" data-link="${esc(link)}">Share</button><button class="btn secondary compact" data-act="copy" data-text="${esc(url)}">Copy card link</button><button class="btn quiet compact" data-act="copy" data-text="${esc(JSON.stringify(c, null, 2))}">Copy JSON</button></div></div>
     ${label("What it can do", "sq")}<div class="ac-caps">${caps.map(x => `<span>${esc(x)}</span>`).join("")}</div>
     ${offers.length ? `${label(`On offer · ${offers.length}`, "sq")}<div class="card slim">${offers.slice(0, 8).map(f => `<div class="ac-offer"><b class="small">${esc(f.offer.title.split(" · ")[0].replace(/\bI(phone|pad)\b/gi, (_, w) => "i" + w[0].toUpperCase() + w.slice(1).toLowerCase()))}</b><span class="small">${f.offer.price?.amount != null ? money(f.offer.price.amount, f.offer.price.period, f.offer.price.currency) : ""}</span></div>`).join("")}</div>` : ""}
     ${examples.length ? `${label("Other agents can ask", "sq")}<div class="ac-caps">${examples.slice(0, 4).map(x => `<span>“${esc(x)}”</span>`).join("")}</div>` : ""}
-    <div class="card slim">${label("Never shares", "peri")}<span class="small muted">Your lowest price or budget, money in your private notes, your phone, e-mail or exact address, and any note you set to “never use”.</span></div>
-    <details class="more"><summary>For developers · machine-readable card</summary><span class="small faint">This is the same card in the format other AI agents read (A2A), to learn what yours does and how to reach it. You don't need it to use Collab. It's published at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
+    <div class="card slim">${label("Never shares", "peri")}<span class="small muted">${mine ? "Your lowest price or budget, money in your private notes, your phone, e-mail or exact address, and any note you set to “never use”." : "Their lowest price or budget, money in their private notes, their phone, e-mail or exact address."}</span></div>
+    <details class="more"><summary>For developers · machine-readable card</summary><span class="small faint">This is the same card in the format other AI agents read (A2A), to learn what ${mine ? "yours" : "theirs"} does and how to reach it. You don't need it to use Collab. It's published at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 
 async function openDirect(handle) {
@@ -1259,7 +1264,8 @@ async function onClick(e) {
       return send(el.dataset.text, el.dataset.offer || null, el.dataset.category ? { category: el.dataset.category } : null);
     }
     if (a === "preview-card") return await previewCard(el);
-    if (a === "agent-card") return await showAgentCard();
+    if (a === "agent-card") return await showAgentCard(el.dataset.handle || undefined);
+    if (a === "open-direct") return await openDirect(el.dataset.handle);
     if (a === "checkout") { const eid = el.dataset.id; preloadGooglePay(); openPanel({ engagement: eid, title: "Checkout", render: () => checkoutHTML(live.engagements.get(eid)) }); return; }
     if (a === "share-link") {
       const data = { title: `${S.profile.name} on Collab`, text: `Talk to ${S.profile.name}'s agent on Collab`, url: el.dataset.link };

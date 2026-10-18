@@ -1147,10 +1147,13 @@ function inboxBlock(i) {
       <span class="small faint">Private. Your agent agrees within this, or asks you.</span><div data-rules-preview="${esc(i.engagementId)}"></div>`);
   }
   if (i.kind === "move") { const e = live.engagements.get(i.engagementId), paid = !!e && i.side === (e.seller ?? "provider");
+  // "Their price" is what they last offered, not the listing's: one card once said "₹2,000 is our limit", offered
+  // "Take their price (₹2,800)" and asked "Is ₹2,300 fair?" — three prices for one decision.
+  const theirs = e?.negotiation?.[i.side === "requester" ? "provider" : "requester"]?.at(-1)?.price ?? i.listPrice ?? null;
   return box(i.question ? "No deal inside your limit yet" : "Your agent needs your limit", `${i.question ? `<span class="small">${esc(i.question)}</span>` : `<span class="small">Set ${limitWords(paid)}. It's never shared; your agent uses it for each move.</span>`}
     ${i.hint ? `<span class="small faint">${esc(i.hint)}</span>` : ""}
-    <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-limit="${esc(i.id)}" placeholder="${i.listPrice ? money(i.listPrice) : "amount"}" aria-label="Your private limit">
-    <button class="btn accent compact" data-act="inbox-move" data-id="${esc(i.id)}">Keep negotiating</button>${i.side === "requester" && i.listPrice ? `<button class="btn secondary compact" data-act="take-price" data-eng="${esc(i.engagementId)}" data-price="${i.listPrice}">Take their price (${money(i.listPrice)})</button>` : ""}<button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`); }
+    <div class="row"><input class="field" style="max-width:200px" type="number" min="1" data-limit="${esc(i.id)}" placeholder="${theirs ? `e.g. ${money(theirs)}` : "amount"}" aria-label="Your private limit">
+    <button class="btn accent compact" data-act="inbox-move" data-id="${esc(i.id)}">Keep negotiating</button>${i.side === "requester" && theirs ? `<button class="btn secondary compact" data-act="take-price" data-eng="${esc(i.engagementId)}" data-price="${theirs}">Take their price (${money(theirs, e?.offer?.unit)})</button>` : ""}<button class="btn quiet compact" data-act="inbox-walk" data-id="${esc(i.id)}">Walk away</button></div>`); }
   if (i.kind === "offer_letter") {
     const e = live.engagements.get(i.engagementId), l = i.letter ?? {}, id = esc(i.id), revising = !!i.question;
     const who = esc(shortName((e && (i.side === "requester" ? e.provider : e.requester)?.name) || "They"));
