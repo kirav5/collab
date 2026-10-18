@@ -43,7 +43,7 @@ import { type DemandMiss, recordMiss, shopInsights } from "./core/shop-insights.
 import { analytics } from "./core/analytics.ts";
 import { MAX_PHOTO_BYTES, PHOTOS, type PhotoRecord, deletePhoto, loadPhoto, photoIdOk, readPhoto, savePhoto } from "./core/photos.ts";
 import { CommunityError, POST_KINDS, type Post, RIDES as POSTS, closePost, createCommunity, draftPost, joinPost, join as joinCommunity, kindOf as communityKind, listFor as communitiesFor, member as communityMember, postsIn, createPost } from "./core/communities.ts";
-import { type AgentRules, type RulesContext, RulesTask, checkRules, readRules, rulesLines } from "./core/rules.ts";
+import { type AgentRules, LOOKUPS, type RulesContext, RulesTask, checkRules, readPricingPlain, readRules, rulesLines } from "./core/rules.ts";
 import { quote } from "./core/pricing.ts";
 import { orderText, storefront } from "./core/storefront.ts";
 import { event } from "./log.ts";
@@ -643,8 +643,18 @@ app.post("/api/rules/read", route(async req => {
   if (typeof req.body?.factId === "string") { const f = (await db.get(FACTS, text(req.body.factId, 60))) as Fact | null; if (f?.offer && f.owner === req.uid) o = { title: f.offer.title, price: f.offer.price.amount, unit: f.offer.price.period ?? null, currency: f.offer.price.currency }; }
   else if (typeof req.body?.engagementId === "string") { const e = await participant(req.uid, text(req.body.engagementId, 40)); o = { title: e.offer.title, price: e.offer.price, unit: e.offer.unit, currency: e.offer.currency ?? undefined }; }
   else if (req.body?.offer && typeof req.body.offer.title === "string") o = { title: text(req.body.offer.title, 160), price: num(req.body.offer.price, 0, 1e12), unit: typeof req.body.offer.unit === "string" ? text(req.body.offer.unit, 20) : null };
-  const { rules, byModel } = await readRules(model, words, rulesCtx(side, o));
-  return { rules, lines: rulesLines(rules, o?.currency ?? "INR", o?.unit ?? null), byModel };
+  const read_ = await readRules(model, words, rulesCtx(side, o));
+  let rules = read_.rules;
+  // A seller's terms often say how they price ("25% cheaper than Croma while under guarantee"): those lines are read
+  // for pricing only — the terms themselves are already the listing's, not rules to list again.
+  const pricingText = side === "seller" ? text(req.body?.pricingText, 1500).trim() : "";
+  if (pricingText) {
+    const p = readPricingPlain(pricingText);
+    const merged = { ...rules, lookups: LOOKUPS.filter(l => rules.lookups.includes(l) || p.lookups.includes(l)),
+      pricing: [...rules.pricing, ...p.pricing.filter(x => !rules.pricing.some(y => y.basis === x.basis && y.how === x.how && y.percent === x.percent))] };
+    rules = checkRules(merged, `${words}\n${pricingText}`, rulesCtx(side, o)) ?? rules;
+  }
+  return { rules, lines: rulesLines(rules, o?.currency ?? "INR", o?.unit ?? null), byModel: read_.byModel };
 }));
 /** What the owner's pricing rules come to for one item today: the new price (and parts, repairs) looked up on the web
  *  with sources, and each rule worked out — for the owner only, to use as their price or lowest, or not. */

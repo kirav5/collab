@@ -74,3 +74,11 @@ this, sold as insurance for 12.5% price`;
   const made = checkRules({ ...r, pricing: [{ label: "Price", basis: "new price", percent: 40, how: "off", when: null }] }, words, { side: "seller", price: 9245 })!;
   assert.deepEqual(made.pricing, []);
 });
+
+test("'negotiates inside my limit; I confirm the deal' is how the agent bargains, not something it can't follow", async () => {
+  const { checkRules } = await import("../src/core/rules.ts");
+  const words = "My always-on agent negotiates inside my limit; I confirm the deal. Never below ₹8,000.";
+  const r = checkRules({ side: "seller", floor: 8000, limit: null, closeAt: null, autonomy: "negotiate", maxPerBuyer: null, quantity: null, terms: [], mustAsk: [], lookups: [], pricing: [],
+    unsupported: ["My always-on agent negotiates inside my limit; I confirm the deal"] }, words, { side: "seller", price: 9245 })!;
+  assert.deepEqual(r.unsupported, []);
+});
