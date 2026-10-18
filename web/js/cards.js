@@ -450,7 +450,7 @@ function floorTurn(c, o, L, at) {
   const p = o.price.amount, step = p >= 10_000 ? 500 : p >= 1_000 ? 50 : 10, nice = x => Math.round(x / step) * step;
   const opts = [...new Set((L.pays ? [1.05, 1.1, 1.2] : [0.95, 0.9, 0.85]).map(f => nice(p * f)))].filter(v => v > 0 && v !== p);
   return `<div class="card slim agent-ask" ${at}>
-    <span class="small faint">${esc(o.title)} · ${money(p, o.price.period)}${c.missing?.length ? ` · ${c.missing.length} common questions answered for you` : ""}</span>
+    <span class="small faint">${esc(o.title.split(" · ")[0])} · ${money(p, o.price.period)}${c.missing?.length ? ` · ${c.missing.length} common questions answered for you` : ""}</span>
     <p class="ask-q">${L.pays ? "What's the most you'd pay" : "What's the lowest you'd take"}? Your agent bargains up to it and never says it.</p>
     <div class="row">${opts.map(v => `<button class="chip" data-act="offer-floor-pick" data-val="${v}" ${at}>${money(v, o.price.period)}</button>`).join("")}<button class="chip" data-act="offer-floor-pick" data-val="ask" ${at}>Ask me each time</button></div>
     <div class="row"><input class="field compact" style="max-width:150px" type="number" min="1" data-edit="floor" ${at} placeholder="Another amount" aria-label="${L.pays ? "Most you'd pay" : "Lowest you'd take"}"><button class="btn quiet compact end" data-act="offer-floor-pick" data-val="ask" ${at}>Skip</button></div>
@@ -463,8 +463,8 @@ function listingSummary(c, o, L, at) {
   const agent = autonomyOf(c) === "close" ? "bargains and agrees" : autonomyOf(c) ? "bargains; you confirm the deal" : "asks you before each move";
   return `<div class="card" ${at}>
     <div class="row">${label("Your listing", "sq accent")}<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span></div>
-    <b>${esc(o.title)}</b>
-    <span class="small muted">${esc(o.place.name)} · ${esc(o.category.replace(/-/g, " "))}</span>
+    <b>${esc(o.title.split(" · ")[0])}</b>
+    <span class="small muted">${esc(o.place.name.split(",")[0])} · ${esc(o.category.replace(/-/g, " "))}</span>
     <p class="small">${esc(c.publicText ?? c.text)}</p>
     ${answers.length ? `<span class="small">Answered for ${esc(L.responders)}: ${answers.slice(0, 3).map(([k, v]) => `${esc(k)}: <b>${esc(String(v))}</b>`).join(" · ")}${answers.length > 3 ? ` · ${answers.length - 3} more` : ""}</span>` : ""}
     <span class="small faint">${c.floor ? `${L.pays ? "Most" : "Lowest"} ${money(c.floor, o.price.period)} — private. ` : ""}Your agent ${agent}.${c.terms?.length ? ` ${c.terms.length} terms set.` : ""}</span>
