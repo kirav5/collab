@@ -133,3 +133,32 @@ test("a request's summary speaks for itself, never 'a client' or 'a buyer'", asy
   assert.equal(neutral("A buyer is looking to purchase a ready-to-move 3BHK. The client is seeking parking."), "Looking to purchase a ready-to-move 3BHK. Seeking parking.");
   assert.equal(neutral("Looking for a guitar teacher at home."), "Looking for a guitar teacher at home.");
 });
+
+test("the owner's 'no deal' line is plain numbers: their latest and the owner's limit — never the model's words", async () => {
+  const { NegotiateTask, escalation } = await import("../src/market/negotiate.ts");
+  const ctx: any = { side: "buyer", unit: "night", mandate: { price: { opening: 1700, limit: 2000 }, terms: {}, maxRounds: 5 }, catalog: { buyerPrefersLower: () => true, termLabel: (k: string) => k, termUnit: () => null },
+    mine: [1700, 1800, 1900, 1950, 2000].map((price, round) => ({ id: `m${round}`, price, terms: {}, round })), theirs: [{ id: "t", price: 2300, terms: {}, round: 4 }] };
+  const text = escalation(ctx);
+  assert.match(text, /Their latest is ₹2,300\/night; your limit is ₹2,000\/night/);
+  const v = NegotiateTask.validate({ action: "escalate", message: "I need to check with Atishay, as ₹2,000 per night is our maximum authorized limit." } as any, { ctx, listPrice: 2800 });
+  assert.equal(v?.message, text);
+});
+
+test("a demo person's agent answers for itself and holds its best price — nobody is asked to play them", async () => {
+  const { memoryDocs } = await import("../src/docs.ts");
+  const { fresh, save, load, askOwner, INBOX } = await import("../src/core/engage.ts");
+  const { demoReply } = await import("../src/core/engage.ts");
+  const db = memoryDocs();
+  const brief: any = { title: "Studio", summary: "Looking for a studio for 3 nights.", category: "", mode: null, area: null, requirements: [], budget: null, questions: [] };
+  const e: any = fresh({ briefId: "b1", brief, requester: { uid: "u1", handle: "u1", name: "Atishay" }, provider: { uid: "demo-nest-stays", handle: "nest-stays", name: "Nest Stays" },
+    offer: { factId: null, title: "Furnished studio · short stays", price: 2800, unit: "night", category: "stays" } });
+  e.phase = "negotiating"; e.negotiation.provider = [{ id: "p1", price: 2400, terms: {}, round: 4 }];
+  await save(db, e);
+  const r = await demoReply(db, null, e, "provider", "Can you provide gig work leads in Bangalore?");
+  assert.ok(r.text.length > 10 && !/₹/.test(r.text));
+  const cur = await load(db, e.id);
+  await askOwner(db, cur, "provider", { kind: "move", question: "No deal inside your limit." });
+  assert.equal(cur.waiting.provider, null, "no decision left for anyone to make as them");
+  assert.equal((await db.find(INBOX, [["engagementId", "==", e.id]])).length, 0);
+  assert.match(cur.events.at(-1)!.text, /₹2,400\/night is our best/);
+});
