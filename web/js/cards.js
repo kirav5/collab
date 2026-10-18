@@ -216,7 +216,9 @@ export function gateOpen(c) {
   const g = c.gate;
   if (!g || g.ok || c.gateOverride) return [];
   const prof = c.draft?.profile ?? [], inProfile = q => prof.some(p => likeness(p.question, q.question) >= 0.6 || q.question.toLowerCase().includes(p.label.toLowerCase()));
-  return g.missing.map((q, j) => [q, j]).filter(([q, j]) => !c.gateAnswers?.[j] && !answeredLike(c, q) && !inProfile(q));
+  // On a listing, a question already answered for buyers ("Item condition: Used - good") isn't asked again here.
+  const forBuyers = q => (c.missing ?? []).some(m => String(c.missingAnswers?.[m.label] ?? "").trim() && (likeness(m.ask, q.question) >= 0.5 || likeness(m.label, q.question) >= 0.5));
+  return g.missing.map((q, j) => [q, j]).filter(([q, j]) => !c.gateAnswers?.[j] && !answeredLike(c, q) && !inProfile(q) && !forBuyers(q));
 }
 
 function gateBanner(c, at, kind) {
