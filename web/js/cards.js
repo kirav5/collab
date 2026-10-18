@@ -11,7 +11,7 @@ import { fitsReasons } from "./fits.js";
 import { avatarHTML, brand, byTag, esc, label, logo, money, now, shortName, tag, tierTag, time, icon, dots, FEATURES } from "./ui.js";
 import { cap, limitPast, limitWords, listingRoles, offerWords, partyRoles, rolesOf } from "./roles.js";
 
-const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
+const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕", moot: "–" };
 const VERDICT = { met: tag("met", "fresh"), unmet: tag("not met", "danger"), unclear: tag("unclear", "stale") };
 const SOURCE = { public: tag("Public", "fresh"), protected: tag("Protected", "accent"), owner: tag("Owner", "ink"), brief: tag("Brief"), listing: tag("Listing") };
 
@@ -701,9 +701,11 @@ function statusLine(e, mine, them, items, talking) {
     const t = theirOffers.at(-1), m = mineOffers.at(-1);
     return `${talking ? "Negotiating · " : ""}${m ? `you ${money(m.price, e.offer.unit, e.offer.currency)}` : ""}${m && t ? " · " : ""}${t ? `${esc(first)} ${money(t.price, e.offer.unit, e.offer.currency)}` : ""}`;
   }
-  const answered = e.qa.filter(q => q.answer).length;
-  if (talking) return e.qa.length ? `Asking questions · ${answered} of ${e.qa.length} answered` : `Talking to ${esc(first)}'s agent…`;
-  return e.qa.length ? `${answered} of ${e.qa.length} questions answered · waiting for ${esc(first)}` : `Waiting for ${esc(first)}…`;
+  // Answered means answered: a "not shared" is said as such, not counted as an answer.
+  const answered = e.qa.filter(q => q.status === "answered").length, notShared = e.qa.filter(q => q.status === "declined").length;
+  const qs = `${answered} of ${e.qa.length} answered${notShared ? ` · ${notShared} not shared` : ""}`;
+  if (talking) return e.qa.length ? `Asking questions · ${qs}` : `Talking to ${esc(first)}'s agent…`;
+  return e.qa.length ? `${qs} · waiting for ${esc(first)}` : `Waiting for ${esc(first)}…`;
 }
 
 /** The answer that matters most, shown without opening Details: the latest one to your own question. */

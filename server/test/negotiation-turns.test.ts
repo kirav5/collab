@@ -37,7 +37,7 @@ test("an agent's message can't add a credit period, a deposit or a number the of
 
 test("a buyer with many rounds still reaches their limit in a few offers, and never repeats an offer", async () => {
   const { planned, concession } = await import("../src/market/negotiate.ts");
-  assert.equal(concession(4, 12), 1, "the limit by the fifth offer, however many rounds are allowed");
+  assert.equal(concession(3, 12), 1, "the limit by the fourth offer, however many rounds are allowed");
   const base: any = { side: "buyer", mandate: { price: { opening: 900, limit: 1000 }, terms: {}, maxRounds: 12 }, mine: [], theirs: [], catalog: { buyerPrefersLower: () => true }, unit: "event" };
   const steps = [0, 1, 2, 3, 4].map(r => planned({ ...base, mine: [] }, r).price);
   assert.ok(steps[1] - steps[0] >= 10, `a real first move (${steps.join(", ")})`);
@@ -83,4 +83,14 @@ test("a request never asks the provider about the requester's own home", async (
   const m: any = { name: "t", complete: async () => JSON.stringify({ item: "deep clean", place: "", price: null, limit: null, attributes: {}, questions: ["Where is the home located?", "Do you bring your own supplies?"] }) };
   const d = await decide(m, ListingFieldsTask, { text, domain: domain("tasks")!, side: "find" });
   assert.deepEqual(d.output.questions, ["Do you bring your own supplies?"]);
+});
+
+test("when a deal is agreed, a question nobody answered is marked not needed (the record never says 'asked you' to no one)", async () => {
+  const e: any = { id: "e1", phase: "deal", qa: [{ id: "q1", from: "provider", question: "Acoustic or electric?", status: "pending" }, { id: "q2", from: "requester", question: "Lead time?", status: "answered", answer: "2 days" }],
+    negotiation: { requester: [], provider: [], deal: { id: "d", price: 700, terms: {}, round: 1 }, dealBy: "provider", confirmed: { requester: true, provider: true } }, waiting: { requester: null, provider: null }, events: [] };
+  const { settleForTest } = await import("../src/core/engage.ts");
+  settleForTest(e);
+  assert.equal(e.phase, "agreed");
+  assert.equal(e.qa[0].status, "moot"); assert.match(e.qa[0].answer, /not needed/i);
+  assert.equal(e.qa[1].status, "answered", "answers stay as they were");
 });

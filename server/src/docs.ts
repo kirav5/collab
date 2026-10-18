@@ -12,7 +12,8 @@ export interface Docs {
   /** Merges top-level fields into the document (creating it if needed). */
   merge(col: string, id: string, data: any): Promise<void>;
   delete(col: string, id: string): Promise<void>;
-  find(col: string, where: Where[], limit?: number): Promise<any[]>;
+  /** `newest`: ordered by that field, highest first (needs a composite index on Firestore). */
+  find(col: string, where: Where[], limit?: number, newest?: string): Promise<any[]>;
   count(col: string, where: Where[]): Promise<number>;
   /** Read, change, write atomically. `fn` returns the new document, or null to leave it unchanged. */
   update(col: string, id: string, fn: (current: any | null) => any | null): Promise<any | null>;
@@ -57,8 +58,10 @@ export function memoryDocs(): Docs {
     async set(c, id, data) { col(c).set(id, copy(data)); },
     async merge(c, id, data) { col(c).set(id, { ...(col(c).get(id) ?? {}), ...copy(data) }); },
     async delete(c, id) { col(c).delete(id); },
-    async find(c, where, limit = 1000) {
-      return [...col(c).values()].filter(d => where.every(w => test(d, w))).slice(0, limit).map(copy);
+    async find(c, where, limit = 1000, newest) {
+      const rows = [...col(c).values()].filter(d => where.every(w => test(d, w)));
+      if (newest) rows.sort((a, b) => (b[newest] ?? 0) - (a[newest] ?? 0));
+      return rows.slice(0, limit).map(copy);
     },
     async count(c, where) { return [...col(c).values()].filter(d => where.every(w => test(d, w))).length; },
     async update(c, id, fn) {
@@ -105,7 +108,10 @@ export async function firestoreDocs(): Promise<Docs> {
     async set(c, id, data) { await db.collection(c).doc(id).set(encode(data)); },
     async merge(c, id, data) { await db.collection(c).doc(id).set(encode(data), { merge: true }); },
     async delete(c, id) { await db.collection(c).doc(id).delete(); },
-    async find(c, where, limit = 1000) { return (await query(c, where).limit(limit).get()).docs.map(d => decode(d.data())); },
+    async find(c, where, limit = 1000, newest) {
+      const q = newest ? query(c, where).orderBy(newest, "desc") : query(c, where);
+      return (await q.limit(limit).get()).docs.map(d => decode(d.data()));
+    },
     async count(c, where) { return (await query(c, where).count().get()).data().count; },
     async update(c, id, fn) {
       const ref = db.collection(c).doc(id);

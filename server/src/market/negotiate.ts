@@ -35,10 +35,10 @@ export function direction(ctx: Context, term?: string): number {
   return (ctx.termsSide ?? ctx.side) === "buyer" ? forBuyer : -forBuyer;
 }
 
-/** 0 at the first offer, 1 (the limit) by the fifth at the latest; gently convex, so early offers concede less. Extra
+/** 0 at the first offer, 1 (the limit) by the fourth at the latest (before the other side runs out of its five); gently convex, so early offers concede less. Extra
  *  rounds (an owner who raised their limit gets more) hold at the limit instead of stretching the curve — spread over
  *  12 rounds the first moves were ₹2 and ₹5, and the other side ran out of rounds first. */
-export const HORIZON = 5;
+export const HORIZON = 4;
 export const concession = (r: number, rounds: number) => { const h = Math.min(rounds, HORIZON); return h <= 1 ? 1 : Math.min(1, r / (h - 1)) ** 1.3; };
 
 export const isSane = (p: Proposal) =>
@@ -255,6 +255,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         if (dir * (p.price - opening) > 0.5) return null;                                   // beyond our opening
         const last = ctx.mine.at(-1), theirs = ctx.theirs.at(-1);
         if (last && dir * (p.price - last.price) > 0) return null;                          // backwards
+        if (last && Math.abs(p.price - last.price) < 0.5 && Math.abs(limit - last.price) >= 1) return null; // the same offer again while there's room
         if (theirs && dir * (theirs.price - p.price) > 0) return null;                      // past their offer
         // Pacing: no faster than the schedule allows by the next round, with a little slack.
         if (Math.abs(opening - limit) > 0.5 && (opening - p.price) / (opening - limit) > concession(ctx.mine.length + 1, ctx.mandate.maxRounds) + 0.15) return null;

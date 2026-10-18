@@ -1369,7 +1369,11 @@ app.post("/api/nearby", route(async req => {
   catch (err) { if (err instanceof NearbyError) throw new HttpError(err.status, err.message); throw err; }
 }));
 
-app.get("/api/engagements", route(async req => ((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 200)) as Engagement[]).sort((a, b) => b.updatedAt - a.updatedAt)));
+/** A person's conversations, most recently active first. Unordered, Firestore returns them oldest first, so past the
+ *  limit the ones going on now were the ones left out; until the index is built, the old way. */
+const myEngagements = async (uid: string, n: number) => ((await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], n, "updatedAt")
+  .catch(() => db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], n))) as Engagement[]).sort((a, b) => b.updatedAt - a.updatedAt);
+app.get("/api/engagements", route(async req => myEngagements(req.uid, 200)));
 async function participant(uid: string, id: string): Promise<Engagement> {
   const e = await load(db, id).catch(() => null);
   if (!e || !e.participants.includes(uid)) throw new HttpError(404, "conversation not found");
@@ -1960,17 +1964,20 @@ app.post("/api/engagements/:id/close", route(async req => {
 
 // The owner's device: what only it can do
 async function inboxFor(uid: string): Promise<InboxItem[]> {
-  const [mine, es] = (await Promise.all([db.find(INBOX, [["owner", "==", uid], ["status", "==", "open"]], 100), db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 100)])) as [InboxItem[], Engagement[]];
+  const [mine, es] = (await Promise.all([db.find(INBOX, [["owner", "==", uid], ["status", "==", "open"]], 100), myEngagements(uid, 150)])) as [InboxItem[], Engagement[]];
   // A conversation that has ended asks nobody anything: leftovers from before that rule are closed as they're found.
   const ended = new Set(es.filter(e => e.phase === "closed" || e.phase === "declined" || e.fulfilment?.state === "accepted").map(e => e.id));
+  // Once a deal is agreed, its questions are settled: an answer or approval still open for it asks nobody anything.
+  const agreed = new Set(es.filter(e => e.phase === "agreed").map(e => e.id));
   // Demo people's devices are simulated: their items show up for the person talking to them.
   const asks = es.flatMap(e => (["provider", "requester"] as const).filter(side => actsForDemo(e, uid, side) && e.waiting[side]).map(side => ({ e, side })));
   const demo = (await Promise.all(asks.map(async ({ e, side }) => ((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === side)))).flat();
   const all = [...mine, ...demo];
-  for (const i of all.filter(x => ended.has(x.engagementId))) void db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)).catch(() => {});
+  const over = (x: InboxItem) => ended.has(x.engagementId) || (agreed.has(x.engagementId) && (x.kind === "answer" || x.kind === "approve"));
+  for (const i of all.filter(over)) void db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)).catch(() => {});
   // One item per question (copies an older race left behind show once).
   const seen = new Set<string>();
-  return all.filter(i => !ended.has(i.engagementId)).sort((a, b) => a.createdAt - b.createdAt)
+  return all.filter(i => !over(i)).sort((a, b) => a.createdAt - b.createdAt)
     .filter(i => { const k = i.qaId ? `${i.engagementId}|${i.kind}|${i.qaId}` : i.id; if (seen.has(k)) return false; seen.add(k); return true; })
     .sort((a, b) => b.createdAt - a.createdAt);
 }
