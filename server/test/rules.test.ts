@@ -51,6 +51,26 @@ test("what became a term isn't also listed as something the agent can't follow",
   const { checkRules } = await import("../src/core/rules.ts");
   const words = "Never below ₹3,000, pickups only on weekends";
   const r = checkRules({ side: "seller", floor: 3000, limit: null, closeAt: null, autonomy: "negotiate", maxPerBuyer: null, quantity: null,
-    terms: [{ label: "Pickup", text: "Pickups only on weekends." }], mustAsk: [], unsupported: ["pickups only on weekends", "only nice buyers"] }, words, { side: "seller", price: 3500 })!;
+    terms: [{ label: "Pickup", text: "Pickups only on weekends." }], mustAsk: [], lookups: [], pricing: [], unsupported: ["pickups only on weekends", "only nice buyers"] }, words, { side: "seller", price: 3500 })!;
   assert.deepEqual(r.unsupported, ["only nice buyers"]);
+});
+
+test("web lookups and the owner's own percentages are rules the agent follows, not 'can't follow'", async () => {
+  const { checkRules, readRulesPlain, rulesLines } = await import("../src/core/rules.ts");
+  const words = `My always-on agent negotiates inside my limit; I confirm the deal.
+look for price over internet - look for replacable part cost over internet - look for relacement service cost over internet
+i'll go 25% cheaper if within manufacturer guarantee
+repair cost also looked up over internet, and 25% markup over that service
+this, sold as insurance for 12.5% price`;
+  const r = checkRules(readRulesPlain(words, { side: "seller", price: 9245 }), words, { side: "seller", price: 9245 })!;
+  assert.deepEqual(r.lookups, ["new price", "part cost", "repair cost"]);
+  assert.deepEqual(r.pricing.map(p => [p.basis, p.how, p.percent]), [["new price", "off", 25], ["repair cost", "over", 25], ["price", "of", 12.5]]);
+  assert.equal(r.pricing[0].when, "within manufacturer guarantee");
+  assert.deepEqual(r.unsupported, []);
+  const lines = rulesLines(r).map(l => l.text);
+  assert.ok(lines.includes("Price: 25% under the new price, when within manufacturer guarantee"));
+  assert.ok(lines.includes("Insurance: 12.5% of the price"));
+  // A percentage the owner never wrote is dropped.
+  const made = checkRules({ ...r, pricing: [{ label: "Price", basis: "new price", percent: 40, how: "off", when: null }] }, words, { side: "seller", price: 9245 })!;
+  assert.deepEqual(made.pricing, []);
 });

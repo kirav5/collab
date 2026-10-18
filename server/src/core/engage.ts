@@ -32,6 +32,7 @@ import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
 import { clean } from "./wall.ts";
+import { nice, quote, quoteMessage } from "./pricing.ts";
 
 export const ENGAGEMENTS = "engagements", INBOX = "inbox", LIMITS = "limits", AUDIT = "audit", CONTACTS = "contacts", ANSWERS = "answers";
 const now = () => Math.floor(Date.now() / 1000);
@@ -152,8 +153,8 @@ const by = (m: boolean): Event["by"] => (m ? "gemini" : "rules");
 const uidOf = (e: Engagement, s: Side) => (s === "requester" ? e.requester.uid : e.provider.uid);
 
 async function limitFor(db: Docs, e: Engagement, s: Side): Promise<DelegatedLimit | null> {
-  const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
-  const l = (await db.get(LIMITS, key)) as DelegatedLimit | null;
+  // A conversation priced from the web by the owner's rules has its own limit (this item, today's new price).
+  const l = ((s === "provider" ? await db.get(LIMITS, `eng:${e.id}`) : null) ?? await db.get(LIMITS, s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`)) as DelegatedLimit | null;
   // "ask" rows are stored so the owner's devices share the limit; the agent itself still waits on the owner.
   const ok = l && l.owner === uidOf(e, s) && l.autonomy !== "ask" && !(l.expires && l.expires < now()) ? l : null;
   return ok ? { ...ok, mandate: unitMandate(e, s, ok.mandate) } : null;
@@ -481,7 +482,7 @@ export async function ownContext(db: Docs, owner: string, have: Set<string>): Pr
 
 /** Whether an answer names this side's private limit for this conversation (any way it's written). */
 export async function namesLimit(db: Docs, e: Engagement, s: Side, text: string): Promise<boolean> {
-  const key = s === "provider" ? (e.offer.factId ? `fact:${e.offer.factId}` : null) : e.briefId ? `brief:${e.briefId}` : null;
+  const key = s === "provider" ? ((await db.get(LIMITS, `eng:${e.id}`)) ? `eng:${e.id}` : e.offer.factId ? `fact:${e.offer.factId}` : null) : e.briefId ? `brief:${e.briefId}` : null;
   const l = key ? ((await db.get(LIMITS, key)) as { mandate?: { price?: { limit?: number } } } | null) : null;
   const limit = l?.mandate?.price?.limit;
   if (!limit) return false;
@@ -617,6 +618,7 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
     if (!e.events.some(x => x.text.startsWith("Out of stock right now — "))) say(e, agentOf(s), "Out of stock right now — nothing can be sold until more come in.", "rules");
     return;
   }
+  if (s === "provider" && sellerOf(e) === "provider" && !e.negotiation.provider.length) await priceFromWeb(db, model, e).catch(() => {});
   const l = await limitFor(db, e, s);
   if (l) {
     const r = await move(model, e, s, l.mandate, out);
@@ -624,6 +626,25 @@ async function moveOrAsk(db: Docs, model: Model | null, e: Engagement, s: Side, 
     return;
   }
   if (hasOwner(e, s)) await ask(db, e, s, { kind: "move", listPrice: e.offer.price ?? undefined, hint: await hint() });
+}
+
+/** A seller whose rules price from the web ("25% under the new price"): before its first offer, its agent looks up the
+ *  item this buyer asked about and opens at the owner's rule — the owner's floor keeps its ratio to the listed price,
+ *  and the owner still confirms. The buyer is told how the price was set. Nothing is said when the web has too little. */
+async function priceFromWeb(db: Docs, model: Model | null, e: Engagement) {
+  const row = (await db.get(LIMITS, `fact:${e.offer.factId}`)) as DelegatedLimit | null;
+  if (!row?.pricing?.some(p => p.basis !== "price" && p.how === "off") || (await db.get(LIMITS, `eng:${e.id}`))) return;
+  // The listing's own item when the request is about it; for a shop of many things, what this buyer asked for.
+  const listed = e.offer.title.split(" · ")[0], asked = e.brief.title;
+  const words = (t: string) => new Set(t.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
+  const lw = words(listed), item = [...words(asked)].some(w => lw.has(w)) && lw.size > 1 ? listed : asked;
+  const q = await quote(db, model, row.owner, item, e.brief.area ?? "India", { lookups: row.lookups ?? [], pricing: row.pricing }, e.offer.price, now());
+  if (q.price == null) return;
+  const { opening, limit } = row.mandate.price, ratio = opening > 0 ? Math.min(1, limit / opening) : 1;
+  await db.set(LIMITS, `eng:${e.id}`, { key: `eng:${e.id}`, owner: row.owner, mandate: { price: { opening: q.price, limit: nice(q.price * ratio) }, terms: row.mandate.terms, maxRounds: row.mandate.maxRounds },
+    autonomy: row.autonomy === "ask" ? "negotiate" : row.autonomy ?? "negotiate", expires: now() + 7 * 86_400, createdAt: now() } satisfies DelegatedLimit);
+  const msg = quoteMessage(q, row.pricing.find(p => p.basis === "price" && p.how === "of") ?? null);
+  if (msg) say(e, agentOf("provider"), msg, "rules");
 }
 
 export const myTurnToMove = (e: Engagement, s: Side) => {
@@ -937,7 +958,7 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       // autonomy and expiry but takes the new mandate; an "ask" row never lets the agent move on its own.
       // A demo person's limit is the same for everyone who tries them: a limit chosen while acting for one applies to
       // this conversation only (it once left a demo seller at ₹1,600 instead of its ₹1,500 for every later tester).
-      const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
+      const key = s === "provider" ? ((await db.get(LIMITS, `eng:${e.id}`)) ? `eng:${e.id}` : `fact:${e.offer.factId}`) : `brief:${e.briefId}`;
       const existing = (await db.get(LIMITS, key)) as DelegatedLimit | null;
       if (!uidOf(e, s)!.startsWith("demo-")) await db.set(LIMITS, key, existing && existing.owner === uidOf(e, s) && existing.autonomy !== "ask"
         ? { ...existing, mandate: r.mandate }
