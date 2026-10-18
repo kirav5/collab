@@ -45,7 +45,7 @@ test("sign-up: no account, no profile, bad and taken handles, and a handle given
   assert.equal((await as("other", "/api/me")).handle, "newbie-1", "the old handle was released");
 });
 
-test("QR: a shop's card suggests stock, price and pickup; a person's suggests questions about them; the agent card publishes the same", async () => {
+test("QR: a shop's card suggests stock, price and pickup; a person's suggests nothing canned; the agent card publishes the same", async () => {
   // (The offline stand-in model reads a listing phrased "for sale"; Gemini reads any phrasing.)
   const f = await as("shop", "/api/facts", { tier: "public", text: "Steel water bottles 500 ml for sale in Indiranagar, ₹400 each" });
   assert.ok(f.offer, "a public offering");
@@ -64,7 +64,7 @@ test("QR: a shop's card suggests stock, price and pickup; a person's suggests qu
   assert.match(skill.description, /Stock is tracked/);
   const anu = await as("shop", "/api/people/anu-b");
   assert.equal(anu.offers, 0);
-  assert.deepEqual(anu.suggestions.map((s: any) => s.text), ["What are you looking for right now?", "Are you free this weekend?", "What do you do, Anu?"]);
+  assert.deepEqual(anu.suggestions, [], "a person with nothing listed gets no made-up questions");
   assert.equal((await raw("buyer", "/api/people/nobody-here")).status, 404);
   await assert.rejects(as("shop", "/api/people/steel-shop/ask", { text: "hi" }), /that's you/);
 });

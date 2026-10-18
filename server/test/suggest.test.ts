@@ -45,16 +45,14 @@ test("without them, questions come only from the listing's data — what's track
   assert.equal(kindOf("unknown-category"), "other");
 });
 
-test("several offerings: the first two, a price, and what else; a person with nothing on offer is asked about themselves", () => {
+test("several offerings: the first two, a price, and what else; a person with nothing on offer gets no made-up questions", () => {
   const two = suggestionsFor("Shop", [offer("a", "goods", "Steel bottles", 400, 5), offer("b", "goods", "Lunch boxes", 300, 9)]);
   assert.deepEqual(two.map(s => s.text), ["Can I get lunch boxes now?", "Can I get steel bottles now?", "What's your best price for lunch boxes?", "What else do you have?"], "newest first");
-  const anu = suggestionsFor("Anu Sharma", []).map(s => s.text);
-  assert.deepEqual(anu, ["What are you looking for right now?", "Are you free this weekend?", "What do you do, Anu?"]);
-  assert.ok(!anu.some(t => /stock|price|order|pick/i.test(t)), "no shop questions for a person who sells nothing");
+  assert.deepEqual(suggestionsFor("Anu Sharma", []), [], "nothing canned (\"Are you free this weekend?\") for a person");
   const sold = offer("s", "goods", "Sold cycle"); sold.offer!.status = "sold";
-  assert.equal(suggestionsFor("Raj", [sold])[0].text, "What are you looking for right now?", "sold listings aren't suggested");
+  assert.deepEqual(suggestionsFor("Raj", [sold]), [], "sold listings aren't suggested");
   const priv = offer("p", "goods", "Secret stash"); priv.tier = "private";
-  assert.equal(suggestionsFor("Raj", [priv])[0].text, "What are you looking for right now?", "only Public offerings are read");
+  assert.deepEqual(suggestionsFor("Raj", [priv]), [], "only Public offerings are read");
 });
 
 const paidDeal = (category: string, status: "paid" | "outside" | "awaiting", by: "requester" | "provider" = "requester"): Engagement => ({

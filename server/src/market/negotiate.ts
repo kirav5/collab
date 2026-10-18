@@ -35,8 +35,11 @@ export function direction(ctx: Context, term?: string): number {
   return (ctx.termsSide ?? ctx.side) === "buyer" ? forBuyer : -forBuyer;
 }
 
-/** 0 at the first round, 1 at the last; convex, so early rounds concede little. */
-export const concession = (r: number, rounds: number) => (rounds <= 1 ? 1 : Math.min(1, r / (rounds - 1)) ** 1.6);
+/** 0 at the first offer, 1 (the limit) by the fifth at the latest; gently convex, so early offers concede less. Extra
+ *  rounds (an owner who raised their limit gets more) hold at the limit instead of stretching the curve — spread over
+ *  12 rounds the first moves were ₹2 and ₹5, and the other side ran out of rounds first. */
+export const HORIZON = 5;
+export const concession = (r: number, rounds: number) => { const h = Math.min(rounds, HORIZON); return h <= 1 ? 1 : Math.min(1, r / (h - 1)) ** 1.3; };
 
 export const isSane = (p: Proposal) =>
   p.price > 0 && p.price < 1e12 && Object.keys(p.terms).length <= 12 && p.round >= 0 && p.round < 100
@@ -49,9 +52,14 @@ export function planned(ctx: Context, r: number): Proposal {
   const terms: Record<string, number> = {};
   for (const [k, b] of Object.entries(m.terms)) terms[k] = Math.round(b.opening + (b.limit - b.opening) * f);
   const dir = direction(ctx);
-  // Never offer worse for us than our own last proposal (no going backwards).
+  // Never offer worse for us than our own last proposal (no going backwards) — and never the same offer twice while
+  // there's room: a repeat moves at least a quarter of what's left toward the limit.
   const last = ctx.mine.at(-1);
-  if (last) price = dir > 0 ? Math.min(price, last.price) : Math.max(price, last.price);
+  if (last) {
+    price = dir > 0 ? Math.min(price, last.price) : Math.max(price, last.price);
+    const room = m.price.limit - last.price;
+    if (Math.abs(price - last.price) < 0.5 && Math.abs(room) >= 1) price = last.price + room / 4;
+  }
   // Never concede past what they already offered.
   const t = ctx.theirs.at(-1);
   if (t) {

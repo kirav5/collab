@@ -71,7 +71,9 @@ export interface Rule {
   revoked?: boolean;
 }
 
-export interface Contact { owner: string; uid: string; handle: string; name: string; addedAt: number }
+/** `addedYou`: they added this owner first (scanning their QR, from their card); kept until the owner adds them back or
+ *  removes them. Being in the list grants nothing — only a rule naming them does. */
+export interface Contact { owner: string; uid: string; handle: string; name: string; addedAt: number; addedYou?: boolean }
 
 /** What a requester's agent tells providers: no exact budget, no coordinates, nothing private. */
 /**
