@@ -18,7 +18,7 @@ export function time(t) { return new Date(t * 1000).toLocaleTimeString([], { hou
 /**
  * A notice in the app's own look: a hairline card with a coloured edge for what kind it is, a small mono label, the
  * title and a line under it, an action when tapping does something, and a bar that runs out (paused while the pointer
- * is on it). At most three at once; the same notice isn't shown twice in a row.
+ * or keyboard focus is on it). At most three at once; the same notice isn't shown twice in a row.
  *   kind: "attention" (needs you) · "success" · "error" · "deal" · "info" (default)
  */
 const KINDS = { attention: ["Needs you", "mark"], success: ["Done", "check"], error: ["Problem", "alert"], deal: ["Deal", "activity"], info: ["Collab", "mark"] };
@@ -37,15 +37,26 @@ export function notice({ title, body = "", kind = "info", label: kicker, action,
   el.style.setProperty("--life", `${life}ms`);
   el.innerHTML = `<span class="note-ico" aria-hidden="true">${glyph === "mark" ? logo() : icon(glyph, 16)}</span>
     <span class="note-main"><span class="note-kicker">${esc(kicker ?? word)}</span><b class="note-title">${esc(title)}</b>${body ? `<span class="note-body">${esc(body)}</span>` : ""}
-      ${onClick ? `<span class="note-action">${esc(action ?? "Open")} ›</span>` : ""}</span>
-    <button class="note-x" type="button" aria-label="Dismiss">×</button><span class="note-bar" aria-hidden="true"></span>`;
-  let timer = null, left = life, started = Date.now();
+      ${onClick ? `<span class="note-action" role="button" tabindex="0">${esc(action ?? "Open")} ›</span>` : ""}</span>
+    <button class="note-x" type="button" aria-label="Dismiss">${icon("x", 16)}</button><span class="note-bar" aria-hidden="true"></span>`;
+  let timer = null, left = life, started = Date.now(), over = false, inside = false;
   const close = () => { clearTimeout(timer); el.classList.add("leaving"); setTimeout(() => el.remove(), 180); };
   const run = () => { started = Date.now(); timer = setTimeout(close, left); el.classList.remove("paused"); };
-  el.addEventListener("pointerenter", () => { clearTimeout(timer); left -= Date.now() - started; el.classList.add("paused"); });
-  el.addEventListener("pointerleave", run);
+  const hold = () => {
+    const paused = el.classList.contains("paused");
+    if ((over || inside) && !paused) { clearTimeout(timer); left -= Date.now() - started; el.classList.add("paused"); }
+    else if (!over && !inside && paused) run();
+  };
+  el.addEventListener("pointerenter", () => { over = true; hold(); });
+  el.addEventListener("pointerleave", () => { over = false; hold(); });
+  el.addEventListener("focusin", () => { inside = true; hold(); });
+  el.addEventListener("focusout", e => { inside = el.contains(e.relatedTarget); hold(); });
   el.querySelector(".note-x").onclick = e => { e.stopPropagation(); close(); };
+  // Said once to screen readers through the page's one live region (the notice itself isn't a second live region).
+  if (kind !== "error" && kind !== "attention") { el.removeAttribute("role"); const sr = document.getElementById("sr-live"); if (sr) { sr.textContent = ""; setTimeout(() => { sr.textContent = `${title}${body ? `. ${body}` : ""}`; }, 50); } }
   if (onClick) el.onclick = () => { onClick(); close(); };
+  // The action works from the keyboard too (Enter or Space), as a tap on the notice does.
+  el.querySelector(".note-action")?.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); } });
   box.append(el);
   while (box.children.length > 3) box.firstElementChild.remove();
   run();
@@ -75,13 +86,18 @@ export function avatarHTML(name, handle = "", size = 30, photo = null) {
   let h = 2166136261; for (const ch of key) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
   const hue = h % 360, shape = (h >>> 8) % 4, rot = (h >>> 12) % 360, initial = String(name || "?").trim().slice(0, 1).toUpperCase();
   const shapes = [`<circle cx="22" cy="10" r="9" />`, `<rect x="12" y="2" width="16" height="16" rx="3" transform="rotate(${rot % 45} 20 10)" />`, `<polygon points="20,1 29,18 11,18" />`, `<path d="M4 14 Q16 -4 28 14 T28 14" />`];
-  return `<svg class="avatar" viewBox="0 0 30 30" width="${size}" height="${size}" style="width:${size}px;height:${size}px" aria-hidden="true">
-    <rect width="30" height="30" rx="6" fill="hsl(${hue} 55% 88%)"/><g fill="hsl(${(hue + 40) % 360} 60% 62%)" opacity=".9">${shapes[shape]}</g>
-    <text x="15" y="21" text-anchor="middle" font-size="14" font-weight="700" font-family="-apple-system,Inter,sans-serif" fill="hsl(${hue} 50% 22%)">${esc(initial)}</text></svg>`;
+  // The fills are the light look; .av-bg / .av-ink with --h let the dark look darken the tile (styles.css).
+  return `<svg class="avatar" viewBox="0 0 30 30" width="${size}" height="${size}" style="--h:${hue};width:${size}px;height:${size}px" aria-hidden="true">
+    <rect class="av-bg" width="30" height="30" rx="6" fill="hsl(${hue} 55% 88%)"/><g fill="hsl(${(hue + 40) % 360} 60% 62%)" opacity=".9">${shapes[shape]}</g>
+    <text class="av-ink" x="15" y="21" text-anchor="middle" font-size="14" font-weight="700" font-family="-apple-system,Inter,sans-serif" fill="hsl(${hue} 50% 22%)">${esc(initial)}</text></svg>`;
 }
 
 /** One outline icon set (Lucide shapes, ISC licence), drawn in the text colour — never emoji as icons. */
 const ICONS = {
+  menu: '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
+  trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   activity: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   receipt: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M13 16H8"/>',
   card: '<rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/>',
@@ -112,10 +128,16 @@ export function tierTag(tier, topics) {
 /** Who did this: Gemini, the rules, the owner, or the owner's device. */
 export const byTag = b => (b === "gemini" ? tag("✦ Gemini", "accent") : b === "owner" ? tag("Owner", "ink") : b === "device" ? tag("Device", "peri") : b === "rules" ? tag("Rules") : "");
 
+/** A button at work: disabled, the spinner, and what it's doing — with no word given, its own name ("Confirm…", not
+ *  just "…", which is all a screen reader would hear). Marked aria-busy until it's done. */
 export function busy(btn, on, text = "…") {
   if (!btn) return;
-  if (on) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = `${logo("live spinner")} ${esc(text)}`; }
-  else { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
+  if (on) {
+    const name = btn.hasAttribute("aria-label") ? "" : btn.textContent.replace(/\s+/g, " ").trim().replace(/…$/, "");
+    if (!btn.hasAttribute("aria-busy")) btn.dataset.label = btn.innerHTML;
+    btn.disabled = true; btn.setAttribute("aria-busy", "true");
+    btn.innerHTML = `${logo("live spinner")} ${esc(text === "…" && name ? `${name}…` : text)}`;
+  } else { btn.disabled = false; btn.removeAttribute("aria-busy"); if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
 }
 
 /**

@@ -29,13 +29,15 @@ async function sharedLog() {
 /**
  * Insights, at the top of My card, for someone with at least one public offering: what to do first (Gemini's lines, or
  * the plain reading of the numbers when the model isn't there — the server checks every number either way), then the
- * numbers behind it in small tiles, each edged by what it is: yellow for demand you missed, magenta for demand you
- * could meet (asked near you, bought alongside yours), cyan for what buyers ask and what's coming, green for deals done.
+ * numbers behind it in small tiles, each edged by what it is: wait (pink) for demand you missed, accent for demand you
+ * could meet (asked near you, bought alongside yours), talk (periwinkle) for what people ask and what's coming, green for deals done.
  * Other people only ever appear as counts — the server sends nothing else. Read at most once a minute (each read is a
  * metered call); an empty part is left out, and a forecast is shown only when the response has one.
  */
 /** The last insights card drawn (kept between repaints so the slot never flickers empty). */
 let shopInsightsHTML = "";
+/** My card's QR, drawn once for its link (the link doesn't change between repaints). */
+let qrMemo = { link: "", svg: "" };
 
 async function insightsCard() {
   const facts = await cached("/api/facts").catch(() => []);
@@ -53,7 +55,7 @@ async function insightsCard() {
     missed.length && panel("Demand you missed", "wait", missed.map(m => `<div class="ins-bar"><div class="ins-bar-top"><span>${esc(m.item)}</span><span>${n(m.had)} had · <b>${n(m.wanted)}</b> wanted</span></div>
       <div class="ins-track"><i class="had" style="width:${(n(m.had) / maxW) * 100}%"></i><i style="width:${(n(m.wanted) / maxW) * 100}%"></i></div></div>`).join(""), "People wanted more than you had"),
     prices.length && panel("Listed vs agreed", "fresh", prices.map(p => { const lo = Math.min(p.agreed, p.listed) * 0.9, hi = Math.max(p.agreed, p.listed) * 1.05, x = v => ((v - lo) / (hi - lo)) * 100;
-      return `<div class="ins-dot"><span>${esc(p.item)}</span><div class="ins-line"><i class="seg" style="left:${x(Math.min(p.agreed, p.listed))}%;width:${Math.abs(x(p.listed) - x(p.agreed))}%"></i><i class="pt listed" style="left:${x(p.listed)}%" title="Listed ${esc(money(p.listed))}"></i><i class="pt agreed" style="left:${x(p.agreed)}%" title="Agreed ${esc(money(p.agreed))}"></i></div><span class="ins-vals">${esc(money(p.agreed))} <span class="faint">/ ${esc(money(p.listed))}</span></span></div>`; }).join(""), "Median price agreed vs your listed price"),
+      return `<div class="ins-dot"><span>${esc(p.item)}</span><div class="ins-line" role="img" aria-label="Listed ${esc(money(p.listed))}, agreed ${esc(money(p.agreed))}"><i class="seg" style="left:${x(Math.min(p.agreed, p.listed))}%;width:${Math.abs(x(p.listed) - x(p.agreed))}%"></i><i class="pt listed" style="left:${x(p.listed)}%" title="Listed ${esc(money(p.listed))}"></i><i class="pt agreed" style="left:${x(p.agreed)}%" title="Agreed ${esc(money(p.agreed))}"></i></div><span class="ins-vals">${esc(money(p.agreed))} agreed <span class="faint">· ${esc(money(p.listed))} listed</span></span></div>`; }).join(""), "Median price agreed vs your listed price"),
     b.total && panel("Who deals with you", "talk", `<div class="ins-nums"><div><b>${n(b.total)}</b><span>People</span></div><div><b>${n(b.repeat)}</b><span>Came back</span></div><div><b>${n(b.atListed)}</b><span>Paid your price</span></div><div><b>${n(b.bargained)}</b><span>Bargained</span></div></div>`),
     (i.unmet ?? []).length && panel("Asked near you, not filled", "accent", `<div class="ins-pills">${i.unmet.slice(0, 4).map(u => `<span>${esc(u.item)}<b>${n(u.requests)}</b></span>`).join("")}</div>`),
     (i.together ?? []).length && panel("Often wanted together", "accent", `<div class="ins-pills">${i.together.slice(0, 4).map(t => `<span>${esc(t.item)}<b>${n(t.buyers)}</b></span>`).join("")}</div>`),
@@ -68,7 +70,7 @@ async function insightsCard() {
     <div class="ins-board">${panels.join("")}</div></div>`;
 }
 
-const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h1 class="headline">${title}</h1></div>${body}`;
+const frame = (lbl, title, body) => `<div class="stack" style="gap:6px">${label(lbl, "sq")}<h2 class="headline">${title}</h2></div>${body}`;
 
 /** Every fact the owner has — all tiers live on the server under their account; Private is never shared. */
 async function allFacts() {
@@ -178,7 +180,7 @@ function postCard(p, preview = false) {
 
 /** The preview of what's about to go up, with only the details that kind needs to edit. */
 function draftCard(d) {
-  const kinds = Object.entries(KIND).map(([k, v]) => `<button class="chip ${d.kind === k ? "on" : ""}" data-act="cm-kind" data-kind="${k}">${v.name}</button>`).join("");
+  const kinds = Object.entries(KIND).map(([k, v]) => `<button class="chip ${d.kind === k ? "on" : ""}" aria-pressed="${d.kind === k}" data-act="cm-kind" data-kind="${k}">${v.name}</button>`).join("");
   const f = (name, lab, value, attrs = "") => `<label class="stack small" style="gap:4px">${lab}<input class="field compact" data-cm="${name}" value="${esc(value ?? "")}" ${attrs}></label>`;
   const fields = d.kind === "trip" ? [f("from", "From", d.fromName ?? d.from?.name ?? "", 'placeholder="Area"'), f("to", "To", d.toName ?? d.to?.name ?? "", 'placeholder="The community"'), f("at", "When", localInput(d.at), 'type="datetime-local"'), f("spots", "Seats", d.spots ?? "", 'type="number" min="1" max="6" placeholder="Any"')]
     : d.kind === "group" ? [f("spots", "People needed in all", d.spots ?? "", 'type="number" min="2" max="500" placeholder="No limit"'), f("place", "Where", d.placeName ?? d.place?.name ?? "", 'placeholder="Optional"'), f("at", "When", localInput(d.at), 'type="datetime-local"')]
@@ -199,14 +201,17 @@ function factText(f) {
   return `<span>${esc(head.join(" "))}</span>${kv.length ? `<dl class="kv">${kv.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : ""}`;
 }
 
+/** The conversations as Activity last read them: goals and applicants are read again once any of them changes. */
+let engSig = "";
+
 export const screens = {
   context: {
     async html() {
-      const facts = await allFacts();
+      // Read together: stock and time slots for public offerings (what reservations hold and payments commit — other
+      // people's reservations change them, so they're shared only briefly), linked systems, and the agent's rules.
+      const [facts, resources, grants, limitList] = await Promise.all([allFacts(), cached("/api/resources", 3_000).catch(() => []), cached("/api/connectors", 15_000).catch(() => []), cached("/api/limits", 15_000).catch(() => [])]);
       const n = t => facts.filter(f => f.tier === t && f.source !== "chat" && f.source !== "answer").length;
-      // Stock and time slots for public offerings: what reservations hold and payments commit.
-      const ledgers = new Map((await api("/api/resources").catch(() => [])).map(r => [r.factId, r]));
-      const grants = await api("/api/connectors").catch(() => []);
+      const ledgers = new Map(resources.map(r => [r.factId, r]));
       // A linked system, in plain words: what it does, whether it's working, and how (one tap away).
       const connected = r => grants.filter(g => g.resourceId === r.id && g.status !== "revoked").map(g => {
         const pos = g.provider === "inventory-webhook", gcal = g.provider === "google-calendar", last = g.lastEventAt ? new Date(g.lastEventAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : null;
@@ -223,13 +228,13 @@ export const screens = {
         if (f.tier !== "public" || !f.offer) return "";
         const r = ledgers.get(f.id);
         if (!r) return `<div class="row small stock"><span class="faint">Availability not tracked — agents say you'll confirm.</span>
-          <input class="field" type="number" min="0" style="max-width:90px" data-stock-new="${esc(f.id)}" placeholder="Qty"><button class="btn secondary compact" data-act="stock-track" data-id="${esc(f.id)}">Track stock</button>
+          <input class="field" type="number" min="0" style="max-width:90px" data-stock-new="${esc(f.id)}" placeholder="Qty" aria-label="How many you have"><button class="btn secondary compact" data-act="stock-track" data-id="${esc(f.id)}">Track stock</button>
           <button class="btn quiet compact" data-act="slots-track" data-id="${esc(f.id)}">Use time slots</button></div>`;
         if (r.type === "quantity") {
           const held = r.holds.filter(h => h.state === "held" && h.expiresAt > now_).reduce((n, h) => n + h.qty, 0);
           const low = r.onHand - held <= (session.policy?.stock?.lowAt ?? 3);
           return `<div class="row small stock"><b>Stock ${r.onHand}</b>${low ? tag(r.onHand - held > 0 ? "Low" : "Sold out", "danger") : ""}${held ? `<span class="faint">· ${held} reserved</span>` : ""}<span class="faint">· counted ${new Date(r.observedAt * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
-            <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>
+            <input class="field" type="number" min="0" style="max-width:90px" data-stock="${esc(r.id)}" value="${r.onHand}" aria-label="Stock on hand"><button class="btn secondary compact" data-act="stock-set" data-id="${esc(r.id)}">Update</button></div>
             ${connected(r) || `<div class="row small"><button class="btn quiet compact" data-act="conn-pos" data-id="${esc(r.id)}">Connect billing software</button><span class="faint">its sales update this count</span></div>`}<div data-conn="${esc(r.id)}"></div>`;
         }
         const open = r.slots.filter(sl => sl.start > now_);
@@ -243,10 +248,10 @@ export const screens = {
         return `<div class="stack small stock"><div class="row"><b>Bookable times</b>${summary}</div>
           <details class="more"><summary>${r.hours ? "Change hours" : "Set weekly hours"} or add a one-off time</summary>
           <div class="row">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="chip"><input type="checkbox" data-hours-day="${rid}" value="${d}" ${hrs.days.includes(d) ? "checked" : ""}> ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}</label>`).join("")}</div>
-          <div class="row"><input class="field compact" type="time" data-hours-from="${rid}" value="${esc(hrs.from)}" style="max-width:120px"><span>to</span><input class="field compact" type="time" data-hours-to="${rid}" value="${esc(hrs.to)}" style="max-width:120px">
-            <input class="field compact" type="number" min="10" max="480" step="5" data-hours-mins="${rid}" value="${hrs.minutes}" style="max-width:80px"><span>min each</span></div>
+          <div class="row"><input class="field compact" type="time" data-hours-from="${rid}" value="${esc(hrs.from)}" style="max-width:120px" aria-label="Opens"><span>to</span><input class="field compact" type="time" data-hours-to="${rid}" value="${esc(hrs.to)}" style="max-width:120px" aria-label="Closes">
+            <input class="field compact" type="number" min="10" max="480" step="5" data-hours-mins="${rid}" value="${hrs.minutes}" style="max-width:80px" aria-label="Minutes per booking"><span>min each</span></div>
           <div class="row"><button class="btn secondary compact" data-act="hours-save" data-id="${rid}">Save hours</button>${r.hours ? `<button class="btn quiet compact" data-act="hours-stop" data-id="${rid}">Stop weekly hours</button>` : ""}<span class="faint">Booked times always stay.</span></div>
-          <div class="row" style="margin-top:6px"><span class="faint" style="min-width:110px">One-off time</span><input class="field compact" type="datetime-local" data-slot-start="${rid}" style="max-width:230px"><input class="field compact" type="number" min="15" step="15" style="max-width:80px" data-slot-mins="${rid}" value="60" title="Minutes"><button class="btn quiet compact" data-act="slot-add" data-id="${rid}">Add</button></div></details>
+          <div class="row" style="margin-top:6px"><span class="faint" style="min-width:110px">One-off time</span><input class="field compact" type="datetime-local" data-slot-start="${rid}" style="max-width:230px" aria-label="One-off time"><input class="field compact" type="number" min="15" step="15" style="max-width:80px" data-slot-mins="${rid}" value="60" title="Minutes"><button class="btn quiet compact" data-act="slot-add" data-id="${rid}">Add</button></div></details>
           ${connected(r) || calendarLink(r.id)}</div>`;
       };
       // Linking a calendar so its busy times block bookings: Google through its own sign-in (when the server has an
@@ -254,12 +259,12 @@ export const screens = {
       const calendarLink = rid => `<div class="row small"><button class="btn secondary compact" data-act="gcal-link" data-id="${esc(rid)}">Link Google Calendar</button><button class="btn quiet compact" data-act="cal-other" data-id="${esc(rid)}">Other calendar</button><span class="faint">busy times then block bookings</span></div>
         <div class="card slim stack" data-cal-other="${esc(rid)}" hidden style="gap:6px">
           <span class="small muted">Any calendar can share busy times through its private iCal address. In Google Calendar: Settings → your calendar → <b>Integrate calendar</b> → <b>Secret address in iCal format</b>.</span>
-          <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link</button></div>
+          <div class="row small"><input class="field" type="url" placeholder="Paste the secret iCal address (https://…)" data-ical="${esc(rid)}" aria-label="Secret iCal address"><button class="btn accent compact" data-act="conn-ical" data-id="${esc(rid)}">Link</button></div>
           <span class="faint small">Only busy times are read — titles and guests stay with your calendar.</span></div>`;
       // The seller's own terms for an offering, and instant booking: their words, a row to add one, and Gemini's
       // suggestions for this listing on request. No headings or examples are put in front of them.
       // The seller's rules for their agent, in their words: what's in force, and a box to change them.
-      const limits = new Map((await api("/api/limits").catch(() => [])).map(l => [l.key, l]));
+      const limits = new Map(limitList.map(l => [l.key, l]));
       const rulesRow = f => {
         if (f.tier !== "public" || !f.offer) return "";
         const l = limits.get(`fact:${f.id}`), id = esc(f.id);
@@ -267,7 +272,7 @@ export const screens = {
           f.offer.maxPerBuyer ? `at most ${f.offer.maxPerBuyer} per person` : null].filter(Boolean).join(" · ");
         return `<details class="more"><summary>Your agent's rules${now_ ? ` · ${esc(now_)}` : " · none yet"}</summary>
           ${l?.rulesText ? `<span class="small faint">You said: “${esc(l.rulesText)}”</span>` : ""}
-          <div class="row"><input class="field" style="flex:1;min-width:220px" data-ctx-rules="${id}" placeholder="e.g. never below ₹400 each, max 10 per person, close yourself above ₹420"><button class="btn secondary compact" data-act="ctx-rules-read" data-id="${id}">Read my rules</button></div>
+          <div class="row"><input class="field" style="flex:1;min-width:220px" data-ctx-rules="${id}" aria-label="Your agent's rules" placeholder="e.g. never below ₹400 each, max 10 per person, close yourself above ₹420"><button class="btn secondary compact" data-act="ctx-rules-read" data-id="${id}">Read my rules</button></div>
           <div data-ctx-rules-preview="${id}"></div></details>`;
       };
       const termsRow = f => {
@@ -280,13 +285,17 @@ export const screens = {
           <div class="row"><button class="btn secondary compact" data-act="terms-save" data-id="${esc(f.id)}">Save terms</button><button class="btn quiet compact" data-act="terms-suggest" data-id="${esc(f.id)}" data-category="${esc(f.offer.category)}" data-owner-pays="${f.offer.ownerPays ? "1" : ""}">Suggest terms for this offering</button></div></details>`;
       };
       // Your context is what you told your agent on purpose; what it picked up from chats and answers is kept apart.
-      const learned = facts.filter(f => f.source === "chat" || (f.source === "answer" && f.question && f.answer)), own = facts.filter(f => !learned.includes(f));
+      const learned = facts.filter(f => f.source === "chat" || (f.source === "answer" && f.question && f.answer)), days = facts.filter(f => f.source === "summary").sort((a, b) => b.createdAt - a.createdAt);
+      const own = facts.filter(f => !learned.includes(f) && !days.includes(f));
       return frame("About me", "What your agent knows", `
         <div class="stats"><div>${label("Only me", "peri")}<b>${n("private")}</b></div><div>${label("Protected", "accent")}<b>${n("protected")}</b></div><div>${label("Public", "fresh")}<b>${n("public")}</b></div></div>
         <form class="card" data-form="add-fact">${label("Add to context", "sq")}
-          <textarea class="field" name="text" rows="2" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
-          <div class="row"><select class="field" name="tier" style="max-width:260px"><option value="private">Private (not listed — your agent may use it)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
+          <textarea class="field" name="text" rows="2" aria-label="Add to context" placeholder="e.g. My landlord is Kabir · I'm free weekday evenings · I teach guitar" required></textarea>
+          <div class="row"><select class="field" name="tier" style="max-width:260px" aria-label="Who sees it"><option value="private">Private (not listed — your agent may use it)</option><option value="protected">People my rules name (Protected)</option><option value="public">Anyone (Public, discoverable)</option></select>
           <button class="btn" data-act="add-fact">Save</button></div></form>
+        <div class="card slim">${label("Your daily agent", "peri")}<span class="small muted">Once a day it notes what you did — requests, deals, listings, answers — in your private context, so your agent remembers. Never shown to anyone.</span>
+          ${days.slice(0, 3).map(f => `<div class="mem-row"><span class="small" style="flex:1;min-width:0">${esc(f.text)}</span><button class="btn quiet compact" data-act="fact-delete" data-id="${esc(f.id)}" aria-label="Forget this summary">Forget</button></div>`).join("")}
+          <div class="row"><button class="btn secondary compact" data-act="summary-now">Summarise my last day now</button>${days.length > 3 ? `<span class="small faint">${days.length - 3} older</span>` : ""}</div></div>
         ${learned.length ? `<details class="card slim memory"><summary class="row"><span class="small"><b>${learned.length}</b> thing${learned.length === 1 ? "" : "s"} your agent learned from your chats and answers</span><span class="small faint end">Review ›</span></summary>
           <span class="small faint">Kept so you're never asked twice — used to answer others within your limits, never listed publicly.</span>
           ${learned.map(f => `<div class="mem-row"><div class="stack" style="gap:2px;min-width:0;flex:1"><span class="small">${esc(f.source === "answer" ? f.answer : String(f.text).replace(/^Asked: “[^”]*” — answer:\s*/, ""))}</span>${f.source === "answer" ? `<span class="small faint">${esc(f.question)}</span>` : ""}</div>
@@ -294,9 +303,10 @@ export const screens = {
         <div class="stack">${own.map(f => `<div class="card slim"><div class="row">${tierTag(f.tier, f.topics)}${f.offer ? tag("offering") : ""}${f.source === "chat" ? tag("from chat") : ""}<span class="end faint small">${new Date(f.createdAt * 1000).toLocaleDateString()}</span></div>
           ${factText(f)}
           ${f.tier !== "public" ? `<div class="row small"><span class="faint">Your agent ${f.noShare ? "never uses this" : /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|price limit|lowest|floor price|price floor|at most|go below|go above|won'?t (go|pay|take)|can'?t (go|pay)|afford|kam se kam|best price|cost(s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b|\b(limit|budget|max|min)\b[^.]{0,12}\d|\b(up ?to|under|below|above|over|at least)\s*\d/i.test(f.text) ? "never repeats this (it mentions money)" : "answers others from this"}</span>
-            <div class="seg compact end" role="group" aria-label="May your agent use this to answer others?"><button class="${f.noShare ? "" : "on"}" data-act="fact-use" data-id="${esc(f.id)}" data-use="1">Use</button><button class="${f.noShare ? "on" : ""}" data-act="fact-use" data-id="${esc(f.id)}" data-use="0">Never</button></div></div>` : ""}
+            <div class="seg compact end" role="group" aria-label="May your agent use this to answer others?"><button class="${f.noShare ? "" : "on"}" aria-pressed="${!f.noShare}" data-act="fact-use" data-id="${esc(f.id)}" data-use="1">Use</button><button class="${f.noShare ? "on" : ""}" aria-pressed="${!!f.noShare}" data-act="fact-use" data-id="${esc(f.id)}" data-use="0">Never</button></div></div>` : ""}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
+            ${f.tier === "public" && f.offer && !f.offer.ownerPays ? `<button class="btn secondary compact" data-act="demo-customers" data-id="${esc(f.id)}" title="Simulated people nearby ask for this; their agents talk to yours">Try with demo customers</button>` : ""}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
     },
     async act(a, el, S, h) {
@@ -332,7 +342,7 @@ export const screens = {
       }
       if (a === "ctx-rules-read") {
         const id = el.dataset.id, text = String(document.querySelector(`[data-ctx-rules="${CSS.escape(id)}"]`)?.value ?? "").trim();
-        if (text.length < 4) { h.toast("Say your rules — e.g. “never below ₹400, close yourself above ₹420”."); return true; }
+        if (text.length < 4) { h.toast("Say your rules — e.g. “never below ₹400, close yourself above ₹420”.", null, "error"); return true; }
         busy(el, true, "Reading");
         try {
           // An owner who pays (an employer) sets a ceiling, not a floor.
@@ -381,7 +391,7 @@ export const screens = {
       }
       if (a === "stock-track" || a === "slots-track") {
         const qty = Number(document.querySelector(`[data-stock-new="${CSS.escape(el.dataset.id)}"]`)?.value);
-        if (a === "stock-track" && !(Number.isInteger(qty) && qty >= 0)) { h.toast("Enter how many you have."); return true; }
+        if (a === "stock-track" && !(Number.isInteger(qty) && qty >= 0)) { h.toast("Enter how many you have.", null, "error"); return true; }
         busy(el, true);
         try { await api("/api/resources", a === "stock-track" ? { factId: el.dataset.id, type: "quantity", onHand: qty } : { factId: el.dataset.id, type: "slots", slots: [] }); h.toast(a === "stock-track" ? "Stock tracked — deals now reserve it." : "Add your time slots below."); }
         catch (err) { h.toast(err.message, null, "error"); }
@@ -409,7 +419,7 @@ export const screens = {
       if (a === "cal-other") { const box = document.querySelector(`[data-cal-other="${CSS.escape(el.dataset.id)}"]`); if (box) box.hidden = !box.hidden; return true; }
       if (a === "conn-ical") {
         const url = document.querySelector(`[data-ical="${CSS.escape(el.dataset.id)}"]`)?.value.trim();
-        if (!url) { h.toast("Paste your calendar's secret iCal address first."); return true; }
+        if (!url) { h.toast("Paste your calendar's secret iCal address first.", null, "error"); return true; }
         // Google's public address only works for calendars made public; the secret one carries "/private-".
         if (/calendar\.google\.com/.test(url) && !/\/private-/.test(url)) { h.toast("That's the public address. Copy the “Secret address in iCal format” instead — it's a bit lower on the same settings page."); return true; }
         busy(el, true);
@@ -420,7 +430,7 @@ export const screens = {
       if (a === "conn-sync") { busy(el, true); const r = await api(`/api/connectors/${el.dataset.id}/sync`, {}).catch(e => ({ reason: e.message })); h.toast(r.synced ? `Synced — ${r.busy} busy times.` : `Couldn't sync: ${r.reason}`); h.paint(); return true; }
       if (a === "conn-revoke") {
         if ((await ask({ title: "Revoke this connection?", detail: "It stops changing your availability; until you recount, availability shows as unconfirmed.", ok: "Revoke", danger: true })) === null) return true;
-        await api(`/api/connectors/${el.dataset.id}/revoke`, {}); h.toast("Revoked."); h.paint(); return true;
+        busy(el, true); await api(`/api/connectors/${el.dataset.id}/revoke`, {}); h.toast("Revoked."); h.paint(); return true;
       }
       if (a === "stock-set") {
         const qty = Number(document.querySelector(`[data-stock="${CSS.escape(el.dataset.id)}"]`)?.value);
@@ -431,7 +441,7 @@ export const screens = {
       if (a === "hours-save" || a === "hours-stop") {
         const id = el.dataset.id, val = k => document.querySelector(`[data-hours-${k}="${CSS.escape(id)}"]`)?.value;
         const hours = a === "hours-stop" ? null : { days: [...document.querySelectorAll(`[data-hours-day="${CSS.escape(id)}"]:checked`)].map(i => Number(i.value)), from: val("from"), to: val("to"), minutes: Number(val("mins")) };
-        if (hours && !hoursOk(hours)) { h.toast("Pick at least one day, and leave room for one booking between opening and closing."); return true; }
+        if (hours && !hoursOk(hours)) { h.toast("Pick at least one day, and leave room for one booking between opening and closing.", null, "error"); return true; }
         busy(el, true);
         try { await api(`/api/resources/${id}/hours`, { hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }); h.toast(hours ? "Saved — free times are ready two weeks ahead and refill on their own." : "Weekly hours stopped. Booked times stay."); }
         catch (err) { h.toast(err.message, null, "error"); }
@@ -440,14 +450,22 @@ export const screens = {
       if (a === "slot-add") {
         const start = Date.parse(document.querySelector(`[data-slot-start="${CSS.escape(el.dataset.id)}"]`)?.value ?? "") / 1000;
         const mins = Number(document.querySelector(`[data-slot-mins="${CSS.escape(el.dataset.id)}"]`)?.value) || 60;
-        if (!start || start < Date.now() / 1000) { h.toast("Pick a future date and time."); return true; }
+        if (!start || start < Date.now() / 1000) { h.toast("Pick a future date and time.", null, "error"); return true; }
         busy(el, true);
         try { await api(`/api/resources/${el.dataset.id}/slots`, { slots: [{ start, end: start + mins * 60, capacity: 1 }] }); h.toast("Slot added."); } catch (err) { h.toast(err.message, null, "error"); }
         h.paint(); return true;
       }
+      if (a === "summary-now") {
+        busy(el, true, "Summarising");
+        try { const r = await api("/api/me/summary", {}); h.toast(r.fact ? "Noted in your private context." : "Nothing to note from the last day yet."); }
+        catch (err) { h.toast(err.message, null, "error"); }
+        finally { busy(el, false); }
+        h.paint(); return true;
+      }
       if (a === "fact-delete") {
         if ((await ask({ title: "Delete this from your context?", ok: "Delete", danger: true })) === null) return true;
-        await api(`/api/facts/${el.dataset.id}/delete`, {}).catch(() => {});
+        busy(el, true);
+        await api(`/api/facts/${el.dataset.id}/delete`, {}).catch(err => h.toast(err.message, null, "error"));
         h.paint(); return true;
       }
     },
@@ -455,17 +473,15 @@ export const screens = {
 
   people: {
     async html(S) {
-      const contacts = await cached("/api/contacts").catch(() => []);
       // Insights take a moment (they read a month of conversations and ask Gemini): the screen draws at once with the
       // last card (or a placeholder), and the card fills its slot when it's ready.
       insightsCard().then(h => { if (h === shopInsightsHTML) return; shopInsightsHTML = h; const slot = document.getElementById("shop-insights"); if (slot) slot.innerHTML = h; }).catch(() => {});
       const insights = `<div id="shop-insights">${shopInsightsHTML}</div>`;
       const card = `${location.origin}/a2a/${S.profile.handle}/.well-known/agent-card.json`;
       const link = `${location.origin}/?to=${encodeURIComponent(S.profile.handle)}`;
-      let qr = "";
-      try { qr = await (await import("/vendor/qrcode.js")).default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } }); } catch { /* offline */ }
+      const qrP = qrMemo.link === link ? Promise.resolve(qrMemo.svg) : import("/vendor/qrcode.js").then(m => m.default.toString(link, { type: "svg", margin: 1, color: { dark: "#0a0a0a", light: "#ffffff" } })).then(svg => (qrMemo = { link, svg }).svg).catch(() => ""); // offline: no QR
       // The card people get when they scan: who, what's on offer, and a record that comes from signed receipts.
-      const [facts, rec] = await Promise.all([cached("/api/facts").catch(() => []), cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null)]);
+      const [contacts, qr, facts, rec] = await Promise.all([cached("/api/contacts").catch(() => []), qrP, cached("/api/facts").catch(() => []), cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null)]);
       const offers = facts.filter(f => f.tier === "public" && f.offer && f.offer.status !== "sold");
       return frame("My card", "Share it — anyone can reach your agent", `
         <div class="card share-card">
@@ -480,7 +496,7 @@ export const screens = {
           <div class="share-grid quiet"><button class="btn quiet compact" data-act="preview-card">As others see it</button><button class="btn quiet compact" data-act="agent-card">Agent card ›</button><button class="btn quiet compact" data-act="scan">Scan a QR</button></div></div>
         <div id="scanner"></div>
         ${insights}
-        <form class="card" data-form="add-contact">${label("Add someone by handle", "sq")}<div class="row"><input class="field" name="handle" placeholder="@handle" style="max-width:260px"><button class="btn" data-act="add-contact">Add</button></div>
+        <form class="card" data-form="add-contact">${label("Add someone by handle", "sq")}<div class="row"><input class="field" name="handle" placeholder="@handle" aria-label="Handle" style="max-width:260px"><button class="btn" data-act="add-contact">Add</button></div>
           <span class="small faint">Contacts can be named in rules (Privacy). Try @riya, @kabir, @arjun, @meera, @dev, @sana or @nikhil — demo people.</span></form>
         <div class="stack">${contacts.map(c => `<div class="card slim"><div class="row"><b>${esc(c.name)}</b><span class="faint small">@${esc(c.handle)}</span>
           <button class="btn secondary compact end" data-act="view-person" data-handle="${esc(c.handle)}">Public profile</button><button class="btn quiet compact" data-act="remove-contact" data-id="${esc(c.uid)}">Remove</button></div>
@@ -496,11 +512,12 @@ export const screens = {
       }
       if (a === "scan") { await scan(h); return true; }
       if (a === "add-contact") { const handle = new FormData(el.closest("form")).get("handle"); busy(el, true); await api("/api/contacts", { handle: String(handle).replace(/^@/, "") }); h.paint(); return true; }
-      if (a === "remove-contact") { await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
+      if (a === "remove-contact") { busy(el, true); await api("/api/contacts/remove", { uid: el.dataset.id }); h.paint(); return true; }
       if (a === "view-person") {
+        busy(el, true);
         const p = await api(`/api/people/${el.dataset.handle}`);
         document.getElementById(`person-${el.dataset.handle}`).innerHTML = `<div class="stack" style="margin-top:8px">${p.profile.bio ? `<span class="small muted">${esc(p.profile.bio)}</span>` : ""}${p.stats?.deals ? `<span class="small faint">${p.stats.deals} deal${p.stats.deals === 1 ? "" : "s"} · ${p.stats.kept} went ahead</span>` : ""}${p.facts.map(f => `<div class="row">${tag("Public", "fresh")}<span class="small">${esc(f.text)}</span></div>`).join("") || `<span class="small faint">Nothing public.</span>`}<div class="row"><button class="btn accent compact" data-act="cm-message" data-handle="${esc(el.dataset.handle)}">Open their shop</button><a class="small faint" href="${esc(p.agentCard)}" target="_blank" rel="noopener" title="The machine-readable card other agents read">agent card ↗</a></div></div>`;
-        return true;
+        busy(el, false); return true;
       }
     },
   },
@@ -522,9 +539,9 @@ export const screens = {
           <div class="row small"><button class="btn quiet compact" data-act="cm-back">‹ All communities</button><span class="faint">${short(c.place)} · ${c.members} member${c.members === 1 ? "" : "s"}</span>
             <button class="btn quiet compact end" data-act="cm-leave" data-id="${esc(c.id)}">Leave</button></div>
           ${d ? draftCard(d) : `<form class="card stack" data-form="cm-compose">${label("Post to members", "sq ink")}
-            <textarea class="field" name="text" rows="2" maxlength="400" placeholder="In your own words — e.g. “Cab from HSR to the office at 9 tomorrow, 2 seats” or “Anyone up for a bulk order of rice?”"></textarea>
+            <textarea class="field" name="text" rows="2" maxlength="400" aria-label="Post to members" placeholder="In your own words — e.g. “Cab from HSR to the office at 9 tomorrow, 2 seats” or “Anyone up for a bulk order of rice?”"></textarea>
             <div class="row"><button class="btn accent" data-act="cm-draft">Preview</button><span class="small faint">Gemini reads it into a trip, group, event, ask or offer. You check it before it goes up.</span></div></form>`}
-          <div class="row" style="gap:6px;flex-wrap:wrap">${tabs.map(([k, t]) => `<button class="chip ${show === k ? "on" : ""}" data-act="cm-tab" data-tab="${k}">${esc(t)}</button>`).join("")}</div>
+          <div class="row" style="gap:6px;flex-wrap:wrap">${tabs.map(([k, t]) => `<button class="chip ${show === k ? "on" : ""}" aria-pressed="${show === k}" data-act="cm-tab" data-tab="${k}">${esc(t)}</button>`).join("")}</div>
           ${show === "listed" ? `${f.offers.length ? label("On offer") : ""}${f.offers.map(listing).join("")}${f.gigs.length ? label("Gigs and tasks") : ""}${f.gigs.map(listing).join("")}`
             : `<div class="stack">${posts.map(p => postCard(p)).join("") || `<p class="muted">Nothing posted yet. Be the first.</p>`}</div>
                ${show === "all" && f.offers.length + f.gigs.length ? `<div class="stack">${label("What members offer")}${[...f.offers, ...f.gigs].slice(0, 3).map(listing).join("")}${f.offers.length + f.gigs.length > 3 ? `<button class="btn quiet compact" data-act="cm-tab" data-tab="listed">See all ${f.offers.length + f.gigs.length}</button>` : ""}</div>` : ""}`}
@@ -540,7 +557,7 @@ export const screens = {
         <details class="more" ${l.mine.length || l.nearby.length ? "" : "open"}><summary>Start a community</summary>
           <form class="stack" data-form="cm-create" style="margin-top:8px">
             <input class="field" name="name" maxlength="60" placeholder="Its name — e.g. Embassy Tech Village" aria-label="Community name">
-            <div class="row small" style="gap:6px;flex-wrap:wrap">${SPACES.map(([k, t], i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" data-act="cm-space" data-kind="${k}">${t}</button>`).join("")}</div>
+            <div class="row small" style="gap:6px;flex-wrap:wrap">${SPACES.map(([k, t], i) => `<button type="button" class="chip ${i === 0 ? "on" : ""}" aria-pressed="${i === 0}" data-act="cm-space" data-kind="${k}">${t}</button>`).join("")}</div>
             <input type="hidden" name="kind" value="office">
             <input class="field" name="place" maxlength="80" value="${esc(area)}" placeholder="Area — e.g. Whitefield" aria-label="Area">
             <div class="row"><button class="btn accent" data-act="cm-create">Create</button><span class="small faint">Anyone nearby can find and join it.</span></div></form></details>`);
@@ -551,7 +568,7 @@ export const screens = {
       if (a === "cm-open") { S.community = el.dataset.id; S.cmTab = "all"; h.paint(); return true; }
       if (a === "cm-back") { S.community = null; h.paint(); return true; }
       if (a === "cm-tab") { S.cmTab = el.dataset.tab; h.paint(); return true; }
-      if (a === "cm-space") { form.querySelectorAll('[data-act="cm-space"]').forEach(b => b.classList.toggle("on", b === el)); form.elements.kind.value = el.dataset.kind; return true; }
+      if (a === "cm-space") { form.querySelectorAll('[data-act="cm-space"]').forEach(b => { b.classList.toggle("on", b === el); b.setAttribute("aria-pressed", String(b === el)); }); form.elements.kind.value = el.dataset.kind; return true; }
       if (a === "cm-create") {
         const f = new FormData(form);
         busy(el, true, "Creating");
@@ -599,49 +616,51 @@ export const screens = {
 
   sharing: {
     async html(S) {
-      const log = await sharedLog();
-      const [rules, contacts, facts] = await Promise.all([cached("/api/rules").catch(() => []), cached("/api/contacts").catch(() => []), allFacts()]);
+      const [log, rules, contacts, facts] = await Promise.all([sharedLog(), cached("/api/rules").catch(() => []), cached("/api/contacts").catch(() => []), allFacts()]);
       const topics = [...new Set(facts.filter(f => f.tier === "protected").flatMap(f => f.topics))];
       const shapeText = { yesNo: "Yes or no", oneLine: "One line", summary: "A summary", full: "The whole fact" };
       // One form of taps: who, which topics (your own Protected topics as chips), how much, whether you check first, how long.
-      const chip = (field, value, text, on) => `<button type="button" class="chip ${on ? "on" : ""}" data-act="rule-chip" data-field="${field}" data-value="${esc(value)}">${esc(text)}</button>`;
+      const chip = (field, value, text, on) => `<button type="button" class="chip ${on ? "on" : ""}" aria-pressed="${!!on}" data-act="rule-chip" data-field="${field}" data-value="${esc(value)}">${esc(text)}</button>`;
       return frame("Privacy", "Who sees what", `
         <div class="card ${S.profile.paused ? "accent" : ""}"><div class="row">${label(S.profile.paused ? "Paused" : "Your agent is answering", "sq " + (S.profile.paused ? "stale" : "fresh"))}
           <button class="btn ${S.profile.paused ? "accent" : "secondary"} compact end" data-act="pause">${S.profile.paused ? "Resume" : "Pause"}</button></div>
           <span class="small muted">${S.profile.paused ? "Your agent answers no one until you resume." : "It answers from everything you've told it, so nobody asks you the same thing twice."} It never says your limits, money in private notes, contact details, or a note you set to “never use” (About me). Everything it shares is listed below.</span></div>
         <form class="card" data-form="rule">${label("Share Protected facts", "sq")}
-          <div class="row"><span class="small">With</span><select class="field" name="audience" style="max-width:280px"><option value="anyone">Anyone who contacts your agent</option>${contacts.map(c => `<option value="${esc(c.handle)}">${esc(c.name)} (@${esc(c.handle)})</option>`).join("")}</select></div>
+          <label class="row"><span class="small">With</span><select class="field" name="audience" style="max-width:280px"><option value="anyone">Anyone who contacts your agent</option>${contacts.map(c => `<option value="${esc(c.handle)}">${esc(c.name)} (@${esc(c.handle)})</option>`).join("")}</select></label>
           <div class="stack" style="gap:6px"><span class="small">About</span>
             ${topics.length ? `<div class="row">${topics.map((t, i) => chip("topics", t, t, i < 1)).join("")}</div><input type="hidden" name="topics" value="${esc(topics.slice(0, 1).join(","))}">`
-              : `<span class="small faint">Mark a fact Protected in About me — its topics show up here.</span><input type="hidden" name="topics" value="">`}</div>
+              : `<input type="hidden" name="topics" value="">`}
+            <input class="field" name="topicText" maxlength="60" aria-label="Another topic" placeholder="${topics.length ? "Or type a topic, e.g. availability" : "A topic, e.g. availability, rent, pickup times"}"></div>
           <div class="stack" style="gap:6px"><span class="small">How much</span><div class="row">${Object.entries(shapeText).map(([k, v]) => chip("shape", k, v, k === "oneLine")).join("")}</div><input type="hidden" name="shape" value="oneLine"></div>
           <div class="stack" style="gap:6px"><span class="small">Before it answers</span><div class="row">${chip("approval", "review", "Ask me first", true)}${chip("approval", "auto", "Answer on its own", false)}</div><input type="hidden" name="approval" value="review"></div>
           <div class="stack" style="gap:6px"><span class="small">For</span><div class="row">${[["1", "A day"], ["7", "A week"], ["30", "A month"], ["", "Until removed"]].map(([k, v]) => chip("days", k, v, k === "30")).join("")}</div><input type="hidden" name="days" value="30"></div>
-          <button class="btn" data-act="add-rule" ${topics.length ? "" : "disabled"}>Add rule</button></form>
+          <button type="button" class="btn" data-act="add-rule">Add rule</button></form>
         ${label(`Rules · ${rules.length}`, "sq")}
         <div class="stack">${rules.map(r => `<div class="card slim"><div class="row"><b class="small">${esc(r.audienceName)}</b><span class="end">${tag(r.approval === "auto" ? "On its own" : "Asks you", r.approval === "auto" ? "fresh" : "stale")}</span></div>
           <div class="row">${r.topics.map(t => tag(t, "accent")).join("")}<span class="small faint">${esc(shapeText[r.shape])}${r.expires ? ` · until ${new Date(r.expires * 1000).toLocaleDateString()}` : ""}</span><button class="btn quiet compact end" data-act="revoke" data-id="${esc(r.id)}">Remove</button></div></div>`).join("") || `<p class="small muted">None yet — Protected facts stay with you.</p>`}</div>
         <details class="more"><summary>What your agent shared · ${log.count}</summary><div class="stack">${log.html}</div></details>`);
     },
     async act(a, el, S, h) {
-      if (a === "pause") { S.profile = await api("/api/me/pause", { paused: !S.profile.paused }); h.paint(); return true; }
+      if (a === "pause") { busy(el, true, S.profile.paused ? "Resuming" : "Pausing"); S.profile = await api("/api/me/pause", { paused: !S.profile.paused }); h.paint(); return true; }
       if (a === "add-rule") {
         const f = new FormData(el.closest("form"));
-        busy(el, true);
-        const topics = String(f.get("topics")).split(",").map(t => t.trim()).filter(Boolean);
-        if (!topics.length) { h.toast("Pick at least one topic."); return true; }
-        await api("/api/rules", { audience: f.get("audience"), topics, shape: f.get("shape"), approval: f.get("approval"), days: f.get("days") ? Number(f.get("days")) : null });
+        const topics = [...new Set([...String(f.get("topics") ?? "").split(","), ...String(f.get("topicText") ?? "").split(",")].map(t => t.trim().toLowerCase()).filter(Boolean))];
+        if (!topics.length) { h.toast("Pick or type at least one topic.", null, "error"); el.closest("form").querySelector('[name="topicText"]')?.focus(); return true; }
+        busy(el, true, "Adding");
+        try { await api("/api/rules", { audience: f.get("audience"), topics, shape: f.get("shape"), approval: f.get("approval"), days: f.get("days") ? Number(f.get("days")) : null }); h.toast("Rule added."); }
+        catch (err) { h.toast(err.message, null, "error"); }
+        finally { busy(el, false); }
         h.paint(); return true;
       }
-      if (a === "revoke") { await api(`/api/rules/${el.dataset.id}/revoke`, {}); h.paint(); return true; }
+      if (a === "revoke") { busy(el, true); await api(`/api/rules/${el.dataset.id}/revoke`, {}); h.paint(); return true; }
       if (a === "rule-chip") {
         // Topics can be several; every other choice is one.
         const form = el.closest("form"), field = el.dataset.field, input = form.querySelector(`input[name="${field}"]`);
         if (field === "topics") {
-          el.classList.toggle("on");
+          el.classList.toggle("on"); el.setAttribute("aria-pressed", String(el.classList.contains("on")));
           input.value = [...form.querySelectorAll('[data-field="topics"].on')].map(b => b.dataset.value).join(",");
         } else {
-          form.querySelectorAll(`[data-field="${field}"]`).forEach(b => b.classList.toggle("on", b === el));
+          form.querySelectorAll(`[data-field="${field}"]`).forEach(b => { b.classList.toggle("on", b === el); b.setAttribute("aria-pressed", String(b === el)); });
           input.value = el.dataset.value;
         }
         return true;
@@ -658,10 +677,9 @@ export const screens = {
       const f = ["all", "bought", "sold"].includes(S.receiptsFilter) ? S.receiptsFilter : "all";
       const sold = e => mine(e) === (e.seller ?? "provider");
       const shown = list.filter(e => f === "all" || (f === "sold") === sold(e));
-      const rec = await cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null);
       const cats = [...new Map(list.map(e => [e.offer.category, e])).values()].slice(0, 3);
-      const market = (await Promise.all(cats.map(e => cached(`/api/insights?category=${encodeURIComponent(e.offer.category)}&item=${encodeURIComponent((e.offer.title ?? "").split(" · ")[0])}&unit=${encodeURIComponent(e.offer.unit ?? "")}`, 300_000)
-        .then(r => (r?.insights ? { e, i: r.insights } : null)).catch(() => null)))).filter(Boolean);
+      const [rec, market] = await Promise.all([cached(`/public/people/${encodeURIComponent(S.profile.handle)}/record`, 60_000).catch(() => null), Promise.all(cats.map(e => cached(`/api/insights?category=${encodeURIComponent(e.offer.category)}&item=${encodeURIComponent((e.offer.title ?? "").split(" · ")[0])}&unit=${encodeURIComponent(e.offer.unit ?? "")}`, 300_000)
+        .then(r => (r?.insights ? { e, i: r.insights } : null)).catch(() => null))).then(xs => xs.filter(Boolean))]);
       const status = e => { const p = e.payment?.status; return p === "paid" ? ["Paid", "fresh"] : p === "outside" ? ["Settled", "fresh"] : ["closed", "declined"].includes(e.phase) ? ["Ended", "stale"] : ["To pay", "wait"]; };
       const v = S.verified ?? {};
       const row = e => { const side = mine(e), them = side === "provider" ? e.requester : e.provider, [st, tone] = status(e);
@@ -676,7 +694,7 @@ export const screens = {
           </div>
           ${market.map(({ e, i }) => `<span class="small muted">${esc((e.offer.title ?? "").split(" · ")[0])}: ${i.n} deals, most closed at ${money(Math.round(i.p25), e.offer.unit, e.offer.currency)}–${money(Math.round(i.p75), e.offer.unit, e.offer.currency)}, median ${money(Math.round(i.median), e.offer.unit, e.offer.currency)}${i.demo ? " (incl. demo deals)" : ""}.</span>`).join("")}
           <span class="small faint">No names, no private limits — only what was agreed, signed by both agents.</span></div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">${[["all", "All"], ["bought", "Bought"], ["sold", "Sold"]].map(([k, t]) => `<button class="chip ${f === k ? "on" : ""}" data-act="receipts-filter" data-k="${k}">${t} · ${list.filter(e => k === "all" || (k === "sold") === sold(e)).length}</button>`).join("")}
+        <div class="row" style="gap:6px;flex-wrap:wrap">${[["all", "All"], ["bought", "Bought"], ["sold", "Sold"]].map(([k, t]) => `<button class="chip ${f === k ? "on" : ""}" aria-pressed="${f === k}" data-act="receipts-filter" data-k="${k}">${t} · ${list.filter(e => k === "all" || (k === "sold") === sold(e)).length}</button>`).join("")}
           ${list.length ? `<button class="btn secondary compact end" data-act="receipts-verify">Verify all</button>` : ""}</div>
         <div class="rlist">${shown.map(row).join("") || `<p class="small muted">${list.length ? "None here." : "No receipts yet. When both of you confirm a deal, its signed receipt appears here."}</p>`}</div>`);
     },
@@ -708,7 +726,7 @@ export const screens = {
         h.toast(`Your agent is contacting ${al.name}'s agent.`);
         h.paint(); return true;
       }
-      if (a === "alert-done") { await api(`/api/alerts/${el.dataset.id}/done`, {}); live.alerts = live.alerts.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
+      if (a === "alert-done") { busy(el, true); await api(`/api/alerts/${el.dataset.id}/done`, {}); live.alerts = live.alerts.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
       if (a === "goal-budget") {
         const amount = Number(document.querySelector(`[data-goal-budget="${CSS.escape(el.dataset.id)}"]`)?.value) || 0;
         const currency = document.querySelector(`[data-goal-currency="${CSS.escape(el.dataset.id)}"]`)?.value ?? "INR";
@@ -723,7 +741,7 @@ export const screens = {
       }
       if (a === "goal-repeat" || a === "goal-repeat-stop") {
         const everyDays = a === "goal-repeat" ? Number(document.querySelector(`[data-goal-every="${CSS.escape(el.dataset.id)}"]`)?.value) || 7 : 0;
-        await api(`/api/goals/${el.dataset.id}/recurrence`, { everyDays }); h.toast(everyDays ? `Your agent will look again every ${everyDays} days and tell you — it never buys on its own.` : "Stopped repeating."); h.paint(); return true;
+        busy(el, true); await api(`/api/goals/${el.dataset.id}/recurrence`, { everyDays }); h.toast(everyDays ? `Your agent will look again every ${everyDays} days and tell you — it never buys on its own.` : "Stopped repeating."); h.paint(); return true;
       }
       if (a === "goal-aon") { await api(`/api/goals/${el.dataset.id}/settings`, { allOrNothing: el.checked }); h.toast(el.checked ? "All or nothing: if a part fails, the others are released." : "Parts are independent."); h.paint(); return true; }
       if (a === "step-matches") {
@@ -757,7 +775,7 @@ export const screens = {
       }
       if (a === "goal-cancel") {
         if ((await ask({ title: "Cancel this goal?", detail: "Conversations without a deal end; agreed deals keep their obligations.", ok: "Cancel goal", cancel: "Keep it", danger: true })) === null) return true;
-        await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
+        busy(el, true); await api(`/api/goals/${el.dataset.id}/cancel`, {}); h.toast("Goal cancelled."); h.paint(); return true;
       }
       if (a === "deal-receipt") {
         // The button sits in the row's summary, whose own toggle runs after this: open the row once that's done.
@@ -767,21 +785,23 @@ export const screens = {
       }
       if (a === "deals-filter") { S.dealsFilter = el.dataset.k; h.paint(); return true; }
       if (a === "radar") { S.radar = el.dataset.k; h.paint(); return true; }
-      if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ behavior: "smooth", block: "center" }); c?.classList.remove("flash"); void c?.offsetWidth; c?.classList.add("flash"); return true; }
-      if (a === "watch-stop") { await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
+      if (a === "deal-jump") { const c = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); c?.scrollIntoView({ block: "center" }); c?.classList.add("landed"); setTimeout(() => c?.classList.remove("landed"), 1600); return true; }
+      if (a === "watch-stop") { busy(el, true); await api(`/api/watches/${el.dataset.id}/stop`, {}); live.watches = live.watches.filter(x => x.id !== el.dataset.id); h.paint(); return true; }
     },
     async html(S) {
       const list = [...live.engagements.values()].sort((a, b) => {
         const need = e => (live.inbox.some(i => i.engagementId === e.id) ? 1 : 0);
         return need(b) - need(a) || b.updatedAt - a.updatedAt;
       });
-      // An employer's job posts: each with its applicants, screened against the JD and ranked, above the activity rows.
-      const jobs = (await allFacts()).filter(f => f.tier === "public" && f.offer?.ownerPays && rolesOf(f.offer.category).flow === "hire");
-      const boards = (await Promise.all(jobs.map(f => api(`/api/facts/${encodeURIComponent(f.id)}/applicants`).catch(() => null)))).filter(b => b?.job);
-      const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+      // Goals and applicants follow from the conversations: read again when one changed, else shared across a burst of repaints.
+      const sig = list.map(e => `${e.id}:${e.updatedAt}`).join(), changed = sig !== engSig; engSig = sig;
       // Goals first: what you wanted, where it stands, and what happens next (each conversation is one of its tasks).
-      const goals = await api("/api/goals").catch(() => []);
-      const STATE = { draft: ["Draft", ""], active: ["In progress", "accent"], waiting: ["Needs you", "accent"], completed: ["Done", "fresh"],
+      const [facts, goals] = await Promise.all([allFacts(), cached("/api/goals", changed ? 0 : 3_000).catch(() => [])]);
+      // An employer's job posts: each with its applicants, screened against the JD and ranked, above the activity rows.
+      const jobs = facts.filter(f => f.tier === "public" && f.offer?.ownerPays && rolesOf(f.offer.category).flow === "hire");
+      const boards = (await Promise.all(jobs.map(f => cached(`/api/facts/${encodeURIComponent(f.id)}/applicants`, changed ? 0 : 30_000).catch(() => null)))).filter(b => b?.job);
+      const when = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+      const STATE = { draft: ["Draft", ""], active: ["In progress", "accent"], waiting: ["Needs you", "wait"], completed: ["Done", "fresh"],
         partially_completed: ["Partly done", "peri"], cancelled: ["Cancelled", ""], failed: ["Didn't work out", "danger"] };
       const open = goals.filter(g => !["completed", "cancelled", "failed"].includes(g.state)), doneGoals = goals.filter(g => !open.includes(g)).slice(0, 5);
       const STEP = { waiting: "waits", ready: "ready", searched: "matches found", started: "talking", done: "✓ done", failed: "✗ didn't work" };
@@ -796,9 +816,9 @@ export const screens = {
         ${g.recurrence && !g.recurrence.stopped ? `<span class="small faint">Repeats every ${g.recurrence.everyDays} day${g.recurrence.everyDays === 1 ? "" : "s"} · next ${new Date(g.recurrence.nextAt * 1000).toLocaleDateString()} · ${g.recurrence.rounds} round${g.recurrence.rounds === 1 ? "" : "s"} so far</span>` : g.recurrence?.stopped ? `<span class="small faint">Repeating stopped: ${esc(g.recurrence.stopped)}</span>` : ""}
         ${g.compensation ? `<span class="small" style="color:var(--stale)">Part of this all-or-nothing goal failed: ${g.compensation.cancelled.length} unpaid deal${g.compensation.cancelled.length === 1 ? "" : "s"} cancelled, ${g.compensation.released.length} reservation${g.compensation.released.length === 1 ? "" : "s"} released${g.compensation.paidNeedsOwner.length ? `; ${g.compensation.paidNeedsOwner.length} already paid — ask those sellers to cancel` : ""}.</span>` : ""}
         ${live_ ? `<details class="more"><summary>Goal settings</summary><div class="stack" style="gap:6px">
-          <div class="row small"><input class="field" type="number" min="0" style="max-width:110px" data-goal-budget="${id}" placeholder="Budget" value="${b?.amount ?? ""}"><select class="field" style="max-width:90px" data-goal-currency="${id}">${(session.policy?.currencies ?? ["INR"]).map(c => `<option ${b?.currency === c ? "selected" : ""}>${c}</option>`).join("")}</select><button class="btn secondary compact" data-act="goal-budget" data-id="${id}">Set budget</button></div>
+          <div class="row small"><input class="field" type="number" min="0" style="max-width:110px" data-goal-budget="${id}" placeholder="Budget" aria-label="Budget" value="${b?.amount ?? ""}"><select class="field" style="max-width:90px" data-goal-currency="${id}" aria-label="Currency">${(session.policy?.currencies ?? ["INR"]).map(c => `<option ${b?.currency === c ? "selected" : ""}>${c}</option>`).join("")}</select><button class="btn secondary compact" data-act="goal-budget" data-id="${id}">Set budget</button></div>
           ${g.plan?.length ? "" : `<div class="row small"><button class="btn secondary compact" data-act="goal-plan" data-id="${id}">Plan it — several providers</button><span class="faint">Gemini splits it into steps; each step searches when ready</span></div>`}
-          <div class="row small"><span>Repeat every</span><input class="field" type="number" min="1" max="90" style="max-width:70px" data-goal-every="${id}" value="${g.recurrence?.everyDays ?? 7}"><span>days</span><button class="btn quiet compact" data-act="goal-repeat" data-id="${id}">${g.recurrence && !g.recurrence.stopped ? "Update" : "Repeat"}</button>${g.recurrence && !g.recurrence.stopped ? `<button class="btn quiet compact" data-act="goal-repeat-stop" data-id="${id}">Stop</button>` : ""}</div>
+          <div class="row small"><span>Repeat every</span><input class="field" type="number" min="1" max="90" style="max-width:70px" data-goal-every="${id}" aria-label="Repeat every (days)" value="${g.recurrence?.everyDays ?? 7}"><span>days</span><button class="btn quiet compact" data-act="goal-repeat" data-id="${id}">${g.recurrence && !g.recurrence.stopped ? "Update" : "Repeat"}</button>${g.recurrence && !g.recurrence.stopped ? `<button class="btn quiet compact" data-act="goal-repeat-stop" data-id="${id}">Stop</button>` : ""}</div>
           <label class="row small" style="gap:6px"><input type="checkbox" data-act="goal-aon" data-id="${id}" ${g.allOrNothing ? "checked" : ""}> All or nothing — if one part fails, release the others</label>
           <div class="row"><button class="linkish small faint end" data-act="goal-cancel" data-id="${id}">Cancel goal</button></div></div></details>` : ""}</div>`;
       };
@@ -837,7 +857,7 @@ export const screens = {
         const d = e.negotiation.deal, n = d.items?.length ? d.items.reduce((t, l) => t + l.quantity, 0) : d.terms?.quantity > 1 ? d.terms.quantity : 1;
         const total = e.payment?.cart?.total?.value ?? (d.items?.length ? d.items.reduce((t, l) => t + l.quantity * l.unitPrice, 0) : d.price * n);
         const [st, tone] = STAGE(e), at = new Date((e.agreedAt ?? e.updatedAt) * 1000).toLocaleDateString([], { day: "numeric", month: "short" });
-        const line = `<span class="deal-line">${tag(mineSold ? "Sold" : "Bought", mineSold ? "fresh" : "peri")}<b class="grow">${esc((e.offer?.title ?? e.title).split(" · ")[0])}${n > 1 ? ` × ${n}` : ""}</b><span class="deal-amt">${money(total, null, e.offer.currency)}</span></span>
+        const line = `<span class="deal-line">${tag(mineSold ? "Sold" : "Bought", mineSold ? "fresh" : "peri")}<b class="grow" title="${esc((e.offer?.title ?? e.title).split(" · ")[0])}">${esc((e.offer?.title ?? e.title).split(" · ")[0])}${n > 1 ? ` × ${n}` : ""}</b><span class="deal-amt">${money(total, null, e.offer.currency)}</span></span>
           <span class="deal-line small"><span class="faint">${mineSold ? "to" : "from"} ${esc(them.name)} · ${esc(at)}</span>${tag(st, tone)}</span>`;
         const paid = ["paid", "outside"].includes(e.payment?.status);
         return shownAbove.has(e.id) ? `<button class="deal-row deal-jump" data-act="deal-jump" data-id="${esc(e.id)}" data-anim="d-${esc(e.id)}" data-anim-sig="${esc(st)}" title="Open this deal above">${line}</button>`
@@ -871,7 +891,7 @@ export const screens = {
       const finished = list.filter(e => e.phase === "agreed" && handed(e)), agreedAll = [...toFinish, ...finished];
       const pick = S.radar && ["need", "talks", "agreed", "closed"].includes(S.radar) ? S.radar : need || live.alerts.length ? "need" : talking.length || open.length ? "talks" : agreedAll.length ? "agreed" : "need";
       const counts = { need: need + live.alerts.length, talks: talking.length, agreed: agreedAll.length, closed: gone.length };
-      const radar = `<div class="radar">${[["need", "Awaiting you"], ["talks", "In talks"], ["agreed", "Agreed"], ["closed", "Closed"]].map(([k, t]) => `<button class="${pick === k ? "on" : ""} ${k}" data-act="radar" data-k="${k}"><b>${counts[k]}</b><span>${t}</span></button>`).join("")}</div>`;
+      const radar = `<div class="radar">${[["need", "Awaiting you"], ["talks", "In talks"], ["agreed", "Agreed"], ["closed", "Closed"]].map(([k, t]) => `<button class="${pick === k ? "on" : ""} ${k}${k === "need" && counts.need ? " hot" : ""}" aria-pressed="${pick === k}" data-act="radar" data-k="${k}"><b>${counts[k]}</b><span>${t}</span></button>`).join("")}</div>`;
       // One row: who, what it's about, where it stands — and for a decision, accept / pass right there.
       const decision = e => live.inbox.find(i => i.engagementId === e.id && i.owner === session.uid && ["confirm", "move"].includes(i.kind) && (i.kind === "confirm" || i.counter));
       const rowOf = (e, why) => {
@@ -881,9 +901,9 @@ export const screens = {
             ? `<button class="btn accent compact" data-act="inbox-confirm" data-id="${esc(d.id)}">Accept</button><button class="btn secondary compact" data-act="inbox-walk" data-id="${esc(d.id)}">Pass</button>`
             : `<button class="btn accent compact" data-act="take-price" data-eng="${esc(e.id)}" data-price="${c.price}">Accept ${c.quantity > 1 ? money(c.total, null, cur) : money(c.price, null, cur)}</button><button class="btn secondary compact" data-act="inbox-walk" data-id="${esc(d.id)}">Pass</button>`)
           : waitingOn.has(e.id) ? `<button class="btn accent compact" data-act="eng-open" data-id="${esc(e.id)}">Answer ›</button>` : "";
-        return `<div class="rrow ${waitingOn.has(e.id) ? "needs" : ""}" data-anim="rr-${esc(e.id)}" data-anim-sig="${esc(st)}">
+        return `<div class="rrow ${waitingOn.has(e.id) ? "needs" : ""}" data-engagement-row="${esc(e.id)}" data-anim="rr-${esc(e.id)}" data-anim-sig="${esc(st)}">
           <button class="rrow-main" data-act="eng-open" data-id="${esc(e.id)}">${avatarHTML(them.name, them.handle, 40)}<span class="rrow-text"><b>${esc(them.name)}</b><span class="small muted">${esc(why)}</span></span></button>
-          <span class="rrow-side">${tag(st, tone)}<span class="row" style="gap:6px">${acts}<button class="btn quiet compact" data-act="eng-log" data-id="${esc(e.id)}">Agent log ›</button></span></span></div>`;
+          <span class="rrow-side">${tag(st, tone)}<span class="row" style="gap:10px">${acts}<button class="btn quiet compact" data-act="eng-log" data-id="${esc(e.id)}">Agent log ›</button></span></span></div>`;
       };
       const why = e => { const d = decision(e), n = e.negotiation, item = (e.offer?.title ?? e.title).split(" · ")[0];
         if (d?.kind === "confirm") return `Confirm ${dealAmount(e)} for ${item}`;
@@ -895,7 +915,7 @@ export const screens = {
         return my || their ? `${item} · yours ${my ? money(my.price) : "—"} · theirs ${their ? money(their.price) : "—"}` : `${item} · agents are asking and answering`; };
       const shortName = x => String(x ?? "").split(" ")[0];
       const alertRows = live.alerts.map(a => `<div class="rrow needs"><button class="rrow-main" data-act="alert-ask" data-id="${esc(a.id)}">${avatarHTML(a.name, a.handle, 40)}<span class="rrow-text"><b>${esc(a.name)}</b><span class="small muted">fits “${esc(a.title)}”${a.price ? ` · ${money(a.price, a.unit)}` : ""} · found by your watch</span></span></button>
-          <span class="rrow-side">${tag("New match", "wait")}<span class="row" style="gap:6px"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Pass</button></span></span></div>`).join("");
+          <span class="rrow-side">${tag("New match", "wait")}<span class="row" style="gap:10px"><button class="btn accent compact" data-act="alert-ask" data-id="${esc(a.id)}">Ask their agent</button><button class="btn quiet compact" data-act="alert-done" data-id="${esc(a.id)}">Pass</button></span></span></div>`).join("");
       const background = open.length || live.watches.length ? `<div class="stack" style="gap:6px">${label("In the background", "sq")}${open.map(goalRow).join("")}${live.watches.map(w => `<div class="card slim"><div class="row"><span class="live-dot"></span><b class="small">${esc(w.title)}</b><span class="small faint">live · looking every ${w.every >= 60 ? `${w.every / 60} h` : `${w.every} min`} until ${new Date(w.expires * 1000).toLocaleDateString()}</span>
           <button class="btn quiet compact end" data-act="watch-stop" data-id="${esc(w.id)}">Stop</button></div></div>`).join("")}</div>` : "";
       const body = pick === "need" ? `${alertRows}${waiting.map(e => rowOf(e, why(e))).join("")}` || `<p class="small muted">Nothing waits on you. Your agents ask only when a decision is yours.</p>`
@@ -941,8 +961,8 @@ export const screens = {
           <label class="set-field"><span>Area</span><input class="field" name="area" value="${esc(S.profile.area?.name ?? "")}" placeholder="e.g. Koramangala"></label>
           <button class="btn" data-act="save-profile">Save</button></form>
         <div class="card set-card">
-          <div class="set-row"><div><b>Theme</b><span class="small faint">Auto follows your device</span></div><div class="seg">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" data-act="theme" data-value="${k}">${v}</button>`).join("")}</div></div>
-          <div class="set-row"><div><b>Don't keep history</b><span class="small faint">${S.incognito ? "On — new chats aren't kept or synced, and nothing you say is remembered" : "New chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
+          <div class="set-row"><div><b>Theme</b><span class="small faint">Auto follows your device</span></div><div class="seg">${[["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, v]) => `<button class="${(["light", "dark"].includes(look) ? look : "auto") === k ? "on" : ""}" aria-pressed="${(["light", "dark"].includes(look) ? look : "auto") === k}" data-act="theme" data-value="${k}">${v}</button>`).join("")}</div></div>
+          <div class="set-row"><div><b>Don't keep history</b><span class="small faint">${S.incognito ? "On — new chats aren't kept or synced, and nothing you say is remembered" : "New chats aren't kept and nothing is remembered while it's on"}</span></div><div class="seg">${[["off", "Off"], ["on", "On"]].map(([k, v]) => `<button class="${(S.incognito ? "on" : "off") === k ? "on" : ""}" aria-pressed="${(S.incognito ? "on" : "off") === k}" data-act="incognito" data-value="${k}">${v}</button>`).join("")}</div></div></div>
         <div class="card set-card">${label("Privacy & AI", "sq")}
           <div class="plain-facts">
             <div>${icon("user")}<span><b>Kept in your Collab account.</b> Only you and your agent can read it.</span></div>
@@ -951,7 +971,7 @@ export const screens = {
           </div>
           <details class="more"><summary>Advanced · your own questions about your notes</summary>
             <span class="small muted">When you ask your agent about your own notes ("what's my landlord's number?"), Gemma — Google's open model — can answer on your phone or laptop instead, even offline.</span>
-            <div class="seg wide">${[["device-only", "Only this device"], ["my-devices", "My devices only"], ["cloud", "My devices, else Gemini"], ["cloud-only", "Gemini"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
+            <div class="seg wide">${[["device-only", "Only this device"], ["my-devices", "My devices only"], ["cloud", "My devices, else Gemini"], ["cloud-only", "Gemini"]].map(([v, t]) => `<button class="${engine.mode === v ? "on" : ""}" aria-pressed="${engine.mode === v}" data-act="processing" data-value="${v}">${t}</button>`).join("")}</div>
             <div class="set-row"><div><b>Gemma on this device</b><span class="small faint">${deviceAI()}</span></div></div>
           </details>
 </div>
@@ -1000,7 +1020,7 @@ export const screens = {
         h.toast((el.dataset.value ?? el.value) === "device-only" ? `Your notes are answered by ${MODEL.label} on this device only.` : (el.dataset.value ?? el.value) === "cloud" ? "Your devices first, then Gemini in the cloud if none can." : (el.dataset.value ?? el.value) === "cloud-only" ? "Your notes are answered by Gemini in the cloud." : `Your notes are answered by ${MODEL.label} on your own devices only — never the cloud.`);
         h.paint(); return true;
       }
-      if (a === "device-rename") { await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }
+      if (a === "device-rename") { busy(el, true); await renameDevice(document.querySelector("[data-device-name]")?.value ?? ""); h.toast("Renamed."); h.paint(); return true; }
       if (a === "device-serve") { await setServe(el.checked); h.toast(el.checked ? "This device answers your other devices' questions while Collab is open." : "This device no longer answers for your other devices."); h.paint(); return true; }
       if (a === "device-remove") { busy(el, true); await removeDevice(el.dataset.id).catch(err => h.toast(err.message, null, "error")); h.paint(); return true; }
       if (a === "push-test") {
@@ -1034,6 +1054,7 @@ export const screens = {
       if (a === "clear-device") { if ((await ask({ title: "Delete your chat history on every device?", detail: "Your context, facts, people and deals stay.", ok: "Delete history", danger: true })) !== null) { await api("/api/chats/clear", {}); await local.clear(); location.reload(); } return true; }
       if (a === "sign-out") {
         if (session.user?.isAnonymous && (await ask({ title: "Sign out of this guest account?", detail: "Signing out loses this identity for good. Sign in with Google first to keep it.", ok: "Sign out anyway", danger: true })) === null) return true;
+        try { localStorage.removeItem(`collab.me.${session.uid}`); } catch {}
         await session.signOut(); return true;
       }
     },

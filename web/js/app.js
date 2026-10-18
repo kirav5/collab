@@ -4,7 +4,7 @@
 // who sees what and what was shared (Privacy), and Settings.
 import { shouldReload } from "./version.js";
 import { api, cached, insightsLines, ios, onFreshRead, session, signIn, standalone } from "./api.js";
-import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
+import { answerBrief, applyRecalled, autonomyOf, cachedNotes, chat, detectEngine, engine, itemOf, offerReply, prefetchDraft, refreshNotesCache, rememberAll, startDevice, drafts } from "./agent.js";
 import { onDevices, refreshServing, startDevices } from "./mydevices.js";
 import { warmGemma } from "./gemma.js";
 import { replayOutbox } from "./outbox.js";
@@ -13,7 +13,7 @@ import { live, needsYou, needsYouCount, onChange, refresh, start } from "./live.
 import { checkoutHTML, dealAmount, priceChecks, priceKey, defaultHours, engagementCard, hoursOk, messageHTML, nearbyHTML, receiptHTML, rulesList, setNotesHere, storeCard } from "./cards.js";
 import { gpay, openGooglePay, preload as preloadGooglePay } from "./gpay.js";
 import { passHTML, passKind, passQR } from "./pass.js";
-import { clearPanel, closePanel, openPanel, panelDetail, startPanel } from "./panel.js";
+import { clearPanel, closePanel, openPanel as showPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
 import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon } from "./ui.js";
@@ -43,13 +43,13 @@ async function setup() {
         : `<button type="button" class="btn google" id="google"><svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg> Continue with Google</button>
            <p class="small faint">Keeps your handle, context and deals on every device. Already have Collab? This signs you back in.</p>
            <div class="or"><span>or start as a guest</span></div>`) : ""}
-      <input class="field" name="name" placeholder="Your name" required maxlength="60" autocomplete="given-name" value="${esc(session.user?.displayName ?? "")}">
+      <label class="set-field"><span>Your name</span><input class="field" name="name" required maxlength="60" autocomplete="given-name" value="${esc(session.user?.displayName ?? "")}"></label>
       <details class="more"><summary>Your Collab address (optional)</summary>
         <p class="small muted">Other people's agents reach yours at this handle. Leave it empty and one is made from your name.</p>
-        <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" minlength="3" maxlength="24" autocapitalize="none" value="${esc(suggest.length >= 3 ? suggest : "")}"></div></details>
-      <input class="field" name="area" placeholder="Your area (e.g. Indiranagar, Bengaluru)" value="Bengaluru">
+        <div class="row" style="flex-wrap:nowrap"><span class="faint">@</span><input class="field" name="handle" placeholder="handle" aria-label="Your Collab handle" minlength="3" maxlength="24" autocapitalize="none" value="${esc(suggest.length >= 3 ? suggest : "")}"></div></details>
+      <label class="set-field"><span>Your area</span><input class="field" name="area" placeholder="e.g. Indiranagar, Bengaluru" value="Bengaluru"></label>
       <p class="small faint">Only a neighbourhood is ever used — never your exact location.</p>
-      <button class="btn accent">Start</button><p class="small" id="setup-err" style="color:var(--danger)"></p></form></div>`;
+      <button class="btn accent">Start</button><p class="small" id="setup-err" role="alert" style="color:var(--danger)"></p></form></div>`;
     // A QR visitor sees whose agent this is (public agent card: no sign-in needed), and their details load meanwhile.
     if (to) {
       fetch(`/a2a/${encodeURIComponent(to)}/.well-known/agent-card.json`).then(r => (r.ok ? r.json() : null)).then(card => {
@@ -93,7 +93,11 @@ async function setup() {
         }
         session.track("sign_up", { method: session.user?.isAnonymous ? "guest" : "google" });
         resolve();
-      } catch (err) { $("#setup-err").textContent = err.message; busy(b, false); }
+      } catch (err) {
+        $("#setup-err").textContent = err.message; busy(b, false);
+        // A handle that's taken (or not allowed) is that field's problem: it's opened, marked and focused.
+        if (/taken|handle/i.test(err.message)) { const h = e.target.elements.handle; h.closest("details").open = true; h.setAttribute("aria-invalid", "true"); h.setAttribute("aria-describedby", "setup-err"); h.focus(); }
+      }
     };
   });
 }
@@ -110,49 +114,79 @@ async function boot() {
   refreshNotesCache();
   loadPolicy();
   // Back online: what was saved on this device while offline goes up (notes, chats), then everything refreshes.
-  const catchUp = async () => { const n = await replayOutbox(api).catch(() => 0); if (n) toast(`Synced ${n} change${n === 1 ? "" : "s"} made offline.`); refreshNotesCache(); syncChats(); };
+  const catchUp = async (chats = true) => { const n = await replayOutbox(api).catch(() => 0); if (n) toast(`Synced ${n} change${n === 1 ? "" : "s"} made offline.`); refreshNotesCache(); if (chats) syncChats(); };
   addEventListener("online", () => { toast("Back online — syncing what you did offline."); catchUp().then(() => paint()); });
   addEventListener("offline", () => { toast(engine.here ? "Offline — Gemma answers questions about your notes on this device. New notes are saved here and sync later." : "Offline — showing what's saved on this device. New notes sync when you're back."); paint(); });
-  if (navigator.onLine) catchUp();
+  // The chats sync once, below, after this device's own are loaded.
+  if (navigator.onLine) catchUp(false);
   S.sessions = (await local.all("sessions")).map(s => ({ ...s, persisted: true })).sort((a, b) => b.updatedAt - a.updatedAt);
   S.current = S.sessions[0]?.id ?? null;
   syncChats();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) syncChats(); });
   root.innerHTML = `<div class="app" id="app">
+    <button type="button" class="btn accent compact" id="skip" data-act="skip" style="position:fixed;left:8px;top:-60px;z-index:70">Skip to message box</button>
     <aside class="sidebar" id="sidebar"></aside>
-    <section class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
+    <main class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><label class="mic" for="photo-in" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></label><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
-        <div class="row" id="composer-note"></div></form></div></section>
-      <aside class="panel" id="panel" hidden><div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize" tabindex="0" title="Drag to resize · double-click to reset"></div><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">✕</button></div><div class="content" id="panel-body"></div></aside></div>`;
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><button type="button" class="mic" data-act="photo" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></button><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="row" id="composer-note"></div></form></div></main>
+      <aside class="panel" id="panel" hidden><div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize" tabindex="0" title="Drag to resize · double-click to reset"></div><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">${icon("x", 20)}</button></div><div class="content" id="panel-body"></div></aside></div>`;
   startPanel(paint);
   startResizer();
-  // Sending stops the microphone first, so nothing it still hears is written back into the cleared box.
-  $("#compose").onsubmit = e => { e.preventDefault(); const text = $("#input").value; stopVoice(); $("#input").value = ""; send(text); };
+  // Off-screen until a keyboard reaches it: past the menu and the chats, straight to the message box.
+  const skip = $("#skip");
+  skip.onfocus = () => { skip.style.top = "8px"; }; skip.onblur = () => { skip.style.top = "-60px"; };
+  // Sending stops the microphone first, so nothing it still hears is written back into the cleared box. While the agent
+  // is still answering, what's typed stays in the box (send is disabled meanwhile, so Enter doesn't submit either).
+  $("#compose").onsubmit = e => { e.preventDefault(); if (S.sending) return toast("Your agent is still answering — send this in a moment."); const text = $("#input").value; stopVoice(); $("#input").value = ""; send(text); };
   voiceInput();
   $("#photo-in").onchange = e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) sellFromPhoto(f); };
   // Google Pay opens inside the tap, before anything else runs (see openGooglePay); the rest of the payment follows.
   document.addEventListener("click", e => {
     const el = e.target.closest?.('[data-act="eng-pay"][data-gpay]');
-    if (!el || el.disabled) return;
+    if (!el || el.disabled || tapping.has(tapKey(el))) return;
     e.stopPropagation(); e.preventDefault();
+    const k = tapKey(el);
+    tapping.set(k, el);
     const sheet = openGooglePay(Number(el.dataset.amount), el.dataset.item ?? "Collab", el.dataset.currency ?? "INR");
-    sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message, null, "error"));
+    sheet.then(googlePay => googlePay && payDeal(el, googlePay)).catch(err => toast(err.message, null, "error")).finally(() => untap(k));
   }, true);
   // The menu (phones) closes on a tap anywhere outside it, and that tap does nothing else; Escape closes it too.
   document.addEventListener("click", e => {
     const app = $("#app");
     if (!app?.classList.contains("nav-open") || e.target.closest?.(".sidebar, [data-act=\"nav\"]")) return;
     e.stopPropagation(); e.preventDefault();
-    app.classList.remove("nav-open");
+    setNav(false);
   }, true);
-  document.addEventListener("keydown", e => { if (e.key === "Escape") $("#app")?.classList.remove("nav-open"); });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    setNav(false, true);
+    // Escape closed what was open beside (panel.js): its entry in the history goes too.
+    if (!panelDetail() && history.state?.detail) history.back();
+  });
   document.addEventListener("click", onClick);
   document.addEventListener("change", onEdit);
   document.addEventListener("input", onEdit);
   document.addEventListener("keydown", e => {
     const f = e.target.dataset?.followup;
     if (f && e.key === "Enter") { e.preventDefault(); document.querySelector(`[data-act="eng-ask"][data-id="${CSS.escape(f)}"]`)?.click(); }
+  });
+  // Ahead of a tap (a pointer over it, focus on it, a finger down): a screen's reads, or a start idea's request — its
+  // listing's category is known, so the draft starts before it's sent.
+  // Reads are free, so a hover warms a screen; a draft costs model calls, so only a finger or a press on an idea starts it.
+  for (const ev of ["pointerover", "focusin", "touchstart", "pointerdown"]) document.addEventListener(ev, e => {
+    const b = e.target.closest?.('[data-act="screen"][data-screen], .start-ideas [data-category]');
+    if (b?.dataset.screen) warm(b.dataset.screen);
+    else if (b && (ev === "touchstart" || ev === "pointerdown")) prefetchDraft(b.dataset.text.trim(), S.profile?.area ?? null, b.dataset.category);
+  }, { passive: true });
+  (window.requestIdleCallback ?? (f => setTimeout(f, 2000)))(() => Object.keys(WARM).forEach(warm), { timeout: 5000 });
+  // Back (the browser's, Android's, a swipe) closes what's open instead of leaving Collab; see openScreen.
+  addEventListener("popstate", e => {
+    setNav(false);
+    if (unwinding) { unwinding = false; remember(false); return; }
+    const st = e.state ?? {}, want = screens[st.screen] ? st.screen : "chat";
+    if (want !== S.screen) openScreen(want, null, { pop: true, keepChat: true });
+    else if (panelDetail() && !st.detail) closePanel();
   });
   start(openScreen);
   startDevice();
@@ -165,37 +199,40 @@ async function boot() {
 
 // MARK: - Painting
 
-function paint() { paintSidebar(); paintTop(); paintContent(); }
+/** `keepChat`: the chat stays as it is when its HTML hasn't changed (opening a screen beside it doesn't redraw it). */
+function paint(o = {}) { paintSidebar(); paintTop(); paintContent(false, o); keepProfile(); }
 
 function paintSidebar() {
   const el = $("#sidebar");
   if (!el) return;
   const n = needsYouCount();
   const groups = groupSessions(S.sessions);
+  // On a wide screen the chat is always shown beside what's open, so the open chat is marked there too.
+  const chatShown = S.screen === "chat" || sideBySide();
   const html = `<header>${brand()}<span class="end"><button class="engine-chip ${!navigator.onLine ? "offline" : engine.here ? "peri" : "accent"}" data-act="screen" data-screen="settings"
       title="Which AI runs your agent — tap for details">${!navigator.onLine ? `● Offline${engine.here ? " · Gemma on this device" : ""}` : `✦ ${engine.here && engine.mode !== "cloud-only" ? "Gemma · on this device" : "Powered by Gemini"}`}</button></span></header>
     <div class="scroll">
       ${n ? `<button class="btn accent needs" data-act="screen" data-screen="requests"><span class="dot pulse"></span> ${n} need${n === 1 ? "s" : ""} you »</button>` : ""}
       <button class="btn" data-act="new-chat">+ New chat</button>
-      <div class="nav">
+      <nav class="nav" aria-label="Screens">
         ${navRow("requests", icon("activity"), "Activity", n ? String(n) : "")}
         ${navRow("receipts", icon("receipt"), "Receipts", "")}
         ${navRow("people", icon("card"), "My card", "")}
         ${navRow("context", icon("user"), "About me", "")}
         ${navRow("sharing", icon("shield"), "Privacy", "")}
         ${navRow("settings", icon("settings"), "Settings", "")}
-      </div>
-      ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<button class="session ${S.screen === "chat" && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
+      </nav>
+      ${groups.map(g => `<div class="stack" style="gap:4px">${label(g.title)}${g.items.map(s => `<div class="session-row"><button class="session ${chatShown && s.id === S.current ? "on" : ""}" data-act="open-session" data-id="${esc(s.id)}" title="${esc(s.title)}"${chatShown && s.id === S.current ? ' aria-current="true"' : ""}>${esc(s.title)}</button><button class="session-del" data-act="delete-session" data-id="${esc(s.id)}" aria-label="Delete chat “${esc(s.title)}”" title="Delete chat">${icon("trash", 16)}</button></div>`).join("")}</div>`).join("") || `<p class="small faint">No chats yet. Every chat is kept here, on this device.</p>`}
     </div>
     <footer class="side-foot">
       <button class="linkish small" data-act="agent-card" style="text-align:left">@${esc(S.profile.handle)} · agent card ›</button>
       ${session.google && session.user?.isAnonymous ? `<button class="btn quiet compact" data-act="screen" data-screen="settings">Guest · keep it with Google</button>` : session.user?.email ? `<span class="small faint">${esc(session.user.email)}</span>` : ""}
       ${!standalone() ? `<button class="btn secondary compact" data-act="install">Install app</button>` : ""}
     </footer>`;
-  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  if (el.dataset.html !== html) { const at = focusKey(el); el.innerHTML = html; el.dataset.html = html; refocus(at); }
 }
 
-const navRow = (screen, ico, title, trail) => `<button class="${S.screen === screen ? "on" : ""}" data-act="screen" data-screen="${screen}"><span class="ico">${ico}</span>${title}<span class="trail">${esc(trail)}</span></button>`;
+const navRow = (screen, ico, title, trail) => `<button class="${S.screen === screen ? "on" : ""}" data-act="screen" data-screen="${screen}"${S.screen === screen ? ' aria-current="page"' : ""}><span class="ico">${ico}</span>${title}<span class="trail">${esc(trail)}</span></button>`;
 
 function groupSessions(list) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -209,20 +246,82 @@ function groupSessions(list) {
 function paintTop() {
   const cur = S.sessions.find(s => s.id === S.current);
   const titles = { receipts: "Receipts", context: "About me", people: "My card", sharing: "Privacy", requests: "Activity", activity: "What your agent shared", settings: "Settings", communities: "Communities" };
-  const detail = panelDetail();
-  $("#topbar").innerHTML = `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(cur?.title ?? "New chat", "sq ink")}
-    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="New chats aren't kept; nothing is remembered">◐ Not kept</span> ` : ""}@${esc(S.profile.handle)}</span>`;
+  const detail = panelDetail(), app = $("#app"), content = $("#content");
+  // Written only when changed: a live repaint keeps the button that has focus (Back, the menu) in place.
+  const setHTML = (n, h) => { if (n.dataset.html !== h) { n.innerHTML = h; n.dataset.html = h; } };
+  const menu = `<button class="btn quiet compact menu" data-act="nav" aria-label="Menu" aria-controls="sidebar" aria-expanded="${app.classList.contains("nav-open")}">${icon("menu")}</button>`;
+  setHTML($("#topbar"), `${menu}${label(cur?.title ?? "New chat", "sq ink")}
+    <span class="end small faint">${S.incognito ? `<span class="tag ink" title="New chats aren't kept; nothing is remembered">◐ Not kept</span> ` : ""}<span class="handle">@${esc(S.profile.handle)}</span></span>`);
   // The right panel shows a screen, or something opened from it (a deal, a pass, a log…) with a way back.
-  $("#panel-title").innerHTML = detail ? `<button class="btn quiet compact" data-act="panel-close">‹ ${S.screen === "chat" ? "Close" : "Back"}</button>${label(detail.title, "sq ink")}`
-    : S.screen === "chat" ? "" : `<button class="btn quiet compact menu" data-act="nav">☰</button>${label(titles[S.screen] ?? "", "sq ink")}`;
-  $("#app").classList.toggle("split", S.screen !== "chat" || !!detail);
+  setHTML($("#panel-title"), detail ? `<button class="btn quiet compact" data-act="panel-close">‹ ${S.screen === "chat" ? "Close" : "Back"}</button>${label(detail.title, "sq ink")}`
+    : S.screen === "chat" ? "" : `${menu}${label(titles[S.screen] ?? "", "sq ink")}`);
+  // On a phone what's open covers the chat: where it was read is kept, and it opens there again.
+  const split = S.screen !== "chat" || !!detail;
+  if (split && !sideBySide() && !app.classList.contains("split")) S.chatTop = content.scrollTop;
+  app.classList.toggle("split", split);
+  if (!split && S.chatTop != null) content.scrollTop = S.chatTop;
   $("#panel").hidden = S.screen === "chat" && !detail;
   $("#input").placeholder = cur?.to ? `Ask ${cur.toName ?? "their"}'s agent…` : "Ask, find or offer anything…";
-  $("#composer-note").innerHTML = label("Your agent answers from your context · never your limits or contacts");
+  setHTML($("#composer-note"), label("Your agent answers from your context · never your limits or contacts"));
 }
 
-let painting = false, lastHTML = "", lastChat = undefined, lastCount = 0;
+/** The menu (phones): open or shut, and said so on both of its buttons. */
+function setNav(open, back = false) {
+  const was = $("#app")?.classList.contains("nav-open");
+  $("#app")?.classList.toggle("nav-open", open);
+  document.querySelectorAll('[data-act="nav"]').forEach(b => b.setAttribute("aria-expanded", String(open)));
+  // Only on a phone is the menu a drawer over the page: what's behind it can't be reached until it closes.
+  const drawer = !sideBySide() && matchMedia("(max-width: 820px)").matches, m = $(".main"), p = $("#panel");
+  if (m) m.inert = open && drawer; if (p) p.inert = open && drawer;
+  if (open && !was) $("#sidebar .nav button")?.focus({ preventScroll: true });
+  else if (!open && was && back) $('#topbar [data-act="nav"]')?.focus({ preventScroll: true });
+}
+
+/** What has focus, as a way to find it again once a repaint has replaced it — so a live update doesn't send a keyboard
+ *  user back to the top of the page. Found only when exactly one element matches. */
+const FOCUS_KEYS = ["act", "id", "eng", "msg", "card", "j", "k", "key", "val", "screen", "edit", "day", "pick"];
+function focusKey(...roots) {
+  const f = document.activeElement, root = roots.find(r => r && r !== f && r.contains(f));
+  if (!root) return null;
+  const sel = FOCUS_KEYS.filter(k => f.dataset?.[k] != null).map(k => `[data-${k}="${CSS.escape(f.dataset[k])}"]`).join("");
+  return sel ? { root, sel: `${f.localName}${sel}` } : null;
+}
+function refocus(at) {
+  if (!at || (document.activeElement && document.activeElement !== document.body)) return;
+  const m = at.root.querySelectorAll(at.sel);
+  if (m.length === 1) m[0].focus({ preventScroll: true });
+}
+
+/** Which sections were open (a deal row, a card's Details), so a repaint opens them again instead of folding them. Keyed
+ *  by the row itself, or by the card it's in and its summary (counts in it may change). */
+const openKey = d => d.dataset.anim ?? `${d.parentElement?.closest("[data-anim]")?.dataset.anim ?? ""}|${(d.querySelector(":scope > summary")?.textContent ?? "").trim().replace(/\d+/g, "#")}`;
+function keepOpen(root) {
+  const open = new Set([...root.querySelectorAll("details[open]")].map(openKey));
+  return () => { if (open.size) for (const d of root.querySelectorAll("details:not([open])")) if (open.has(openKey(d))) d.open = true; };
+}
+
+/** Taps still being handled, by what they act on: a second tap on the same thing does nothing, and a repaint meanwhile
+ *  draws its button busy again rather than a fresh one to tap. */
+const tapping = new Map();
+const tapKey = b => ["act", "id", "eng", "msg", "card", "j", "k", "key", "val", "slot", "screen"].map(k => b.dataset[k] ?? "").join("|");
+function reBusy(root) {
+  if (!tapping.size) return;
+  for (const b of root.querySelectorAll("[data-act]")) {
+    const was = tapping.get(tapKey(b));
+    if (!was || was === b || !was.disabled || b.disabled) continue;
+    b.dataset.label = b.innerHTML; b.innerHTML = was.innerHTML; b.disabled = true; b.setAttribute("aria-busy", "true"); b.dataset.rebusy = "";
+  }
+}
+function untap(k) {
+  tapping.delete(k);
+  for (const b of document.querySelectorAll("[data-rebusy]")) if (tapKey(b) === k) { delete b.dataset.rebusy; busy(b, false); }
+}
+
+let painting = false, lastChatHTML = "", lastSideHTML = "", lastChat = undefined, lastCount = 0;
 let again = null;
+/** What the panel showed last (a screen's name, or the detail itself), and where each screen was scrolled to. */
+let lastPanel = null;
+const panelScroll = new Map();
 // A live repaint while a finger or mouse is down would replace the button being pressed, and the tap would be lost.
 let pointerDown = false, afterPointer = false;
 document.addEventListener("pointerdown", () => { pointerDown = true; }, true);
@@ -242,7 +341,7 @@ function animate(root, opened) {
   }
 }
 
-async function paintContent(soft = false) {
+async function paintContent(soft = false, o = {}) {
   const el = $("#content"), panel = $("#panel-body");
   if (!el) return;
   // One paint at a time; a paint asked for meanwhile runs right after (a hard one wins over a soft one).
@@ -252,33 +351,47 @@ async function paintContent(soft = false) {
   if (soft && pointerDown) { afterPointer = true; return; }
   painting = true;
   try {
-    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
-    const detail = panelDetail();
-    // The chat and the screen beside it are drawn together; a screen that's slow to load (it reads from the server)
-    // shows its frame at once when it was just opened, and fills in when its data arrives.
-    const chatP = chatHTML().then(h => `<div class="inner">${h}</div>`);
+    const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60, inChat = el.contains(document.activeElement);
+    const detail = panelDetail(), shows = detail ?? S.screen, panelTop = panel.scrollTop, at = focusKey(el, panel);
+    // The chat and the screen beside it are each drawn as soon as they're ready (the chat never waits for a screen's
+    // reads), and only when they changed — nothing flickers, and nothing under the pointer is replaced. A screen that's
+    // slow to load shows its frame at once when it was just opened, and fills in when its data arrives.
+    let changed = false;
+    const chatDone = chatHTML().then(h => `<div class="inner">${h}</div>`).then(chat => {
+      const chatChanged = chat !== lastChatHTML;
+      if (chatChanged || (!soft && !o.keepChat)) { const reopen = keepOpen(el); el.innerHTML = chat; lastChatHTML = chat; reopen(); reBusy(el); changed = true; }
+      if (S.chatTop != null && !$("#app").classList.contains("split")) { el.scrollTop = S.chatTop; S.chatTop = null; }
+      // The chat follows a new message (or a newly opened chat) to the bottom; a card being filled in, answered or
+      // updated stays where the owner is looking.
+      const cur = S.sessions.find(x => x.id === S.current), count = cur?.messages?.length ?? 0, newChat = S.current !== lastChat;
+      if (chatChanged && (newChat || count > lastCount || (nearBottom && soft && count === lastCount && !inChat))) el.scrollTop = el.scrollHeight;
+      lastChat = S.current; lastCount = count;
+    });
     const sideP = detail ? Promise.resolve(`<div class="inner panel-body">${detail.render ? detail.render() : detail.html}</div>`)
       : S.screen === "chat" ? Promise.resolve("") : screens[S.screen].html(S).then(h => `<div class="inner">${h}</div>`);
     if (!soft && !detail && S.screen !== "chat" && S.screen !== lastScreen
       && !(await Promise.race([sideP.then(() => true, () => true), new Promise(r => setTimeout(() => r(false), 120))]))) {
-      panel.innerHTML = `<div class="inner">${screenLoading(S.screen)}</div>`; lastHTML = "";
+      panel.innerHTML = `<div class="inner">${screenLoading(S.screen)}</div>`; lastSideHTML = "";
     }
-    const [chat, side] = await Promise.all([chatP, sideP]);
-    const html = chat + "\u0000" + side;
-    // Nothing changed: leave the page as it is (no flicker, nothing under the pointer replaced).
-    if (soft && html === lastHTML) return;
-    const chatChanged = chat !== lastHTML.split("\u0000")[0];
-    lastHTML = html;
-    if (chatChanged || !soft) el.innerHTML = chat;
-    panel.innerHTML = side;
+    const sideDone = sideP.then(side => {
+      if (soft && side === lastSideHTML) return;
+      const reopen = keepOpen(panel); panel.innerHTML = side; lastSideHTML = side; reopen(); reBusy(panel); changed = true;
+    });
+    await Promise.all([chatDone, sideDone]);
+    if (soft && !changed) return;
+    refocus(at);
     animate(S.screen === "chat" ? el : panel, S.screen !== lastScreen && !panelDetail()); lastScreen = S.screen;
-    // The chat follows a new message (or a newly opened chat) to the bottom; a card being filled in, answered or updated
-    // stays where the owner is looking.
-    const cur = S.sessions.find(x => x.id === S.current), count = cur?.messages?.length ?? 0, newChat = S.current !== lastChat;
-    if (chatChanged && (newChat || count > lastCount || (nearBottom && soft && count === lastCount && !el.contains(document.activeElement)))) el.scrollTop = el.scrollHeight;
-    lastChat = S.current; lastCount = count;
-    if (!soft && (S.screen !== "chat" || panelDetail())) panel.scrollTop = 0;
-    if (S.focus) { document.querySelector(`[data-engagement="${CSS.escape(S.focus)}"]`)?.scrollIntoView({ block: "center" }); S.focus = null; }
+    // Something new in the panel starts at its top; a screen shown again (Back from a deal, a repaint) is where it was.
+    if (shows !== lastPanel) {
+      if (typeof lastPanel === "string") panelScroll.set(lastPanel, panelTop);
+      panel.scrollTop = detail ? 0 : panelScroll.get(shows) ?? 0; lastPanel = shows;
+    }
+    if (S.focus) {
+      const sel = `[data-engagement-row="${CSS.escape(S.focus)}"], [data-engagement="${CSS.escape(S.focus)}"]`, t = (S.screen === "chat" ? el : panel).querySelector(sel);
+      t?.closest("details")?.setAttribute("open", ""); t?.scrollIntoView({ block: "center" }); S.focus = null;
+    }
+    // A screen just opened: focus goes to its heading, so a screen reader starts there and Tab goes on from it.
+    if (!soft && S.focusHeading) { S.focusHeading = false; const h = panel.querySelector("h1, h2.headline"); if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); } }
   } finally {
     painting = false;
     if (again !== null) { const next = again; again = null; paintContent(next); }
@@ -336,9 +449,9 @@ function emptyChat() {
   return `${howItWorks()}<div class="start">
     <span class="label sq">step 1 of 2 · say it in your words</span>
     <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
-    <h1 class="headline">What are you looking for right now?</h1>
+    <h2 class="headline">What are you looking for right now?</h2>
     <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
-    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="send-text" data-text="${esc(i.text)}" title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
+    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="send-text" data-text="${esc(i.text)}"${i.category ? ` data-category="${esc(i.category)}"` : ""} title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
     ${privacyCard()}</div>`;
 }
 
@@ -557,8 +670,8 @@ function showEngagement(id) {
   const e = live.engagements.get(id);
   if (!e) return toast("That conversation isn't loaded yet.");
   const them = e.requester.uid === session.uid ? e.provider : e.requester;
-  S.panelEng = id; S.panelLog = null;
-  openPanel({ title: `Your agent ⇄ ${them.name}'s agent`, render: () => { const x = live.engagements.get(id); return x ? `<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}` : ""; } });
+  S.panelLog = null;
+  openPanel({ engagement: id, title: `Your agent ⇄ ${them.name}'s agent`, render:() => { const x = live.engagements.get(id); return x ? `<span class="small faint">The two agents work it out between them. This isn't a chat with ${esc(them.name)}.</span>${engagementCard(x, x.id)}` : ""; } });
 }
 
 /** What the agents said, as a stream: one conversation, or every conversation, newest last, with filters. */
@@ -643,7 +756,7 @@ async function showAgentCard() {
     ${offers.length ? `${label(`On offer · ${offers.length}`, "sq")}<div class="card slim">${offers.slice(0, 8).map(f => `<div class="ac-offer"><b class="small">${esc(f.offer.title.split(" · ")[0].replace(/\bI(phone|pad)\b/gi, (_, w) => "i" + w[0].toUpperCase() + w.slice(1).toLowerCase()))}</b><span class="small">${f.offer.price?.amount != null ? money(f.offer.price.amount, f.offer.price.period, f.offer.price.currency) : ""}</span></div>`).join("")}</div>` : ""}
     ${examples.length ? `${label("Other agents can ask", "sq")}<div class="ac-caps">${examples.slice(0, 4).map(x => `<span>“${esc(x)}”</span>`).join("")}</div>` : ""}
     <div class="card slim">${label("Never shares", "peri")}<span class="small muted">Your lowest price or budget, money in your private notes, your phone, e-mail or exact address, and any note you set to “never use”.</span></div>
-    <details class="more"><summary>For developers · agent card JSON</summary><span class="small faint">Any A2A agent reads it at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
+    <details class="more"><summary>For developers · machine-readable card</summary><span class="small faint">This is the same card in the format other AI agents read (A2A), to learn what yours does and how to reach it. You don't need it to use Collab. It's published at <a href="${esc(url)}" target="_blank" rel="noopener">this address</a>.</span><pre>${esc(JSON.stringify(c, null, 2))}</pre></details>` });
 }
 
 async function openDirect(handle) {
@@ -704,13 +817,19 @@ async function sendDirect(cur, text, offerFactId = null) {
 /** Rules read from words in a conversation, waiting for the owner's confirmation (by conversation). */
 const pendingRules = new Map();
 
-/** The AP2 payment step (after Google Pay's sheet, when used). One idempotency key per button: a retry can't pay twice. */
+/** A conversation as the server just returned it, drawn at once (as a live update is) — not after a full refresh. */
+function applied(e) { live.engagements.set(e.id, e); for (const fn of live.listeners) fn(); }
+
+/** The AP2 payment step (after Google Pay's sheet, when used). One idempotency key per deal, kept however often its
+ *  button is redrawn: a second tap or a retry can't pay twice. */
+const payKeys = new Map();
 async function payDeal(el, googlePay, a = "eng-pay") {
   busy(el, true, a === "eng-pay" ? "Paying" : "Saving");
   try {
-    const body = a === "eng-pay" ? { idempotencyKey: el.dataset.key ??= crypto.randomUUID(), ...(googlePay ? { googlePay } : {}) } : {};
+    if (!payKeys.has(el.dataset.id)) payKeys.set(el.dataset.id, crypto.randomUUID());
+    const body = a === "eng-pay" ? { idempotencyKey: payKeys.get(el.dataset.id), ...(googlePay ? { googlePay } : {}) } : {};
     const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-pay" ? "pay" : "paid-outside"}`, body);
-    live.engagements.set(e.id, e);
+    applied(e);
     session.track(a === "eng-pay" ? "paid_test" : "paid_outside", { google_pay: !!googlePay });
     toast(a === "eng-pay" ? `Paid${googlePay ? " with Google Pay" : ""}. Your pass is ready.` : "Marked as paid outside the app.");
   } catch (err) { toast(err.message, null, "error"); busy(el, false); }
@@ -761,10 +880,10 @@ async function orderFromCard(a, el) {
   if (qtyInput) qtyInput.value = String(body.quantity); // what was sent is what the card shows
   if (item.dataset.slot) body.slotId = item.dataset.slot;
   if (a === "store-offer-send") {
-    const v = Number(item.querySelector("[data-offer-price]")?.value), max = Number(item.querySelector("[data-offer-max]")?.value);
-    if (!(v > 0)) return toast("Type the price you'd like to pay.");
+    const vIn = item.querySelector("[data-offer-price]"), maxIn = item.querySelector("[data-offer-max]"), v = Number(vIn?.value), max = Number(maxIn?.value);
+    if (!(v > 0)) return fieldError(vIn, "Type the price you'd like to pay.");
     body.price = v;
-    if (max > 0) { if (max < v) return toast("“Up to” is the most you'd pay — at least your offer."); body.max = max; }
+    if (max > 0) { if (max < v) return fieldError(maxIn, "“Up to” is the most you'd pay — at least your offer."); body.max = max; }
   }
   busy(el, true, "Sending");
   try {
@@ -810,8 +929,11 @@ function upload(s) {
   pending.set(s.id, setTimeout(() => { pending.delete(s.id); if (owner === session.uid) api("/api/chats", { chat: s }).catch(() => {}); }, 1500));
 }
 
-/** Brings in chats saved from other devices and sends up the ones only this device has (older chats included). */
-async function syncChats() {
+/** Brings in chats saved from other devices and sends up the ones only this device has (older chats included). One at
+ *  a time: asked again while it runs (start-up, coming back to the tab), it's the same sync. */
+let syncing = null;
+function syncChats() { return (syncing ??= pullChats().finally(() => { syncing = null; })); }
+async function pullChats() {
   const owner = session.uid;
   const remote = await api("/api/chats").catch(() => null);
   if (!remote || owner !== session.uid) return;
@@ -819,6 +941,8 @@ async function syncChats() {
   let changed = false;
   for (const r of remote) {
     const l = mine.get(r.id);
+    // Deleted on another device: gone here too.
+    if (r.deleted) { if (l && r.updatedAt >= l.updatedAt) { await local.del("sessions", r.id); mine.delete(r.id); changed = true; if (S.current === r.id) S.current = null; } continue; }
     if (!l || r.updatedAt > l.updatedAt) { await local.put("sessions", r); mine.set(r.id, r); changed = true; }
   }
   const there = new Map(remote.map(r => [r.id, r.updatedAt]));
@@ -830,37 +954,40 @@ async function syncChats() {
   }
 }
 
-async function send(text, offerFactId = null) {
+/** `hint`: a start idea's { category } (the listing it names), so drafting the request skips routing and classifying. */
+async function send(text, offerFactId = null, hint = null) {
   text = text.trim();
   if (!text || S.sending) return;
   S.sending = true;
-  $("#input").value = "";
-  let cur = S.sessions.find(s => s.id === S.current);
-  if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
-  const user = { id: id(), role: "user", text, at: now() };
-  const reply = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", cards: [] };
-  cur.messages.push(user, reply);
-  await saveSession(cur);
-  toChat();
-  paint();
+  $("#send").disabled = true;
   try {
-    const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
-    // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
-    const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
-    // "Say the area you mean" was the last reply: a short answer ("delhi") completes that request.
-    const asked = !cur.to && S.pendingAsk && text.split(/\s+/).length <= 4 && !/\b(need|want|find|remember|sell|book)\b/i.test(text);
-    if (asked) { text = `${S.pendingAsk} in ${text}`; user.text = text; }
-    S.pendingAsk = null;
-    const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open);
-    if (r.askArea) S.pendingAsk = r.askArea;
-    Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
-  } catch (e) {
-    // A refusal (not enough in stock, over budget…) is said as it is; when there's an offer that fits, it's one tap away.
-    Object.assign(reply, { pending: null, text: e.status && e.status < 500 ? e.message : `Something went wrong: ${e.message}`,
-      ...(e.data?.suggest ? { cards: [{ type: "suggest", options: [{ label: e.data.suggest, text: e.data.suggest }], hint: "Sends it as your offer." }] } : {}) });
-  }
-  await saveSession(cur);
-  S.sending = false;
+    $("#input").value = "";
+    let cur = S.sessions.find(s => s.id === S.current);
+    if (!cur) { cur = { id: id(), title: text.slice(0, 48), messages: [], updatedAt: now() }; S.current = cur.id; }
+    const user = { id: id(), role: "user", text, at: now() };
+    const reply = { id: id(), role: "agent", text: "", at: now(), pending: "calibrating", cards: [] };
+    cur.messages.push(user, reply);
+    await saveSession(cur);
+    toChat();
+    paint();
+    try {
+      const recent = cur.messages.filter(m => m.role === "user").slice(-5, -1).map(m => m.text);
+      // The latest request in this chat, so "try a wider area" or "up to 600" changes it.
+      const open = cur.messages.slice(0, -2).flatMap(m => (m.cards ?? []).filter(c => c.type === "brief" && c.draft)).at(-1) ?? null;
+      // "Say the area you mean" was the last reply: a short answer ("delhi") completes that request.
+      const asked = !cur.to && S.pendingAsk && text.split(/\s+/).length <= 4 && !/\b(need|want|find|remember|sell|book)\b/i.test(text);
+      if (asked) { text = `${S.pendingAsk} in ${text}`; user.text = text; }
+      S.pendingAsk = null;
+      const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open, hint);
+      if (r.askArea) S.pendingAsk = r.askArea;
+      Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
+    } catch (e) {
+      // A refusal (not enough in stock, over budget…) is said as it is; when there's an offer that fits, it's one tap away.
+      Object.assign(reply, { pending: null, text: e.status && e.status < 500 ? e.message : `Something went wrong: ${e.message}`,
+        ...(e.data?.suggest ? { cards: [{ type: "suggest", options: [{ label: e.data.suggest, text: e.data.suggest }], hint: "Sends it as your offer." }] } : {}) });
+    }
+    await saveSession(cur);
+  } finally { S.sending = false; $("#send").disabled = false; }
   paint();
 }
 
@@ -882,14 +1009,20 @@ function startResizer() {
   const KEY = "collab.panelWidth", min = 320;
   const max = () => app.getBoundingClientRect().width - ($("#sidebar")?.getBoundingClientRect().width ?? 0) - 320;
   const set = w => { const v = Math.round(Math.max(min, Math.min(max(), w))); app.style.setProperty("--panel-w", `${v}px`); return v; };
-  const save = v => { try { localStorage.setItem(KEY, String(v)); } catch { /* this session only */ } };
-  try { const kept = Number(localStorage.getItem(KEY)); if (kept > 0) app.style.setProperty("--panel-w", `${kept}px`); } catch { /* none kept */ }
+  // The width kept is what was chosen; a narrower window gets as much of it as fits (and the rest back when it widens).
+  let kept = 0;
+  const save = v => { kept = v; try { localStorage.setItem(KEY, String(v)); } catch { /* this session only */ } };
+  try { kept = Number(localStorage.getItem(KEY)) || 0; } catch { /* none kept */ }
+  const fit = () => { if (kept > 0) set(kept); };
+  fit(); addEventListener("resize", fit);
   bar.addEventListener("pointerdown", e => {
     e.preventDefault(); bar.setPointerCapture(e.pointerId); app.classList.add("resizing");
     const right = app.getBoundingClientRect().right;
     const move = ev => set(right - ev.clientX);
-    const up = ev => { bar.releasePointerCapture(ev.pointerId); app.classList.remove("resizing"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up); save(set(right - ev.clientX)); };
-    bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up);
+    // A drag the system takes over (a gesture, an alert) ends it as it is.
+    const end = () => { app.classList.remove("resizing"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up); bar.removeEventListener("pointercancel", end); };
+    const up = ev => { bar.releasePointerCapture(ev.pointerId); end(); save(set(right - ev.clientX)); };
+    bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up); bar.addEventListener("pointercancel", end);
   });
   bar.addEventListener("keydown", e => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -897,11 +1030,12 @@ function startResizer() {
     const now = $("#panel").getBoundingClientRect().width;
     save(set(now + (e.key === "ArrowLeft" ? 32 : -32)));
   });
-  bar.addEventListener("dblclick", () => { app.style.removeProperty("--panel-w"); try { localStorage.removeItem(KEY); } catch { /* none kept */ } });
+  bar.addEventListener("dblclick", () => { kept = 0; app.style.removeProperty("--panel-w"); try { localStorage.removeItem(KEY); } catch { /* none kept */ } });
 }
 
-/** Wide enough for the chat and a screen side by side (styles.css: below 900 px what's open covers the chat). */
-const sideBySide = () => matchMedia("(min-width: 900px)").matches;
+/** Wide enough for the chat and a screen side by side (styles.css: on a phone — narrower than 900 px, or a phone on
+ *  its side — what's open covers the chat). */
+const sideBySide = () => !matchMedia("(max-width: 899px), (max-height: 500px) and (pointer: coarse)").matches;
 /** Show the chat: on a wide screen the screen beside it (Activity…) stays open; on a phone the chat takes over. */
 function toChat() { if (!sideBySide() || !screens[S.screen]) S.screen = "chat"; }
 
@@ -911,7 +1045,6 @@ function toChat() { if (!sideBySide() || !screens[S.screen]) S.screen = "chat"; 
  */
 async function openLink(link) {
   const qp = new URL(link || "/", location.origin).searchParams;
-  if (location.search) history.replaceState(null, "", location.pathname);
   if (qp.get("to")) return openDirect(qp.get("to"));
   if (qp.get("engagement")) return openEngagement(qp.get("engagement"));
   if (qp.get("alerts")) return openScreen("requests");
@@ -924,10 +1057,82 @@ async function openEngagement(id) {
   showEngagement(id);
 }
 
-function openScreen(screen, focus) {
+/** `o.keepChat`: opened beside the chat, which isn't redrawn; `o.pop`: Back or Forward got here (the history has it). */
+function openScreen(screen, focus, o = {}) {
   // Notifications and alerts name a conversation: that conversation opens, not the list it's in.
   if (screen === "engagement" && focus) { openEngagement(focus); return; }
-  S.screen = screen; S.focus = focus ?? null; $("#app")?.classList.remove("nav-open"); S.panelEng = null; S.panelLog = null; clearPanel(); paint(); }
+  // Back to where the app started (the chat, or the screen it opened beside it): the entries above it are walked back,
+  // so the next Back leaves Collab instead of reopening what was just closed.
+  const home = !o.pop && depth() > 0 && (screen === "chat" || screen === history.state.home);
+  S.screen = screen; S.focus = focus ?? null; S.focusHeading = screen !== "chat"; setNav(false); S.panelEng = null; S.panelLog = null; clearPanel(); paint({ keepChat: o.keepChat });
+  if (o.pop) return;
+  if (home) { unwinding = true; history.go(-depth()); }
+  else remember(depth() === 0 && screen !== "chat");
+}
+
+// MARK: - Back, and the address
+
+/**
+ * What's open is kept in the browser's history, so Back (the browser's, Android's, a swipe) closes what was opened from
+ * a screen, then the screen, instead of leaving Collab. One entry per thing opened: a screen from the chat, and what's
+ * opened beside it; switching between screens replaces the entry. The address names the screen (and the conversation
+ * open beside it), so a reload or a shared link opens them again; the chat is plain /.
+ */
+const depth = () => history.state?.depth ?? 0;
+let unwinding = false;
+function address() {
+  const q = new URLSearchParams();
+  if (S.screen !== "chat") q.set("screen", S.screen);
+  if (S.panelEng && panelDetail()) q.set("engagement", S.panelEng);
+  return q.toString() ? `${location.pathname}?${q}` : location.pathname;
+}
+function remember(push) {
+  const was = history.state ?? {}, d = (was.depth ?? 0) + (push ? 1 : 0);
+  const home = !d ? null : push && !was.depth ? was.screen ?? "chat" : was.home ?? "chat";
+  history[push ? "pushState" : "replaceState"]({ screen: S.screen, detail: !!panelDetail(), depth: d, home }, "", d ? address() : location.pathname);
+}
+
+/** Something opened beside what's open (on a phone, over it): an entry of its own, so Back closes it. */
+function openPanel(view) {
+  const push = !history.state?.detail;
+  S.panelEng = view.engagement ?? null;
+  showPanel(view);
+  remember(push);
+}
+
+/** The reads each screen draws from through cached() (plain reads: nothing that runs Gemini or uses quota), started
+ *  when the browser is idle after start-up and when a pointer or focus reaches a screen's button, so it opens from what's
+ *  kept and refreshes behind. */
+const WARM = {
+  requests: () => ["/api/facts"],
+  receipts: () => [`/public/people/${encodeURIComponent(S.profile.handle)}/record`],
+  people: () => ["/api/contacts", "/api/facts", `/public/people/${encodeURIComponent(S.profile.handle)}/record`],
+  context: () => ["/api/facts"],
+};
+const warm = screen => { if (S.profile && navigator.onLine) for (const p of WARM[screen]?.() ?? []) cached(p, 30_000).catch(() => {}); };
+
+/** A problem with one field, said next to it (and to a screen reader) until it's changed; a notice when there's none. */
+function fieldError(input, msg) {
+  if (!input) return toast(msg, null, "error");
+  const at = input.closest(".row") ?? input, eid = `err-${id()}`;
+  if (at.nextElementSibling?.dataset.fieldErr != null) at.nextElementSibling.remove();
+  at.insertAdjacentHTML("afterend", `<p class="small" role="alert" data-field-err id="${eid}" style="color:var(--danger);margin:0">${esc(msg)}</p>`);
+  input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-describedby", eid);
+  input.focus();
+  input.addEventListener("input", () => { document.getElementById(eid)?.remove(); input.removeAttribute("aria-invalid"); input.removeAttribute("aria-describedby"); }, { once: true });
+}
+/** The field beside the button pressed: a card can be drawn twice (in the chat and beside it), and only one was typed in. */
+const near = (el, sel) => el.parentElement?.querySelector(sel) ?? el.closest(".card")?.querySelector(sel) ?? document.querySelector(sel);
+
+/** This device's copy of the profile, shown at once on the next start while the server's is fetched (not kept when
+ *  "Don't keep history" is on). */
+let profileKept = "";
+function keepProfile() {
+  const s = JSON.stringify(S.profile);
+  if (!S.profile || s === profileKept || S.incognito || !session.uid) return;
+  profileKept = s;
+  try { localStorage.setItem(`collab.me.${session.uid}`, s); } catch {}
+}
 
 function onEdit(e) {
   const el = e.target;
@@ -976,31 +1181,55 @@ function onEdit(e) {
   }
   if (e.type === "change") {
     saveSession(f.s);
-    // A ticked box or a picked option changes what the card shows: let go of it and repaint. A text field doesn't —
-    // its value is already on the card — and repainting as it loses focus would swallow the tap that moved focus.
-    if (k === "autonomy" || (f.c.type === "offer" && /checkbox|radio|select-one/.test(el.type))) { el.blur(); paintContent(true); }
+    // A ticked box or a picked option changes what the card shows: it's redrawn at once, and keeps focus (see refocus).
+    // A text field doesn't — its value is already on the card — and repainting as it loses focus would swallow the tap
+    // that moved focus.
+    if (k === "autonomy" || (f.c.type === "offer" && /checkbox|radio|select-one/.test(el.type))) paintContent();
   }
 }
 
 async function onClick(e) {
   const el = e.target.closest("[data-act]");
   if (!el) return;
-  const a = el.dataset.act;
+  const a = el.dataset.act, k = tapKey(el);
+  // Tapped again while the first tap is still being handled (a repaint may have drawn a fresh button): nothing more.
+  if (tapping.has(k)) return;
+  tapping.set(k, el);
   try {
-    if (a === "nav") return $("#app").classList.toggle("nav-open");
+    if (a === "nav") return setNav(!$("#app").classList.contains("nav-open"), true);
     // Anything chosen in the menu closes it (on a phone it covers the page).
-    if (el.closest(".sidebar")) $("#app")?.classList.remove("nav-open");
-    if (a === "screen") return openScreen(el.dataset.screen);
+    if (el.closest(".sidebar")) setNav(false);
+    if (a === "skip") return $("#input").focus();
+    if (a === "photo") return $("#photo-in").click();
+    // ‹ Close or ‹ Back (panel.js has closed it): its entry in the history goes too.
+    if (a === "panel-close") { if (history.state?.detail) history.back(); return; }
+    if (a === "screen") return openScreen(el.dataset.screen, null, { keepChat: true });
     if (a === "intro-done") { try { localStorage.setItem("collab.intro", "done"); } catch {} return paint(); }
     if (a === "install" || a === "install-app") return installApp();
-    // A new or earlier chat replaces the chat only — Activity (or whatever is open beside it) stays on a wide screen.
-    if (a === "new-chat") { S.current = null; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
-    if (a === "open-session") { S.current = el.dataset.id; $("#app")?.classList.remove("nav-open"); toChat(); return paint(); }
+    // A new or earlier chat replaces the chat only — Activity (or whatever is open beside it) stays on a wide screen;
+    // on a phone the chat takes over, as Back to chat does.
+    if (a === "new-chat") { S.current = null; setNav(false); return sideBySide() ? paint() : openScreen("chat"); }
+    if (a === "delete-session") {
+      // Like any chat app: gone from this device and every other one (the account keeps a marker so an old copy can't
+      // bring it back). Conversations and deals it started stay in Activity.
+      const s = S.sessions.find(x => x.id === el.dataset.id);
+      if (!s || (await ask({ title: "Delete this chat?", detail: `“${s.title}” is removed from all your devices. Deals and conversations it started stay in Activity.`, ok: "Delete", danger: true })) === null) return;
+      S.sessions = S.sessions.filter(x => x.id !== s.id);
+      await local.del("sessions", s.id);
+      if (S.current === s.id) S.current = S.sessions[0]?.id ?? null;
+      api(`/api/chats/${encodeURIComponent(s.id)}/delete`, { updatedAt: s.updatedAt }).catch(err => toast(err.message, null, "error"));
+      toast("Chat deleted.");
+      return paint();
+    }
+    if (a === "open-session") { S.current = el.dataset.id; setNav(false); return sideBySide() ? paint() : openScreen("chat"); }
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
-    if (a === "send-text") return send(el.dataset.text, el.dataset.offer || null);
-    if (a === "preview-card") return previewCard(el);
-    if (a === "agent-card") return showAgentCard();
-    if (a === "checkout") { const eid = el.dataset.id; preloadGooglePay(); openPanel({ title: "Checkout", render: () => checkoutHTML(live.engagements.get(eid)) }); return; }
+    if (a === "send-text") {
+      if (S.sending) return toast("Your agent is still answering — send this in a moment.");
+      return send(el.dataset.text, el.dataset.offer || null, el.dataset.category ? { category: el.dataset.category } : null);
+    }
+    if (a === "preview-card") return await previewCard(el);
+    if (a === "agent-card") return await showAgentCard();
+    if (a === "checkout") { const eid = el.dataset.id; preloadGooglePay(); openPanel({ engagement: eid, title: "Checkout", render: () => checkoutHTML(live.engagements.get(eid)) }); return; }
     if (a === "share-link") {
       const data = { title: `${S.profile.name} on Collab`, text: `Talk to ${S.profile.name}'s agent on Collab`, url: el.dataset.link };
       if (navigator.share) await navigator.share(data).catch(() => {}); else { await navigator.clipboard.writeText(el.dataset.link).catch(() => {}); toast("Link copied."); }
@@ -1009,23 +1238,25 @@ async function onClick(e) {
     if (a === "eng-open") return showEngagement(el.dataset.id);
     if (a === "eng-log") return showLog(el.dataset.id);
     if (a === "agent-stream") return showLog(null);
-    if (a === "copy") { await navigator.clipboard.writeText(el.dataset.text ?? el.dataset.link ?? "").catch(() => {}); return toast("Copied."); }
-    // The seller's quick moves on a request (their side of the conversation card).
+    if (a === "copy") { await navigator.clipboard.writeText(el.dataset.text ?? el.dataset.link ?? el.dataset.value ?? "").catch(() => {}); return toast("Copied."); }
+    // The seller's quick moves on a request (their side of the conversation card). What the server returns is drawn at
+    // once; the button stays busy until the refresh after it (a second tap can't send it twice).
     if (a === "seller-quote" || a === "seller-counter-send") {
-      const price = a === "seller-quote" ? Number(el.dataset.price) : Number(document.querySelector(`[data-counter-price="${CSS.escape(el.dataset.id)}"]`)?.value);
-      if (!(price > 0)) return toast("Type your price.");
+      const input = a === "seller-counter-send" ? near(el, `[data-counter-price="${CSS.escape(el.dataset.id)}"]`) : null;
+      const price = a === "seller-quote" ? Number(el.dataset.price) : Number(input?.value);
+      if (!(price > 0)) return fieldError(input, "Type your price.");
       busy(el, true, "Sending");
       // Said as the side they're on, so the wording never makes the one paying the one paid ("I'll pay …" / "I'll sell
       // it for …" / "I'd accept …").
       const eng = live.engagements.get(el.dataset.id), side = eng?.requester.uid === session.uid ? "requester" : "provider";
       const each = (eng?.negotiation?.deal?.terms?.quantity ?? eng?.quantity ?? 1) > 1 ? " each" : "";
-      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text: `${offerWords(eng, side, `₹${price}`)}${each}` }); live.engagements.set(e.id, e); toast("Offer sent — their agent answers it, or they do."); }
-      catch (err) { toast(err.message, null, "error"); }
-      return refresh(openScreen);
+      try { applied(await api(`/api/engagements/${el.dataset.id}/ask`, { text: `${offerWords(eng, side, `₹${price}`)}${each}` })); toast("Offer sent — their agent answers it, or they do."); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return await refresh(openScreen);
     }
     if (a === "delegate") {
-      const said = String(document.querySelector(`[data-delegate-limit="${CSS.escape(el.dataset.id)}"]`)?.value ?? "").trim();
-      if (!said) return toast("Name your limit, or say your rules — it's never shown to them.");
+      const input = near(el, `[data-delegate-limit="${CSS.escape(el.dataset.id)}"]`), said = String(input?.value ?? "").trim();
+      if (!said) return fieldError(input, "Name your limit, or say your rules — it's never shown to them.");
       // Rules in words: read by Gemini and shown back first; nothing applies until the owner confirms.
       if (!/^\s*(?:₹|rs\.?)?\s*\d[\d,]*\s*$/i.test(said)) {
         busy(el, true, "Reading");
@@ -1033,58 +1264,58 @@ async function onClick(e) {
           const eng = live.engagements.get(el.dataset.id), selling = eng && (eng.seller ?? "provider") === (eng.requester.uid === session.uid ? "requester" : "provider");
           const r = await api("/api/rules/read", { text: said, side: selling ? "seller" : "buyer", engagementId: el.dataset.id });
           pendingRules.set(el.dataset.id, { text: said, rules: r.rules });
-          const box = document.querySelector(`[data-rules-preview="${CSS.escape(el.dataset.id)}"]`);
+          const box = near(el, `[data-rules-preview="${CSS.escape(el.dataset.id)}"]`);
           if (box) box.innerHTML = `<div class="card slim">${rulesList(r.lines)}<div class="row"><button class="btn accent compact" data-act="rules-confirm" data-id="${esc(el.dataset.id)}">Confirm and hand over</button><span class="small faint">Nothing applies until you confirm.</span></div></div>`;
         } catch (err) { toast(err.message, null, "error"); }
         busy(el, false); return;
       }
       const limit = Number(said.replace(/[^\d]/g, ""));
       busy(el, true, "Handing over");
-      try { const e = await api(`/api/engagements/${el.dataset.id}/delegate`, { limit, autonomy: el.dataset.autonomy || "close" }); live.engagements.set(e.id, e); toast(e.phase === "agreed" ? "Your agent agreed inside your limit — pay below." : "Your agent has it — it negotiates inside your limit and asks only if there's no deal there."); }
-      catch (err) { toast(err.message, null, "error"); }
-      return refresh(openScreen);
+      try { const e = await api(`/api/engagements/${el.dataset.id}/delegate`, { limit, autonomy: el.dataset.autonomy || "close" }); applied(e); toast(e.phase === "agreed" ? "Your agent agreed inside your limit — pay below." : "Your agent has it — it negotiates inside your limit and asks only if there's no deal there."); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return await refresh(openScreen);
     }
     if (a === "deal-msg" || a === "deal-note") {
-      const input = document.querySelector(`[data-deal-msg="${CSS.escape(el.dataset.id)}"]`);
+      const input = near(el, `[data-deal-msg="${CSS.escape(el.dataset.id)}"]`);
       const text = a === "deal-note" ? el.dataset.text : String(input?.value ?? "").trim();
       if (!text) return;
       busy(el, true, "Sending");
-      try { const e = await api(`/api/engagements/${el.dataset.id}/ask`, { text }); live.engagements.set(e.id, e); if (input) input.value = ""; }
-      catch (err) { toast(err.message, null, "error"); }
-      return refresh(openScreen);
+      try { applied(await api(`/api/engagements/${el.dataset.id}/ask`, { text })); if (input) input.value = ""; }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return await refresh(openScreen);
     }
     if (a === "rules-confirm") {
       const p = pendingRules.get(el.dataset.id);
       if (!p) return toast("Read your rules again first.");
       busy(el, true, "Handing over");
-      try { const e = await api(`/api/engagements/${el.dataset.id}/rules`, p); live.engagements.set(e.id, e); pendingRules.delete(el.dataset.id);
+      try { const e = await api(`/api/engagements/${el.dataset.id}/rules`, p); applied(e); pendingRules.delete(el.dataset.id);
         toast(e.phase === "agreed" ? "Your agent agreed inside your rules — pay below." : "Your agent has it — it follows your rules and asks you only when it can't."); }
-      catch (err) { toast(err.message, null, "error"); }
-      return refresh(openScreen);
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return await refresh(openScreen);
     }
-    if (a === "seller-counter") { const box = document.querySelector(`[data-counter="${CSS.escape(el.dataset.id)}"]`); box.hidden = !box.hidden; box.querySelector("input")?.focus(); return; }
-    if (a === "seller-ask") { const f = document.querySelector(`[data-followup="${CSS.escape(el.dataset.id)}"]`); if (f) { f.focus(); f.placeholder = "Ask them anything — e.g. which style, any reference photo?"; } else toast("Use the box below the card to ask them."); return; }
+    if (a === "seller-counter") { const box = near(el, `[data-counter="${CSS.escape(el.dataset.id)}"]`); box.hidden = !box.hidden; box.querySelector("input")?.focus(); return; }
+    if (a === "seller-ask") { const f = near(el, `[data-followup="${CSS.escape(el.dataset.id)}"]`); if (f) { f.focus(); f.placeholder = "Ask them anything — e.g. which style, any reference photo?"; } else toast("Use the box below the card to ask them."); return; }
     if (a === "take-price") {
       // Accepting the seller's listed price is an offer at that price: they confirm (or their agent does, if they allow it).
       busy(el, true, "Sending");
-      try { const e = await api(`/api/engagements/${el.dataset.eng}/ask`, { text: `I'll buy it for ₹${el.dataset.price}` }); live.engagements.set(e.id, e); toast("Offered at their price — they confirm, then you pay."); }
-      catch (err) { toast(err.message, null, "error"); }
-      return refresh(openScreen);
+      try { applied(await api(`/api/engagements/${el.dataset.eng}/ask`, { text: `I'll buy it for ₹${el.dataset.price}` })); toast("Offered at their price — they confirm, then you pay."); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return await refresh(openScreen);
     }
     if (a === "qty" || a === "shop-slot" || a === "store-offer-open") return shopControl(a, el);
-    if (a === "store-order" || a === "store-offer-send") return orderFromCard(a, el);
+    if (a === "store-order" || a === "store-offer-send") return await orderFromCard(a, el);
     if (a === "add-contact-direct") { busy(el, true); await api("/api/contacts", { handle: el.dataset.handle }); el.textContent = "✓ In your people"; return; }
-    if (a.startsWith("inbox-")) return inboxAction(a, el);
+    if (a.startsWith("inbox-")) return await inboxAction(a, el);
     if (a === "eng-ask") {
-      const input = document.querySelector(`[data-followup="${CSS.escape(el.dataset.id)}"]`);
+      const input = near(el, `[data-followup="${CSS.escape(el.dataset.id)}"]`);
       const q = input?.value.trim();
       if (!q) return input?.focus();
       busy(el, true, "Sending");
-      try { live.engagements.set(el.dataset.id, await api(`/api/engagements/${el.dataset.id}/ask`, { text: q })); input.value = ""; run(el.dataset.id); }
+      try { applied(await api(`/api/engagements/${el.dataset.id}/ask`, { text: q })); input.value = ""; run(el.dataset.id); }
       finally { busy(el, false); }
-      return refresh(openScreen);
+      return await refresh(openScreen);
     }
-    if (a === "eng-close") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
+    if (a === "eng-close") { if ((await ask({ title: "End this conversation?", detail: "It ends for both of you and can't be reopened.", ok: "End it", danger: true })) === null) return; busy(el, true); await api(`/api/engagements/${el.dataset.id}/close`, {}); await refresh(openScreen); return; }
     // Joining an accepted offer: each step is the person's own, and a withdrawal says why.
     if (a.startsWith("join-")) {
       const id = el.dataset.id, body = { action: { "join-mark": "joined", "join-confirm": "confirm", "join-noshow": "no_show", "join-withdraw": "withdraw" }[a], ...(el.dataset.as ? { as: el.dataset.as } : {}) };
@@ -1095,7 +1326,15 @@ async function onClick(e) {
       if (a === "join-noshow") { const r = await ask({ title: "Mark that they didn't join?", detail: "They see this, with anything you add, and it's part of the deal record.", ok: "They didn't join", danger: true, as, input: { label: "Anything to add (optional)", placeholder: "e.g. Didn't turn up on the start date" } }); if (r === null) return; body.reason = r; }
       if (a === "join-withdraw") { const r = await ask({ title: "Withdraw before joining?", detail: "They see your reason. This can't be undone.", ok: "Withdraw", danger: true, as, input: { label: "Why (they'll see it)", required: true, min: 3, placeholder: "e.g. I've accepted another offer" } }); if (r === null) return; body.reason = r; }
       busy(el, true);
-      try { live.engagements.set(id, await api(`/api/engagements/${id}/joining`, body)); }
+      try { applied(await api(`/api/engagements/${id}/joining`, body)); }
+      catch (err) { toast(err.message, null, "error"); }
+      finally { busy(el, false); }
+      return await refresh(openScreen);
+    }
+    if (a === "demo-customers") {
+      // People nearby (simulated phones) whose agents ask for what this listing offers — Gemini writes what each wants.
+      busy(el, true, "Inviting");
+      try { const r = await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/demo-customers`, {}); toast(r.added ? `${r.added} demo customers are asking — their agents are talking to yours. See Activity.` : "The demo customers have already asked about this.", () => openScreen("requests")); }
       catch (err) { toast(err.message, null, "error"); }
       finally { busy(el, false); }
       return refresh(openScreen);
@@ -1109,11 +1348,12 @@ async function onClick(e) {
       for (const e of live.engagements.values()) if (e.outbox && e.requester.uid?.startsWith("demo-")) run(e.id);
       return;
     }
-    if (a === "eng-outcome") { busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
+    if (a === "eng-outcome") { if (el.dataset.happened !== "1" && (await ask({ title: "Mark that it fell through?", detail: "Anything held for this deal is released. This can't be undone.", ok: "It fell through", danger: true })) === null) return; busy(el, true); await api(`/api/engagements/${el.dataset.id}/outcome`, { happened: el.dataset.happened === "1" }); await refresh(openScreen); return; }
+    if (a === "eng-paid-outside" && (await ask({ title: `${el.textContent.trim()}?`, detail: "The deal moves on as paid and the other person sees it. This can't be undone.", ok: "Mark as paid" })) === null) return;
     if (a === "eng-pay" || a === "eng-paid-outside") {
-      // Google Pay (TEST) first, inside the tap; then the AP2 step. One idempotency key per tap: a retry of the same
+      // Google Pay (TEST) first, inside the tap; then the AP2 step. One idempotency key per deal: a retry of the same
       // request can't pay twice.
-      return payDeal(el, null, a);
+      return await payDeal(el, null, a);
     }
     if (a === "nearby") {
       busy(el, true, "Asking Google Maps");
@@ -1178,9 +1418,9 @@ async function onClick(e) {
     }
     if (a === "slot-pick") {
       busy(el, true, "Holding");
-      try { const e = await api(`/api/engagements/${el.dataset.id}/slot`, { slotId: el.dataset.slot }); live.engagements.set(e.id, e); toast("Held for you — pay to book it."); }
-      catch (err) { toast(err.message, null, "error"); }
-      return refresh(openScreen);
+      try { applied(await api(`/api/engagements/${el.dataset.id}/slot`, { slotId: el.dataset.slot })); toast("Held for you — pay to book it."); }
+      catch (err) { toast(err.message, null, "error"); busy(el, false); }
+      return await refresh(openScreen);
     }
     if (a === "eng-delivered" || a === "eng-received") {
       const ok = el.dataset.ok !== "0";
@@ -1188,11 +1428,11 @@ async function onClick(e) {
       if (note === null) return;
       busy(el, true);
       const e = await api(`/api/engagements/${el.dataset.id}/${a === "eng-delivered" ? "delivered" : "received"}`, a === "eng-delivered" ? {} : { ok, note });
-      live.engagements.set(e.id, e);
+      applied(e);
       session.track(a === "eng-delivered" ? "delivered" : ok ? "received" : "disputed");
       const them = (e.requester.uid === session.uid ? e.provider : e.requester).name, close = partyRoles(e, "provider").close;
       toast(a === "eng-delivered" ? `${close.marked} ${them} will confirm.` : ok ? `Thanks — ${them} will see it: ${close.confirmed}` : `Problem reported to ${them}.`);
-      return refresh(openScreen);
+      return await refresh(openScreen);
     }
     if (a === "eng-receipt") {
       busy(el, true);
@@ -1223,6 +1463,7 @@ async function onClick(e) {
     if (!f) return;
     await cardAction(a, el, f);
   } catch (err) { toast(err.message, null, "error"); busy(el, false); }
+  finally { untap(k); }
 }
 
 async function cardAction(a, el, { s, m, c }) {
@@ -1240,9 +1481,13 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "brief-drop") { const [r] = d.shared.requirements.splice(Number(el.dataset.j), 1); d.need.filters = d.need.filters.filter(x => x.label !== r.label); }
   if (a === "brief-dropq") { const [q] = d.shared.questions.splice(Number(el.dataset.j), 1); d.need.mustAsk = d.need.mustAsk.filter(x => x !== q); }
   if (a === "brief-about") {
-    // A profile answer is only shared, never searched on: no re-read, nothing sent yet. Tapping it again clears it.
-    const cur = d.shared.about?.find(x => x.label === el.dataset.key)?.value;
-    setAbout(d.shared, el.dataset.key, cur === el.dataset.val ? "" : el.dataset.val);
+    // A profile answer is only shared, never searched on: no re-read, nothing sent yet. Tapping it again clears it; a
+    // question that takes several (skills) keeps each one tapped.
+    const cur = d.shared.about?.find(x => x.label === el.dataset.key)?.value ?? "", v = el.dataset.val;
+    if (d.profile?.find(q => q.label === el.dataset.key)?.multi) {
+      const set = cur.split(/\s*,\s*/).filter(Boolean);
+      setAbout(d.shared, el.dataset.key, (set.includes(v) ? set.filter(x => x !== v) : [...set, v]).join(", "));
+    } else setAbout(d.shared, el.dataset.key, cur === v ? "" : v);
   }
   if (a === "brief-clarify") {
     // The owner's answer joins the request at once (a requirement others' agents see) — no wait for a second read.
@@ -1251,7 +1496,7 @@ async function cardAction(a, el, { s, m, c }) {
   }
   if (a === "brief-rules-read" || a === "offer-rules-read") {
     const words = String(c.rulesText ?? "").trim();
-    if (words.length < 4) return toast("Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
+    if (words.length < 4) return fieldError(el.parentElement?.querySelector('[data-edit="rulesText"]'), "Say your rules first — e.g. “up to ₹3,200, close yourself below ₹3,000”.");
     busy(el, true, "Reading");
     const o = a === "offer-rules-read" ? c.offer : null;
     const r = await api("/api/rules/read", { text: words, side: o ? (ownerPays(c) ? "buyer" : "seller") : (d?.need?.requesterPaid ? "seller" : "buyer"), offer: o ? { title: o.title, price: o.price.amount, unit: o.price.period } : { title: d?.shared?.title ?? "", price: null } }).catch(err => { toast(err.message, null, "error"); return null; });
@@ -1294,18 +1539,19 @@ async function cardAction(a, el, { s, m, c }) {
     // Searching with questions still open is fine: the agents ask what they need.
     if (c.gate && !c.gate.ok) c.gateOverride = true;
     // The answers tapped for this request are kept (Private), and filled in the next time they're asked.
-    rememberAll(c.answered ?? [], d.shared?.title ?? null);
+    rememberAll(c.answered ?? [], d.shared?.title ?? null, d.need?.category ?? null);
     busy(el, true, "Searching");
     const r = await api("/api/briefs", { need: d.need, shared: d.shared, delegate: d.mandate ? { mandate: d.mandate, autonomy: autonomyOf(c) || "ask", days: c.days ?? 7,
       ...(c.rulesOk ? { closeAt: c.closeAt ?? null, rulesText: c.rulesText } : {}) } : null });
     // Real matches first (only the best one pre-ticked); sellers that fit but cost more than the limit come last, unticked.
-    Object.assign(c, { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] });
+    const matches = { step: "matches", briefId: r.brief.id, found: [...r.found, ...(r.overBudget ?? []).map(f => ({ ...f, over: true }))], rankedByModel: r.rankedByModel, picked: r.found.length ? [0] : [] };
     // Discovery runs on its own: the best matches (up to three, within budget) are contacted at once — only the shared
-    // request goes out — and one live list shows every conversation, with what needs the owner on top.
+    // request goes out — and one live list shows every conversation, with what needs the owner on top. The card becomes
+    // the list only once they're contacted: a repaint meanwhile mustn't show buttons that would contact them again.
     const first = r.found.slice(0, 3);
     if (first.length) {
-      const es = await api(`/api/briefs/${r.brief.id}/engage`, { providers: first.map(p => ({ factId: p.fact.id })) });
-      c.step = "engaged"; c.engaged = es.map(x => x.id);
+      const es = await api(`/api/briefs/${r.brief.id}/engage`, { providers: first.map(p => ({ factId: p.fact.id })) }).catch(err => { Object.assign(c, matches); throw err; });
+      Object.assign(c, matches, { step: "engaged", engaged: es.map(x => x.id) });
       for (const x of es) live.engagements.set(x.id, x);
       m.cards.push({ type: "discovery", briefId: r.brief.id, engaged: c.engaged, found: c.found, title: d.shared?.title ?? "" });
       session.track("agents_contacted", { count: es.length, category: d.need?.category ?? "none", auto: true });
@@ -1315,13 +1561,14 @@ async function cardAction(a, el, { s, m, c }) {
       return;
     }
     // Nothing fits exactly: the closest listings come with the reply, and Google Maps is asked at once (no extra tap).
+    Object.assign(c, matches);
     c.closest = r.closest ?? [];
     m.text = c.closest.length ? "No exact match yet — here's what's closest, and what I found nearby on Google Maps." : "No match on Collab yet — I'm checking Google Maps nearby.";
     c.nearby = { loading: true };
     await saveSession(s); paint();
-    const near = await api("/api/nearby", { item: d.shared.title, area: d.shared.area ?? "" }).catch(() => null);
+    const places = await api("/api/nearby", { item: d.shared.title, area: d.shared.area ?? "" }).catch(() => null);
     const now_ = findCard(el) ?? { c, s };
-    now_.c.nearby = near ? { places: near.places ?? [], note: near.note } : { places: [], note: "" };
+    now_.c.nearby = places ? { places: places.places ?? [], note: places.note } : { places: [], note: "" };
     await saveSession(now_.s); paint();
     return;
   }
@@ -1374,7 +1621,7 @@ async function cardAction(a, el, { s, m, c }) {
     } catch (err) { toast(err.message, null, "error"); busy(el, false); }
     return;
   }
-  if (a === "match-booked") { const card = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); card?.scrollIntoView({ behavior: "smooth", block: "center" }); card?.classList.remove("flash"); void card?.offsetWidth; card?.classList.add("flash"); return; }
+  if (a === "match-booked") { const card = document.querySelector(`[data-engagement="${CSS.escape(el.dataset.id)}"]`); card?.scrollIntoView({ block: "center" }); card?.classList.add("landed"); setTimeout(() => card?.classList.remove("landed"), 1600); return; }
   if (a === "brief-engage" || a === "match-negotiate" || a === "match-addons") {
     // Someone already booked from this request isn't contacted again.
     const picks = (a === "brief-engage" ? (c.picked ?? []) : [Number(el.dataset.j)]).filter(j => !c.booked?.[j]).map(j => c.found[j]).filter(Boolean);
@@ -1399,8 +1646,8 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "offer-basics") {
     // The two things a vague offering lacks; then Gemini reads it again as a listing. Answers already given stay.
     const price = Number(c.basicPrice), where = String(c.basicArea ?? c.basics?.area ?? "").trim();
-    if (!(price > 0)) return toast("Type your price.");
-    if (!where) return toast("Say where — your area, or Online.");
+    if (!(price > 0)) return fieldError(el.closest(".card")?.querySelector('[data-edit="basic-price"]'), "Type your price.");
+    if (!where) return fieldError(el.closest(".card")?.querySelector('[data-edit="basic-area"]'), "Say where — your area, or Online.");
     busy(el, true, "Reading");
     const base = String(c.publicText ?? c.text).trim().replace(/[.!]*$/, ".");
     const full = `${base} ₹${price.toLocaleString("en-IN")}${c.basics?.unit ? ` per ${c.basics.unit}` : ""}. ${/^online$/i.test(where) ? "Online." : `In ${where}.`}`;
@@ -1418,8 +1665,8 @@ async function cardAction(a, el, { s, m, c }) {
   if (a === "req-strength") { const r = c.offer.requirements[Number(el.dataset.j)]; r.strength = r.strength === "must" ? "nice" : "must"; }
   if (a === "req-drop") c.offer.requirements.splice(Number(el.dataset.j), 1);
   if (a === "req-add") {
-    const m = (el.closest(".card")?.querySelector("[data-req-new]")?.value ?? "").match(/^\s*([^:]{2,30}):\s*(.{1,80}?)\s*$/);
-    if (!m) return toast("Write it as “Label: what's needed” — e.g. “Skills: React”.");
+    const input = el.closest(".card")?.querySelector("[data-req-new]"), m = (input?.value ?? "").match(/^\s*([^:]{2,30}):\s*(.{1,80}?)\s*$/);
+    if (!m) return fieldError(input, "Write it as “Label: what's needed” — e.g. “Skills: React”.");
     (c.offer.requirements ??= []).push({ label: m[1].trim(), value: m[2].trim(), strength: "must" });
   }
   if (a === "offer-suggest-terms") { const f = findCard(el); if (f) prefillTerms(f.s.id, f.m.id, Number(el.dataset.card), true); return; }
@@ -1461,7 +1708,7 @@ async function cardAction(a, el, { s, m, c }) {
     }
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
     if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message, null, "error"));
-    c.step = "published"; c.publicText = fact.text;
+    c.step = "published"; c.publicText = fact.text; c.factId = fact.id;
   }
   // Accept every suggested answer still open (the owner's own answers stay).
   if (a === "offer-use-suggested") {
@@ -1529,17 +1776,17 @@ async function inboxAction(a, el) {
   if (!item) return;
   const body = {};
   if (a === "inbox-quick") body.text = el.dataset.text;
-  if (a === "inbox-answer") { body.text = document.querySelector(`[data-reply="${CSS.escape(itemId)}"]`)?.value.trim(); if (!body.text) return toast("Write an answer, or choose “I'd rather not say”."); }
+  if (a === "inbox-answer") { const input = near(el, `[data-reply="${CSS.escape(itemId)}"]`); body.text = input?.value.trim(); if (!body.text) { input?.closest("details")?.setAttribute("open", ""); return fieldError(input, "Write an answer, or choose “I'd rather not say”."); } }
   if (a === "inbox-share") body.text = drafts.get(itemId)?.text;
   if (a === "inbox-approve") body.share = true;
   if (a === "inbox-decline") { body.decline = true; body.share = false; }
   if (a === "inbox-confirm") body.confirm = true;
-  if (a === "inbox-walk") body.decline = true;
+  if (a === "inbox-walk") { if ((await ask({ title: "Walk away from this?", detail: "The conversation ends politely.", ok: "Walk away", danger: true })) === null) return; body.decline = true; }
   // An offer letter: the employer sends (or revises) it; the candidate decides on it — always the person, never an agent.
   if (a === "inbox-letter-send") {
-    const f = k => document.querySelector(`[data-letter="${CSS.escape(itemId)}"][data-k="${k}"]`)?.value?.trim() ?? "";
+    const field = k => near(el, `[data-letter="${CSS.escape(itemId)}"][data-k="${k}"]`), f = k => field(k)?.value?.trim() ?? "";
     body.letter = { role: f("role"), start: f("start"), validUntil: f("validUntil"), mode: f("mode"), probation: f("probation"), notice: f("notice"), note: f("note"), ...(f("salary") ? { salary: Number(f("salary")) } : {}) };
-    if (!body.letter.start || !body.letter.validUntil) return toast("Pick a start date and the last day the offer is open.");
+    if (!body.letter.start || !body.letter.validUntil) return fieldError(field(body.letter.start ? "validUntil" : "start"), "Pick a start date and the last day the offer is open.");
   }
   // A decision made for a demo person (their phone is simulated) says whose it is.
   const as = item.owner !== session.uid ? shortName(live.engagements.get(item.engagementId)?.[item.side]?.name ?? "") || null : null;
@@ -1547,12 +1794,13 @@ async function inboxAction(a, el) {
   if (a === "inbox-offer-accept") { if ((await ask({ title: "Accept this offer?", detail: "It's sealed into the signed deal record. Joining comes next.", ok: "Accept offer", as })) === null) return; body.confirm = true; }
   if (a === "inbox-offer-decline") { const why = await ask({ title: "Decline this offer?", detail: "The conversation ends politely.", ok: "Decline offer", danger: true, as, input: { label: "Why (optional — they'll see it)", placeholder: "e.g. I've accepted another offer" } }); if (why === null) return; body.decline = true; body.text = why; }
   if (a === "inbox-offer-changes") {
-    body.changes = document.querySelector(`[data-changes="${CSS.escape(itemId)}"]`)?.value.trim() ?? "";
-    if (body.changes.length < 3) return toast("Say what you'd like changed.");
+    const input = near(el, `[data-changes="${CSS.escape(itemId)}"]`);
+    body.changes = input?.value.trim() ?? "";
+    if (body.changes.length < 3) return fieldError(input, "Say what you'd like changed.");
   }
   if (a === "inbox-move") {
-    const limit = Number(document.querySelector(`[data-limit="${CSS.escape(itemId)}"]`)?.value);
-    if (!(limit > 0)) return toast("Set an amount.");
+    const input = near(el, `[data-limit="${CSS.escape(itemId)}"]`), limit = Number(input?.value);
+    if (!(limit > 0)) return fieldError(input, "Set an amount.");
     const e = live.engagements.get(item.engagementId);
     const key = item.side === "requester" ? `brief:${e.briefId}` : `fact:${e.offer.factId}`;
     const prev = (await api("/api/limits").catch(() => [])).find(l => l.key === key)?.mandate;
@@ -1614,7 +1862,11 @@ document.addEventListener("visibilitychange", async () => {
   // Coming back to the app (an installed one is often resumed, not restarted): look for a new deployment first.
   navigator.serviceWorker?.getRegistration?.().then(r => r?.update()).catch(() => {});
   const v = await readVersion();
-  if (shouldReload(version, v, !!document.querySelector("input:focus, textarea:focus"))) location.reload();
+  if (!shouldReload(version, v, !!document.querySelector("input:focus, textarea:focus"))) return;
+  // With a worker, the new one installs the new shell and its activation reloads the page (collab-updated); reloading
+  // now would only load the old shell from the device again.
+  const reg = await navigator.serviceWorker?.getRegistration?.().catch(() => null);
+  if (reg && navigator.serviceWorker.controller) reg.update().catch(() => location.reload()); else location.reload();
 });
 // The service worker serves the app from this device and checks for a new version in the background.
 // A push that arrives while Collab is open shows here (the system shows it when Collab is closed).
@@ -1636,15 +1888,23 @@ navigator.serviceWorker?.addEventListener("message", e => {
 // Started last, once everything above is defined.
 // Anything that stops start-up shows a way back instead of a blank page.
 try {
+// What the address and its history entry said at the start: a link to open, or (a reload) what was open.
+const startQuery = location.search, startState = history.state;
 await signIn();
 if (!session.uid && !session.fresh) { root.innerHTML = `<div class="setup"><div class="card">${brand()}<p>Sign-in isn't available on this server.</p></div></div>`; throw new Error("no auth"); }
 // A returning visitor: their profile and (from a QR) the person they're opening load side by side. A first visit has
-// no profile yet, so the start screen shows at once.
+// no profile yet, so the start screen shows at once. The profile shows from this device's copy straight away and is
+// checked with the server meanwhile (an account gone since starts again).
 if (session.uid) {
   setOwner(session.uid);
-  const to = new URLSearchParams(location.search).get("to");
+  const to = new URLSearchParams(startQuery).get("to");
   if (to) person(to);
-  S.profile = await api("/api/me").catch(() => null);
+  const KEY = `collab.me.${session.uid}`;
+  let mine = null;
+  try { mine = JSON.parse(localStorage.getItem(KEY) ?? "null"); } catch {}
+  const fresh = api("/api/me").then(p => { if (!p) { try { localStorage.removeItem(KEY); } catch {} } return p; });
+  S.profile = mine ?? await fresh.catch(() => null);
+  if (mine) fresh.then(p => { if (!p) return location.reload(); if (JSON.stringify(p) !== JSON.stringify(S.profile)) { S.profile = p; if ($("#app")) paint(); } }).catch(() => {});
 }
 if (!S.profile) await setup();
 setOwner(session.uid);
@@ -1654,14 +1914,14 @@ timing("app");
 onFreshRead(() => paintContent(true));
 // On a wide screen, what your agents are doing (Activity) sits beside the chat from the start.
 if (sideBySide() && S.screen === "chat") { S.screen = "requests"; paint(); }
-// Links from notifications, the installed app's shortcuts and QR codes open the right place.
+// Links from notifications, the installed app's shortcuts and QR codes open the right place. A fresh start begins the
+// history here, at the plain address; a reload is already at its own entry, and opens what it names again.
 {
-  const qp = new URLSearchParams(location.search);
-  if (qp.get("calendar")) {
-    toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
-    history.replaceState(null, "", location.pathname);
-  }
-  else if (location.search) openLink(location.pathname + location.search);
+  const qp = new URLSearchParams(startQuery);
+  if (!startState?.depth) remember(false);
+  if (qp.get("calendar")) toast({ linked: "Google Calendar linked — your busy times now block bookings.", declined: "Google Calendar wasn't linked — you said no on Google's page.", failed: "Couldn't link Google Calendar — try again, or paste the calendar's iCal address instead." }[qp.get("calendar")] ?? "Calendar: done.");
+  else if (startQuery) openLink(location.pathname + startQuery);
+  else if (startState?.depth) { unwinding = true; history.go(-startState.depth); }
 }
 
 } catch (err) {

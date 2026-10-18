@@ -56,6 +56,8 @@ export interface DemandFilter {
   kind: "place" | "price" | "number" | "choice" | "text";
   comparison: "equals" | "atMost" | "atLeast" | "oneOf" | "mentions";
   value: string;
+  /** A range's upper end, as written ("2-3 years": value "2", upTo "3"); matching uses the lower end. */
+  upTo?: string | null;
   unit?: string | null;
   strength: "required" | "preferred";
   source: "stated" | "implied";

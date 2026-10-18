@@ -5,7 +5,8 @@ import type { Model } from "../ai/gemini.ts";
 import { decide } from "../ai/decide.ts";
 import type { Docs } from "../docs.ts";
 import { budgetBand, budgetLower, budgetUpper } from "../market/match.ts";
-import { read } from "../market/read.ts";
+import { ClassifyTask, read } from "../market/read.ts";
+import { domain as domainOf } from "../market/domains.ts";
 import { type Mandate, type Need, type Place, newId } from "../market/types.ts";
 import type { Brief, SharedBrief } from "./model.ts";
 import { rolesFor } from "../market/roles.ts";
@@ -20,19 +21,34 @@ export interface BriefDraft { need: Need; shared: SharedBrief; mandate: Mandate 
   who?: string | null }
 
 export async function draft(model: Model | null, text: string, here: Place | null, now: number, category?: string | null): Promise<{ draft: BriefDraft | null; problem?: string }> {
-  const r = await read(text, "find", model, now, here, category, true);
+  // Which kind of request it is comes first (unless the app already knows). Then everything else is read at once: the
+  // request's fields and filters, the words providers see, and the questions — the questions are checked against the
+  // request's own words, so they don't wait for the filters. One model round after the category, not two.
+  const kind = category && domainOf(category) ? category : model ? (await decide(model, ClassifyTask, { text })).output : null;
+  const cat = kind && kind !== "none" && domainOf(kind) ? kind : null, asked = here?.name ? [`area: ${here.name}`] : [];
+  const profileAsks = cat ? rolesFor(cat).profile : undefined;
+  const [r, s0, c0, pr0] = await Promise.all([
+    read(text, "find", model, now, here, category, true),
+    cat ? decide(model, SharedBriefTask, { text, category: cat, limit: null }) : null,
+    cat ? decide(model, ClarifyTask, { text, category: cat, known: asked }) : null,
+    cat && profileAsks?.length ? decide(model, ProfileTask, { text, category: cat, asks: profileAsks }) : null,
+  ]);
   if (r.draft?.kind !== "need") return { draft: null, problem: r.problem ?? "Couldn't read that as a request." };
-  const need = r.draft.need;
-  const known = [`area: ${need.place.name}`, ...(need.mode ? [`how: ${need.mode}`] : []), ...need.filters.map(f => `${f.label}: ${f.value}`)];
+  const need = r.draft.need, same = need.category === cat;
+  const limit = need.mandate?.price.limit ?? need.maxPrice ?? need.minPrice ?? null;
   // Someone looking for work shares a short profile (what an employer screens for) instead of answering generic
   // questions; the profile is theirs to fill, and never filters what they find.
   const asks = need.requesterPaid ? rolesFor(need.category).profile : undefined;
+  const known = [`area: ${need.place.name}`, ...(need.mode ? [`how: ${need.mode}`] : []), ...need.filters.map(f => `${f.label}: ${f.value}${f.upTo ? `–${f.upTo}` : ""}${f.unit ? ` ${f.unit}` : ""}`)];
+  // Read in another category than first thought (rare): those pieces are asked again for the right one.
   const [s, c, pr] = await Promise.all([
-    decide(model, SharedBriefTask, { text, category: need.category, limit: need.mandate?.price.limit ?? need.maxPrice ?? need.minPrice ?? null }),
-    asks ? null : decide(model, ClarifyTask, { text, category: need.category, known }),
-    asks ? decide(model, ProfileTask, { text, category: need.category, asks }) : null,
+    same && s0 ? s0 : decide(model, SharedBriefTask, { text, category: need.category, limit }),
+    asks ? null : same && c0 ? c0 : decide(model, ClarifyTask, { text, category: need.category, known }),
+    asks ? (same && pr0 ? pr0 : decide(model, ProfileTask, { text, category: need.category, asks })) : null,
   ]);
-  return { draft: { need, shared: share(need, s.output), who: s.output.who ?? null, mandate: need.mandate ?? null, clarify: c?.output ?? [], ...(pr ? { profile: pr.output } : {}),
+  // The words providers see never repeat the private limit (checked now that the limit is known).
+  const words = SharedBriefTask.validate(s.output, { text, category: need.category, limit }) ?? SharedBriefTask.fallback({ text, category: need.category, limit });
+  return { draft: { need, shared: share(need, words), who: words.who ?? null, mandate: need.mandate ?? null, clarify: c?.output ?? [], ...(pr ? { profile: pr.output } : {}),
     byModel: { ...r.byModel, brief: s.byModel, ...(c ? { clarify: c.byModel } : {}), ...(pr ? { profile: pr.byModel } : {}) } } };
 }
 
@@ -42,7 +58,9 @@ export function share(need: Need, words: { title: string; summary: string }): Sh
   return {
     title: words.title, summary: words.summary, category: need.category, mode: need.mode ?? null,
     area: need.place.name === "Online" ? null : need.place.name,
-    requirements: need.filters.filter(f => f.kind !== "price" && f.kind !== "place").map(f => ({ label: f.label, value: f.value, strength: f.strength })),
+    // A number reads as written: "2–3 years", not "2".
+    requirements: need.filters.filter(f => f.kind !== "price" && f.kind !== "place").map(f => ({ label: f.label,
+      value: f.kind === "number" ? `${f.value}${f.upTo ? `–${f.upTo}` : ""}${f.unit && !/^(count|number|none)$/i.test(f.unit) ? ` ${f.unit}` : ""}` : f.value, strength: f.strength })),
     budget: band, questions: need.mustAsk.slice(0, 4),
   };
 }

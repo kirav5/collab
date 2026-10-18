@@ -104,6 +104,9 @@ export interface Found {
   score: number;
 }
 
+/** Filled in once the rows to show are known. */
+const NO_RECORD = { deals: 0, kept: 0, fellThrough: 0 };
+
 /** People whose Public facts fit a brief, best first. */
 export async function search(db: Docs, model: Model | null, brief: Brief, me: string): Promise<{ found: Found[]; overBudget: Found[]; closest: Found[]; rankedByModel: boolean; considered: number }> {
   const query = `${brief.shared.title}. ${brief.shared.summary} ${brief.shared.requirements.map(r => `${r.label}: ${r.value}`).join("; ")}`;
@@ -144,14 +147,14 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
       if (!m) {
         // Only the price is in the way: say so (the owner may raise their limit) instead of dropping it silently.
         const [priced] = rank([{ key: fact.id, offer: fact.offer }], { ...brief.need, maxPrice: null }, t);
-        if (priced) overBudget.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: await stats(db, uid) },
+        if (priced) overBudget.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: NO_RECORD },
           fact: { id: fact.id, text: fact.text, offer: fact.offer }, why: null, distanceKm: priced.distanceKm || null, met: priced.met, unknown: priced.unknown, score: 0 });
         continue;
       }
       distanceKm = m.distanceKm || null; met = m.met; unknown = m.unknown;
       score += m.score * 0.5;
     }
-    candidates.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: await stats(db, uid) },
+    candidates.push({ profile: { uid, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: NO_RECORD },
       fact, why: null, distanceKm, met, unknown, score });
   }
   candidates.sort((a, b) => b.score - a.score);
@@ -169,15 +172,24 @@ export async function search(db: Docs, model: Model | null, brief: Brief, me: st
   const nearest: Found[] = [];
   if (!list.length && !overBudget.length) {
     const seen = new Set<string>();
-    for (const { doc, distance } of [...(near as { doc: Fact; distance: number }[])].sort((x, y) => x.distance - y.distance)) {
-      if (nearest.length >= 3 || distance > 0.75 || doc.owner === me || seen.has(doc.owner) || !doc.offer || doc.offer.status === "sold") continue;
-      seen.add(doc.owner);
-      const profile = (await db.get(PROFILES, doc.owner)) as Profile | null;
-      if (!profile || profile.paused || (profile as { deleted?: boolean }).deleted) continue;
-      nearest.push({ profile: { uid: doc.owner, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: await stats(db, doc.owner) },
-        fact: { id: doc.id, text: doc.text, offer: doc.offer }, why: "Closest on Collab — not an exact fit", distanceKm: null, met: [], unknown: [], score: 1 - distance });
+    const close = [...(near as { doc: Fact; distance: number }[])].sort((x, y) => x.distance - y.distance)
+      .filter(({ doc, distance }) => distance <= 0.75 && doc.owner !== me && !seen.has(doc.owner) && !!doc.offer && doc.offer.status !== "sold" && !!seen.add(doc.owner));
+    // Owners read three at a time (most are already read above), until three can be shown.
+    for (let at = 0; at < close.length && nearest.length < 3; at += 3) {
+      const batch = close.slice(at, at + 3);
+      const owners = await Promise.all(batch.map(async ({ doc }) => (profiles.has(doc.owner) ? profiles.get(doc.owner)! : (await db.get(PROFILES, doc.owner)) as Profile | null)));
+      for (const [i, { doc, distance }] of batch.entries()) {
+        const profile = owners[i];
+        if (nearest.length >= 3 || !profile || profile.paused || (profile as { deleted?: boolean }).deleted) continue;
+        nearest.push({ profile: { uid: doc.owner, handle: profile.handle, name: profile.name, bio: profile.bio, ...(profile.demo ? { demo: true } : {}), stats: NO_RECORD },
+          fact: { id: doc.id, text: doc.text, offer: doc.offer }, why: "Closest on Collab — not an exact fit", distanceKm: null, met: [], unknown: [], score: 1 - distance });
+      }
     }
   }
+  // Track records only for the people shown, read at once (each can be a scan of their conversations).
+  const shown = [...list.slice(0, 8), ...overBudget.slice(0, 3), ...nearest];
+  const records = new Map(await Promise.all([...new Set(shown.map(c => c.profile.uid))].map(async uid => [uid, await stats(db, uid)] as const)));
+  for (const c of shown) c.profile.stats = records.get(c.profile.uid)!;
   return { found: list.slice(0, 8).map(c => ({ ...c, fact: { id: c.fact.id, text: c.fact.text, offer: c.fact.offer } })), overBudget: overBudget.slice(0, 3), closest: nearest, rankedByModel: byModel, considered: best.size };
 }
 

@@ -13,10 +13,10 @@ import { fakeModel } from "./ai/fake.ts";
 import { decide } from "./ai/decide.ts";
 import { AnswerTask } from "./market/answer.ts";
 import { budgetBand } from "./market/match.ts";
-import { read } from "./market/read.ts";
+import { COMPARISONS, ClassifyTask, KINDS, read } from "./market/read.ts";
 import { aboutFrom, introFor, listingRoles, orientMandate, payerCue, roleTable, rolesFor } from "./market/roles.ts";
 import { hasContact, numbers } from "./market/text.ts";
-import { domain as domainOf } from "./market/domains.ts";
+import { type Domain, domain as domainOf } from "./market/domains.ts";
 import { savedKey } from "./market/answer.ts";
 import { docId } from "./docs.ts";
 import { area, resolve, suggest } from "./market/places.ts";
@@ -25,7 +25,7 @@ import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./cor
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { rememberAnswer } from "./core/memory.ts";
 import { JDTask, JoinError, hiringStatus, isApplication, joiningEffects, joiningMove, joinsOnLetter, requirementsFrom, screen } from "./core/hiring.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -66,7 +66,9 @@ import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
-import { DEMO_CANDIDATES, seedDemo } from "./demo.ts";
+import { DEMO_CANDIDATES, DEMO_CUSTOMERS, seedDemo } from "./demo.ts";
+import { demoAsks } from "./core/demo-asks.ts";
+import { runDaily, summarise } from "./core/daily.ts";
 import { log } from "./log.ts";
 import { PUSH, initPush, pushTo, saveToken } from "./core/push.ts";
 import { clean as cleanText } from "./core/wall.ts";
@@ -165,7 +167,8 @@ function needFrom(n: any): Need {
   const place = placeFrom(n?.place);
   if (!n || typeof n.category !== "string" || !place) throw new HttpError(400, "bad request draft");
   const filters = (Array.isArray(n.filters) ? n.filters : []).slice(0, 10).filter((f: any) => typeof f?.id === "string" && typeof f?.value === "string")
-    .map((f: any) => ({ id: text(f.id, 40), label: text(f.label, 60), kind: f.kind, comparison: f.comparison, value: text(f.value, 80), unit: f.unit ? text(f.unit, 20) : null,
+    .map((f: any) => ({ id: text(f.id, 40), label: text(f.label, 60), kind: KINDS.includes(f.kind) ? f.kind : "text", comparison: COMPARISONS.includes(f.comparison) ? f.comparison : "equals",
+      value: text(f.value, 80), ...(typeof f.upTo === "string" && Number(f.upTo) > Number(f.value) ? { upTo: text(f.upTo, 20) } : {}), unit: f.unit ? text(f.unit, 20) : null,
       strength: f.strength === "required" ? "required" : "preferred", source: f.source === "implied" ? "implied" : "stated", evidence: "", question: f.question ? text(f.question, 160) : null }));
   return { id: text(n.id, 40), category: text(n.category, 40), text: "", place, radiusKm: num(n.radiusKm, 0.5, 100) ?? 8, maxPrice: num(n.maxPrice, 1, 1e12),
     attributes: Object.fromEntries(Object.entries(n.attributes ?? {}).slice(0, 12).map(([k, v]) => [text(k, 40), text(v, 80)])),
@@ -269,8 +272,10 @@ app.get("/api/config", route(async () => ({ firebase: env.FIREBASE_WEB_CONFIG ? 
 
 // Goals: what the owner wants done, with each conversation as a task and a state that follows from them.
 app.get("/api/goals", route(async req => {
-  await backfillGoals(db, req.uid, now());
-  const gs = ((await db.find(GOALS, [["owner", "==", req.uid]], 100)) as Goal[]).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50);
+  // Older requests become goals at the same time as the list is read; read again only when some were made.
+  const q = () => db.find(GOALS, [["owner", "==", req.uid]], 100);
+  const [made, first] = await Promise.all([backfillGoals(db, req.uid, now()), q()]);
+  const gs = ((made > 0 ? await q() : first) as Goal[]).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 50);
   return Promise.all(gs.map(g => goalView(db, g)));
 }));
 app.get("/api/goals/:id", route(async req => {
@@ -410,7 +415,10 @@ app.get("/api/start", route(async req => {
   const seenOwner = new Set<string>(), available: Available[] = [];
   for (const { f } of scored) { if (seenOwner.has(f.owner) || available.length >= 24) continue; seenOwner.add(f.owner); available.push({ id: f.id, title: f.offer!.title, where: f.offer!.place?.name ?? "Online" }); }
   const d = await decide(model, StartIdeasTask, { area: p.area?.name ?? "", offers, asked, bought, available });
-  return { ideas: d.output.map(({ label, text }) => ({ label, text })), byModel: d.byModel };
+  // A request idea names a listing that's there now, so its category is known: the app sends it with the request and
+  // drafting skips the classification round.
+  const kindOf = new Map(pub.map(f => [f.id, f.offer!.category]));
+  return { ideas: d.output.map(({ label, text, ref }) => ({ label, text, ...(ref && kindOf.get(ref) ? { category: kindOf.get(ref) } : {}) })), byModel: d.byModel };
 }));
 /**
  * Delete the account: the agent stops at once, everything the person keeps (notes, listings, rules, limits, stock,
@@ -839,8 +847,9 @@ app.post("/api/engagements/:id/ask", route(async req => {
 const CHATS = "chats";
 const chatKey = (uid: string, id: string) => `${uid}_${id.replace(/[^\w-]/g, "").slice(0, 40)}`;
 app.get("/api/chats", route(async req => {
-  const rows = (await db.find(CHATS, [["owner", "==", req.uid]], 200)) as { id: string; updatedAt: number; json: string }[];
-  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100).flatMap(r => { try { return [JSON.parse(r.json)]; } catch { return []; } });
+  const rows = (await db.find(CHATS, [["owner", "==", req.uid]], 200)) as { id: string; updatedAt: number; json: string; deleted?: boolean }[];
+  // A deleted chat comes back as a marker, so every other device drops its copy too.
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100).flatMap(r => { if (r.deleted) return [{ id: r.id, deleted: true, updatedAt: r.updatedAt }]; try { return [JSON.parse(r.json)]; } catch { return []; } });
 }));
 app.post("/api/chats", route(async req => {
   const c = req.body?.chat;
@@ -850,6 +859,13 @@ app.post("/api/chats", route(async req => {
   const updatedAt = Number(c.updatedAt) || now();
   const stored = await db.update(CHATS, chatKey(req.uid, c.id), cur => cur && cur.updatedAt > updatedAt ? null : { owner: req.uid, id: c.id, updatedAt, json });
   return { ok: true, stale: !stored };
+}));
+/** Deletes one chat everywhere: a marker stays, so an older copy on another device can't bring it back. */
+app.post("/api/chats/:id/delete", route(async req => {
+  const id = String(req.params.id).replace(/[^\w-]/g, "").slice(0, 40);
+  if (!id) throw new HttpError(400, "not a chat");
+  await db.set(CHATS, chatKey(req.uid, id), { owner: req.uid, id, updatedAt: Math.max(now(), Number(req.body?.updatedAt) || 0) + 1, json: "", deleted: true });
+  return { deleted: true };
 }));
 app.post("/api/chats/clear", route(async req => {
   const rows = (await db.find(CHATS, [["owner", "==", req.uid]], 500)) as { id: string }[];
@@ -892,13 +908,15 @@ app.post("/api/facts", route(async req => {
   const out = withPhoto ? publicFact(withPhoto) : fact;
   return body === raw ? out : { ...out, floorKeptPrivate: true };
 }));
+/** The owner's own notes and earlier answers, as lines for a model — never money, contacts or "never use" notes. */
+const notesFor = async (uid: string) => (await ownContext(db, uid, new Set())).map(a => a.fact.source === "answer" && a.fact.question ? `${a.fact.question} — ${a.fact.answer ?? ""}` : a.fact.text);
 /** Suggested answers to a listing's common questions (one of each question's options, or none) — see AnswersTask. */
 app.post("/api/offers/answers", route(async req => {
   await spend(req.uid, 1);
   const questions = (Array.isArray(req.body?.questions) ? req.body.questions : []).slice(0, 6).map((q: any) => ({ label: text(q?.label, 60), ask: text(q?.ask, 160),
     options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map((o: unknown) => text(o, 60)).filter(Boolean) })).filter((q: any) => q.label && q.options.length);
   if (!questions.length) return { answers: {} };
-  return { answers: (await decide(model, AnswersTask, { text: text(req.body?.text, 600), questions })).output };
+  return { answers: (await decide(model, AnswersTask, { text: text(req.body?.text, 600), questions, context: await notesFor(req.uid) })).output };
 }));
 /** A photo of something to sell → a listing sentence (Gemini reads it), and the photo kept for the listing. */
 app.post("/api/offers/photo", route(async req => {
@@ -1002,7 +1020,11 @@ app.get("/api/activity", route(async req => (await db.find(AUDIT, [["owner", "==
 // The device agent's model calls: what it sends is used for this one call and not stored or logged.
 app.post("/api/route", route(async req => {
   await spend(req.uid);
-  return (await decide(model, RouteTask, { text: text(req.body?.text, 600), recent: (Array.isArray(req.body?.recent) ? req.body.recent : []).slice(-4).map((r: unknown) => text(r, 200)),
+  const t = text(req.body?.text, 600);
+  // A request or an offer is drafted next, from the same words: its category is read alongside the routing (not waited
+  // for here), so the draft finds it in decide's cache.
+  if (model && t.trim().length >= 4) decide(model, ClassifyTask, { text: t.trim() }).catch(() => {});
+  return (await decide(model, RouteTask, { text: t, recent: (Array.isArray(req.body?.recent) ? req.body.recent : []).slice(-4).map((r: unknown) => text(r, 200)),
     open: typeof req.body?.open === "string" ? text(req.body.open, 120) : null })).output;
 }));
 app.post("/api/think", route(async req => {
@@ -1023,27 +1045,40 @@ app.post("/api/offers/draft", route(async req => {
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
   // Something being made public from the notes is read strictly (a plain fact stays a plain note); something the
   // owner said they're selling is read as an offering even when it's vague.
-  const r = await read(t, "sell", model, now(), here, null, req.body?.note !== true);
+  const transaction = req.body?.note !== true;
+  // Which kind of listing comes first. Then its reading, the gate and what the people answering it would ask are read
+  // at once: the questions are answered from the listing's own words, so they don't wait for its fields. Asked again
+  // only when the reading changes the kind or who pays (rare).
+  // What the owner already told their agent answers the listing's questions too (read alongside the classification).
+  const [c, context] = await Promise.all([model ? decide(model, ClassifyTask, { text: t }).then(d => d.output) : null, notesFor(req.uid)]);
+  const dom0 = c ? domainOf(c !== "none" ? c : transaction ? "other" : "") : null, roles0 = listingRoles(dom0?.id, payerCue(t) === "writer");
+  // What the people answering this kind of listing would otherwise ask, picked by Gemini, with tap-to-answer options;
+  // the likely answers come back with the questions (the card shows them at once).
+  const asking = async (d: Domain | null, roles: typeof roles0, attrs: Record<string, unknown>) => {
+    const hints = (d?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).map(x => ({ label: x.label, ask: x.ask! }));
+    const missing = (await decide(model, SellerAsksTask, { text: t, category: d?.label ?? "", known: Object.entries(attrs).map(([k, v]) => `${k}: ${v}`), hints,
+      owner: roles.owner, responders: roles.responders })).output;
+    const qs = missing.filter(q => q.options?.length).slice(0, 6).map(q => ({ label: q.label, ask: q.ask, options: q.options!.slice(0, 6) }));
+    return { missing, answers: qs.length ? (await decide(model, AnswersTask, { text: t, questions: qs, context })).output : {} };
+  };
+  const [r, early, judged] = await Promise.all([read(t, "sell", model, now(), here, dom0?.id ?? null, transaction),
+    dom0 ? asking(dom0, roles0, {}) : null, dom0 ? qualityOf(model, t, "sell", dom0.label, here?.name ? [`they are in ${here.name}`] : []) : null]);
   const dom = domainOf(r.draft?.kind === "offer" ? r.draft.offer.category : r.category ?? "");
   const roles = listingRoles(dom?.id, r.draft?.kind === "offer" ? !!r.draft.offer.ownerPays : payerCue(t) === "writer");
-  // What the people answering this kind of listing would otherwise ask, picked by Gemini, with tap-to-answer options.
-  const asks = async (attrs: Record<string, unknown>) => {
-    const hints = (dom?.terms ?? []).filter(x => x.ask && !(x.key in attrs)).map(x => ({ label: x.label, ask: x.ask! }));
-    return (await decide(model, SellerAsksTask, { text: t, category: dom?.label ?? "", known: Object.entries(attrs).map(([k, v]) => `${k}: ${v}`), hints,
-      owner: roles.owner, responders: roles.responders })).output;
+  const sameKind = !!dom && dom.id === dom0?.id, sameRoles = sameKind && roles.owner === roles0.owner && roles.responders === roles0.responders;
+  // Read as first thought: the questions stand, less any its fields turned out to state.
+  const asked = async (attrs: Record<string, unknown>) => {
+    if (!early || !sameRoles) return asking(dom, roles, attrs);
+    const stated = new Set(dom!.terms.filter(x => x.key in attrs).map(x => x.label.toLowerCase()));
+    const missing = early.missing.filter(q => !stated.has(q.label.toLowerCase()));
+    return { missing, answers: Object.fromEntries(Object.entries(early.answers).filter(([k]) => missing.some(q => q.label === k))) };
   };
-  // The likely answers come back with the questions — one wait, not two (the card shows them at once).
-  const answersFor = async (missing: Awaited<ReturnType<typeof asks>>) => {
-    const qs = missing.filter(q => q.options?.length).slice(0, 6).map(q => ({ label: q.label, ask: q.ask, options: q.options!.slice(0, 6) }));
-    return qs.length ? (await decide(model, AnswersTask, { text: t, questions: qs })).output : {};
-  };
-  const asking = async (attrs: Record<string, unknown>) => { const missing = await asks(attrs); return { missing, answers: await answersFor(missing) }; };
   if (r.draft?.kind !== "offer") {
     if (!dom) return { offer: null, floor: null, publicText: t, problem: r.problem ?? null };
     // An offering too vague to list (no price, or no place): the card asks for the basics, then reads it again. A
     // written floor is kept for the card, never in the text.
     const pays = payerCue(t) === "writer", written = statedLimit(t, pays);
-    const [{ missing, answers }, gate] = await Promise.all([asking({}), qualityOf(model, t, "sell", dom.label, [])]);
+    const [{ missing, answers }, gate] = await Promise.all([asked({}), judged && sameKind ? judged : qualityOf(model, t, "sell", dom.label, [])]);
     return { offer: null, floor: written, ownerPays: pays, publicText: written !== null ? withoutAmount(t, written) : t, problem: r.problem ?? null, missing, answers, gate,
       basics: { category: dom.id, label: dom.label, unit: dom.priceUnit ?? null, area: here?.name ?? null } };
   }
@@ -1055,11 +1090,12 @@ app.post("/api/offers/draft", route(async req => {
   const read_ = (ownerPays ? limit > opening : limit < opening) ? limit : null;
   const floor = read_ ?? (written !== null && (ownerPays ? written > listed : written < listed) ? written : null);
   const publicText = floor ? withoutAmount(t, floor) : t;
-  // A job post: what it asks of applicants, read from the JD (each quoted from it) for the employer to edit.
+  // A job post: what it asks of applicants, read from the JD (each quoted from it) for the employer to edit — alongside
+  // what the people answering this listing usually ask that it doesn't say yet (the owner can answer now, publicly).
   const o = r.draft.offer;
-  const requirements = ownerPays && rolesFor(o.category).flow === "hire" ? (await decide(model, JDTask, { text: publicText })).output : undefined;
-  // What the people answering this listing usually ask that it doesn't say yet — the owner can answer now, publicly.
-  const [{ missing, answers }, gate] = await Promise.all([asking(o.attributes), qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
+  const [jd, { missing, answers }, gate] = await Promise.all([ownerPays && rolesFor(o.category).flow === "hire" ? decide(model, JDTask, { text: publicText }) : null, asked(o.attributes),
+    judged && sameKind ? judged : qualityOf(model, publicText, "sell", dom?.label ?? "", [`price ${o.price.amount}`, `place ${o.place.name}`, ...Object.entries(o.attributes).map(([k, v]) => `${k}: ${v}`)])]);
+  const requirements = jd?.output;
   return { offer: { ...o, details: publicText, ...(requirements ? { requirements } : {}) }, floor, ownerPays, publicText, missing, answers, gate };
 }));
 
@@ -1121,23 +1157,38 @@ app.post("/api/briefs/draft", route(async req => {
   if (t.length < 4) throw new HttpError(400, "Say a bit more.");
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
   // Read and judged at the same time: the gate says whether it's specific enough for other people's agents to act on.
-  const [out, gate] = await Promise.all([draft(model, t, here, now(), hint), qualityOf(model, t, "buy", hint ?? "", [])]);
-  // A profile they shared on an earlier request of the same kind is offered again, so it's answered once.
+  const [out, judged] = await Promise.all([draft(model, t, here, now(), hint), qualityOf(model, t, "buy", hint ?? "", here?.name ? [`they are in ${here.name}`] : [])]);
+  // A profile they shared on an earlier request of the same kind is offered again, so it's answered once — what this
+  // request itself says comes first.
   if (out.draft?.profile) {
     const last = ((await db.find(BRIEFS, [["owner", "==", req.uid]], 50)) as Brief[])
       .filter(b => b.shared.category === out.draft!.need.category && b.shared.about?.length).sort((a, b) => b.createdAt - a.createdAt)[0];
-    for (const q of out.draft.profile) { const a = last?.shared.about?.find(x => x.label === q.label); if (a) q.answer = a.value; }
+    for (const q of out.draft.profile) {
+      const a = last?.shared.about?.find(x => x.label === q.label);
+      if (a && !q.answer) { q.answer = a.value; if (!q.options.includes(a.value)) q.options = [a.value, ...q.options].slice(0, 5); }
+    }
   }
-  return { ...out, gate };
+  // The gate runs alongside the reading, so it can repeat what Gemini's questions already ask: asked once.
+  return { ...out, gate: out.draft ? notAskedTwice(judged, [...out.draft.clarify.map(q => q.question), ...(out.draft.profile ?? []).map(q => `${q.label} ${q.question}`)]) : judged };
 }));
+/** The gate's questions without the ones another question already asks ("What time on Saturday?" ↔ "What time slot?"). */
+function notAskedTwice<G extends { ok: boolean; missing: { question: string }[] }>(gate: G, asked: string[]): G {
+  const STOP = /^(what|which|when|where|who|how|many|much|do|does|did|you|your|are|is|the|and|for|any|would|will|prefer|need|want|like|this|that|with|have|kind|type)$/;
+  const words = (q: string) => new Set(q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2 && !STOP.test(w)));
+  const same = (a: string, b: string) => { const x = words(a), y = words(b); if (!x.size || !y.size) return false; let n = 0; for (const w of x) if (y.has(w)) n++; return n / Math.min(x.size, y.size) >= 0.5; };
+  const missing = gate.missing.filter(m => !asked.some(q => same(m.question, q)));
+  return { ...gate, missing, ok: gate.ok || !missing.length };
+}
 /** The owner changes their open request ("try a wider area", "up to 600", "in Koramangala instead"): Gemini reads the
  *  change, code checks it, and the updated request comes back to be searched again. Says exactly what changed. */
 app.post("/api/briefs/refine", route(async req => {
   await spend(req.uid);
   const need = needFrom(req.body?.need), shared = sharedFrom(req.body?.shared, need);
   const limit = num(req.body?.limit, 1, 1e12);
+  const pending = (Array.isArray(req.body?.pending) ? req.body.pending : []).slice(0, 6).map((p: any) => ({ question: text(p?.question, 160),
+    options: (Array.isArray(p?.options) ? p.options : []).slice(0, 5).map((o: unknown) => text(o, 40)).filter(Boolean) })).filter((p: any) => p.question);
   const r = (await decide(model, RefineTask, { text: text(req.body?.text, 300), area: need.place.name, radiusKm: need.radiusKm, limit,
-    requirements: shared.requirements.map(q => ({ label: q.label, value: q.value })) })).output;
+    requirements: shared.requirements.map(q => ({ label: q.label, value: q.value })), pending })).output;
   const changes: string[] = [];
   if (r.area) {
     const p = resolve(r.area, need.place);
@@ -1150,16 +1201,30 @@ app.post("/api/briefs/refine", route(async req => {
     need.filters = need.filters.filter(f => !gone.has(f.label.toLowerCase()));
     changes.push(`dropped ${r.drop.join(", ")}`);
   }
+  // A detail they add ("needs 2-3 years") joins the request as a preference, in their words.
+  for (const a of r.add) {
+    if (shared.requirements.length >= 10 || need.filters.length >= 10) break;
+    shared.requirements.push({ label: a.label, value: a.value, strength: "preferred" });
+    need.filters.push({ id: `add-${need.filters.length}`, label: a.label, kind: "text", comparison: "mentions", value: a.value, unit: null, strength: "preferred", source: "stated", evidence: a.value, question: null });
+    changes.push(`${a.label}: ${a.value}`);
+  }
   if (r.limit) { shared.budget = budgetBand(need.requesterPaid ? { ...need, minPrice: r.limit, mandate: null } : { ...need, maxPrice: r.limit, mandate: null }); changes.push("new limit (private)"); }
-  return { need, shared, limit: r.limit ?? limit, changes };
+  return { need, shared, limit: r.limit ?? limit, changes, answers: r.answers };
 }));
 
+/** "Summarise my day now": the daily agent's note for the last 24 hours, kept Private (it also runs on its own daily). */
+app.post("/api/me/summary", route(async req => {
+  const p = await me(req.uid);
+  await spend(req.uid, 2);
+  const fact = await summarise(db, model, req.uid, p.name, now(), true);
+  return { fact };
+}));
 /** Answers the owner gave while making a request or a listing: kept Private, filled in the next time they're asked. */
 app.post("/api/memory/answers", route(async req => {
   await me(req.uid);
   const list = Array.isArray(req.body?.answers) ? req.body.answers.slice(0, 12) : [];
   let kept = 0;
-  for (const a of list) if (await rememberAnswer(db, req.uid, { question: text(a?.question, 200), answer: text(a?.answer, 400), about: text(a?.about, 80) }, now())) kept++;
+  for (const a of list) if (await rememberAnswer(db, req.uid, { question: text(a?.question, 200), answer: text(a?.answer, 400), about: text(a?.about, 80), label: text(a?.label, 30), category: text(a?.category, 40) }, now())) kept++;
   return { kept };
 }));
 
@@ -1169,6 +1234,9 @@ app.post("/api/briefs", route(async req => {
   const need = needFrom(req.body?.need);
   const b = await saveBrief(db, req.uid, need, sharedFrom(req.body?.shared, need), now());
   // Every request is a goal; the conversations it starts are that goal's tasks.
+  // The search starts at once; the goal and the limit are written alongside it (the search needs neither).
+  const searching = search(db, model, b, req.uid);
+  searching.catch(() => {}); // awaited below; this only keeps an early failure from going unhandled
   const goal = await createGoal(db, req.uid, b.shared.title, /service|lesson|task|repair|clean/i.test(need.category ?? "") ? "service" : "purchase", null, now());
   await db.merge(BRIEFS, b.id, { goalId: goal.id }); b.goalId = goal.id;
   const del = req.body?.delegate;
@@ -1178,7 +1246,7 @@ app.post("/api/briefs", route(async req => {
     const closeAt = num(del?.closeAt, 1, 1e12);
     await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: req.uid, mandate: m, autonomy: ["close", "ask"].includes(del?.autonomy) ? del.autonomy : "negotiate", expires: days ? now() + days * 86_400 : null, createdAt: now(),
       ...(closeAt != null && closeAt <= m.price.limit ? { closeAt } : {}), ...(typeof del?.rulesText === "string" ? { rulesText: text(del.rulesText, 600) } : {}) }); }
-  const found = await search(db, model, b, req.uid);
+  const found = await searching;
   event("request_sent", { category: b.shared.category || "none", found: found.found.length });
   bq.request(b, wantedUnits(need), b.createdAt);
   return { brief: b, goal, ...found };
@@ -1194,14 +1262,13 @@ app.post("/api/briefs/:id/engage", route(async req => {
   const brief = (await db.get(BRIEFS, String(req.params.id))) as Brief | null;
   if (!brief || brief.owner !== req.uid) throw new HttpError(404, "request not found");
   const picks = (Array.isArray(req.body?.providers) ? req.body.providers : []).slice(0, 5);
-  const out: Engagement[] = [];
-  for (const pick of picks) {
+  // Each chosen person's agent is contacted at the same time.
+  const out = await Promise.all(picks.map(async (pick: any) => {
     const f = (await db.get(FACTS, text(pick?.factId, 60))) as Fact | null;
     const p = f ? ((await db.get(PROFILES, f.owner)) as Profile | null) : null;
-    if (!f || !p || f.tier !== "public" || p.uid === req.uid) continue;
-    out.push(await startConversation(owner, brief, f, p));
-  }
-  return out;
+    return !f || !p || f.tier !== "public" || p.uid === req.uid ? null : startConversation(owner, brief, f, p);
+  }));
+  return out.filter((e): e is Engagement => !!e);
 }));
 /** A request's conversation with one provider: the requester's agent opens it (the first turn waits in the outbox). */
 async function startConversation(owner: Profile, brief: Brief, f: Fact, p: Profile): Promise<Engagement> {
@@ -1351,6 +1418,40 @@ app.post("/api/facts/:id/demo-applicants", route(async req => {
     added.push(e.id);
   }
   if (!added.length && !DEMO_CANDIDATES.some(c => applied.has(c.uid))) throw new HttpError(400, "The demo candidates aren't set up on this server.");
+  return { added: added.length };
+}));
+
+/**
+ * Demo customers come to the owner's own listing through the same flow as anyone: what each asks for (Gemini writes it
+ * from the listing), their own request, a private limit from the listed price, and their agent's first message. Their
+ * phones are simulated, so what would go to them comes to the owner, marked demo.
+ */
+app.post("/api/facts/:id/demo-customers", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || f.tier !== "public" || !f.offer) throw new HttpError(404, "listing not found");
+  if (f.offer.ownerPays || rolesFor(f.offer.category).flow === "hire") throw new HttpError(400, "For a job post, try it with the demo applicants.");
+  const owner = await me(req.uid);
+  await spend(req.uid, 4);
+  const came = new Set(((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 300)) as Engagement[]).filter(e => e.offer.factId === f.id).map(e => e.requester.uid));
+  const people = DEMO_CUSTOMERS.filter(c => !came.has(c.uid));
+  if (!people.length) return { added: 0 };
+  if (!(await db.get(PROFILES, people[0].uid))) throw new HttpError(400, "The demo customers aren't set up on this server.");
+  const offer = f.offer, asks = await demoAsks(model, { title: offer.title, details: offer.details || f.text, category: offer.category, area: offer.place.name }, people.length);
+  // Each reads their own request at the same time; then their agents open the conversations.
+  const drafts = await Promise.all(people.map((_, k) => draft(model, asks[k], offer.place, now(), offer.category).then(r => r.draft).catch(() => null)));
+  const added: string[] = [];
+  for (const [k, c] of people.entries()) {
+    const profile = (await db.get(PROFILES, c.uid)) as Profile | null, d = drafts[k];
+    if (!profile || !d || d.need.requesterPaid) continue;
+    const b = await saveBrief(db, c.uid, d.need, sharedFrom(d.shared, d.need), now());
+    const limit = Math.max(1, Math.round(offer.price.amount * c.stretch));
+    const m = orientMandate({ price: { opening: Math.max(1, Math.round(limit * 0.8)), limit }, terms: {}, maxRounds: 5 }, false);
+    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: c.uid, mandate: m, autonomy: "close", expires: null, createdAt: now() });
+    const e = await startConversation(profile, b, f, owner);
+    await sendTurn(cfg, e.id, null).catch(err => log.warn("demo customer didn't start", { id: e.id, error: String(err).slice(0, 160) }));
+    added.push(e.id);
+  }
+  if (!added.length) throw new HttpError(503, "The demo customers couldn't start just now — try again in a minute.");
   return { added: added.length };
 }));
 
@@ -1840,17 +1941,12 @@ app.post("/api/engagements/:id/close", route(async req => {
 
 // The owner's device: what only it can do
 async function inboxFor(uid: string): Promise<InboxItem[]> {
-  const mine = (await db.find(INBOX, [["owner", "==", uid], ["status", "==", "open"]], 100)) as InboxItem[];
-  const es = (await db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 100)) as Engagement[];
+  const [mine, es] = (await Promise.all([db.find(INBOX, [["owner", "==", uid], ["status", "==", "open"]], 100), db.find(ENGAGEMENTS, [["participants", "array-contains", uid]], 100)])) as [InboxItem[], Engagement[]];
   // A conversation that has ended asks nobody anything: leftovers from before that rule are closed as they're found.
   const ended = new Set(es.filter(e => e.phase === "closed" || e.phase === "declined" || e.fulfilment?.state === "accepted").map(e => e.id));
   // Demo people's devices are simulated: their items show up for the person talking to them.
-  const demo: InboxItem[] = [];
-  for (const e of es) {
-    for (const side of ["provider", "requester"] as const) {
-      if (actsForDemo(e, uid, side) && e.waiting[side]) demo.push(...((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === side));
-    }
-  }
+  const asks = es.flatMap(e => (["provider", "requester"] as const).filter(side => actsForDemo(e, uid, side) && e.waiting[side]).map(side => ({ e, side })));
+  const demo = (await Promise.all(asks.map(async ({ e, side }) => ((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === side)))).flat();
   const all = [...mine, ...demo];
   for (const i of all.filter(x => ended.has(x.engagementId))) void db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)).catch(() => {});
   return all.filter(i => !ended.has(i.engagementId)).sort((a, b) => b.createdAt - a.createdAt);
@@ -2022,7 +2118,9 @@ app.post("/cron/run", async (req, res, next) => {
       }
       if (g.allOrNothing && !g.compensation && (await compensate(db, g, now()))) compensated++;
     }
-    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, schedules: schedules.length, questioned: unasked.length, plans: planned.length, rounds, compensated });
+    // Each owner's daily agent: once a day, a summary of what they did goes into their Private context.
+    const summaries = await runDaily(db, model, now()).catch(err => { log.warn("daily summaries failed", { error: String(err).slice(0, 160) }); return 0; });
+    log.info("cron", { ...r, recovered, calendars: { total: calendars.length, synced }, schedules: schedules.length, questioned: unasked.length, plans: planned.length, rounds, compensated, summaries });
     res.json({ ...r, recovered, calendars: { total: calendars.length, synced } });
   } catch (e) { next(e); }
 });

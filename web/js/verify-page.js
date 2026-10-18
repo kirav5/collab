@@ -12,14 +12,14 @@ try {
   if (!candidates.length) throw new Error('Collab has published no verification keys.');
   let result = null, trusted = null;
   for (const key of candidates) { const r2 = await verifyReceiptBundle(r, key); if (!result || r2.receipt) { result = r2; trusted = key; } if (r2.receipt) break; }
-  document.querySelector('#status').textContent = result.receipt ? '✓ Receipt signature verified in this browser' : 'Verification failed';
+  { const st = document.querySelector('#status'); st.style.cssText = `font-weight:600;color:var(${result.receipt ? '--fresh' : '--danger'})`; st.textContent = result.receipt ? '✓ Receipt signature verified in this browser' : 'Verification failed'; }
   // The receipt itself (from the signed record), then what was checked.
   const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const t = r.terms, cur = t.currency ?? 'INR', qty = t.terms?.quantity > 1 ? t.terms.quantity : 1;
   const amount = n => (cur === 'INR' ? '₹' + Math.round(n).toLocaleString('en-IN') : new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(n));
   const total = r.payment?.cart?.total?.value ?? t.price * qty;
   const sellerSide = r.sides?.seller ?? r.payment?.seller ?? 'provider', buyerSide = sellerSide === 'provider' ? 'requester' : 'provider';
-  const cap = w => w[0].toUpperCase() + w.slice(1), payer = cap(r.sides?.payer ?? 'buyer'), payee = cap(r.sides?.payee ?? 'seller');
+  const cap = w => w[0].toUpperCase() + w.slice(1), payer = cap(r.sides?.payer ?? 'payer'), payee = cap(r.sides?.payee ?? 'payee');
   const owner = sellerSide === 'provider' ? payee : payer;
   const unpaid = !!r.sides?.noPayment, priceWord = r.sides?.price ?? 'price';
   const paid = unpaid ? `By the ${payer.toLowerCase()}, as agreed — not through Collab` : r.payment?.status === 'paid' ? 'Paid in the app (test mode — no money moved)' : r.payment?.status === 'outside' ? 'Paid outside the app (cash or UPI)' : 'Not paid yet';
@@ -37,4 +37,4 @@ try {
     <p class="small muted">Checked in this browser — agreement: ${ok(result.receipt)} · cart: ${ok(result.cart)} · payment: ${ok(result.payment)}${result.ap2 ? ` · AP2 checkout: ${ok(result.ap2.merchant)} · AP2 mandates: ${ok(result.ap2.mandates)}` : ''}${r.legacyAttestation ? ' · older agreement, attested on export' : ''}</p>`;
   const a = document.querySelector('#download');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' })); a.download = `collab-${id}.json`; a.hidden = false;
-} catch (e) { document.querySelector('#status').textContent = e.message; }
+} catch (e) { const st = document.querySelector('#status'); st.style.cssText = 'font-weight:600;color:var(--danger)'; st.textContent = e.message; }

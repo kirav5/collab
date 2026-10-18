@@ -27,7 +27,7 @@ import { dealItem } from "./direct.ts";
 import type { Audit, Contact, DelegatedLimit, Engagement, Event, Fact, InboxItem, QA, SharedBrief, Side } from "./model.ts";
 import { forProvider, forRequester, insights, recordDeal, registerReceipt, clearStats, trackRecord } from "./deals.ts";
 import { matchSaved, savedAnswers } from "./memory.ts";
-import { hasContact } from "../market/text.ts";
+import { contains, hasContact } from "../market/text.ts";
 import { type Allowed, FACTS, PROFILES, allowedFor, shapeAnswer } from "./policy.ts";
 import { GatherTask } from "./tasks.ts";
 import { pushTo } from "./push.ts";
@@ -139,7 +139,11 @@ const checking = (e: Engagement, s: Side) => {
   const roles = rolesFor(e.offer.category);
   return `The ${s === sellerOf(e) ? roles.payee : roles.payer}'s agent is checking with ${shortName(e[s].name)}.`;
 };
-const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: text.slice(0, 600), ...(by ? { by } : {}) }); };
+/** Rupee amounts read the Indian way, however the model grouped them: "₹13,500,000" → "₹1,35,00,000". */
+export const indianRupees = (t: string) => t.replace(/₹\s?(\d{1,3}(?:,\d{3})+|\d{6,})(?![\d,])/g, (_, n: string) => `₹${Number(n.replace(/,/g, "")).toLocaleString("en-IN")}`);
+/** One item's price isn't also its total: "₹3,250 per unit, which comes to ₹3,250 in total" → "₹3,250". */
+export const oneTotal = (t: string) => t.replace(/(₹[\d,]+)\s*(?:per|\/)\s*(?:unit|item|piece)[^.₹]{0,30}?(?:comes to|for a total of|totalling|totaling|total of)\s*\1(?:\s*in total)?/gi, "$1");
+const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: oneTotal(indianRupees(text)).slice(0, 600), ...(by ? { by } : {}) }); };
 const agentOf = (s: Side): Event["who"] => (s === "requester" ? "requester_agent" : "provider_agent");
 const by = (m: boolean): Event["by"] => (m ? "gemini" : "rules");
 const uidOf = (e: Engagement, s: Side) => (s === "requester" ? e.requester.uid : e.provider.uid);
@@ -337,10 +341,12 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
   }
-  // An answer the owner gave before and said their agent may give again: their exact words, no model.
+  // An answer the owner gave before and said their agent may give again: their exact words, no model — unless this
+  // request says it itself (today's "2–3 years" over an earlier request's "5+ years"; the old answer is still a fact).
   if (!paused && owner) {
     const mine = matchSaved(await savedAnswers(db, owner), q.question, true);
-    if (mine?.answer) return { text: mine.answer, src: "memory", review: false, byModel: false };
+    const briefSays = s === "requester" && [...e.brief.requirements, ...(e.brief.about ?? [])].some(r => r.label.length >= 4 && contains(q.question, r.label));
+    if (mine?.answer && !briefSays) return { text: mine.answer, src: "memory", review: false, byModel: false };
   }
   const key = s === "provider" && e.offer.factId ? docId(`${e.offer.factId}:${savedKey(q.question)}`) : null;
   const allowed = owner ? await allowedFor(db, owner, asker, now()) : [];
@@ -421,6 +427,8 @@ async function audit(db: Docs, owner: string | null, to: string, q: string, a: s
 async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   const names = await wallNames(db, uidOf(e, s), uidOf(e, other(s)) ?? "");
   const toName = s === "provider" ? e.requester.name : e.provider.name;
+  // Several questions for the owner at once get one "let me check", not one each.
+  let toOwner = false;
   for (const q of e.qa.filter(q => q.from === other(s) && q.status === "open")) {
     const a = q.personal ? null : await answerAs(db, model, e, s, q);
     // An answer Model Armor finds sensitive data in isn't sent: the owner checks it first.
@@ -438,12 +446,13 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
       (out.pending ??= []).push(q.question);
       if (a?.review) await ask(db, e, s, { kind: "approve", qaId: q.id, question: q.question, draft: a.text });
       else await ask(db, e, s, { kind: "answer", qaId: q.id, question: q.question });
-      say(e, agentOf(s), `Let me check with ${shortName(e[s].name)}.`, "rules");
+      toOwner = true;
     } else {
       q.status = "declined";
       (out.declined ??= []).push(q.question);
     }
   }
+  if (toOwner) say(e, agentOf(s), `Let me check with ${shortName(e[s].name)}.`, "rules");
 }
 
 // MARK: - Negotiating
@@ -655,14 +664,17 @@ export async function requesterTurn(db: Docs, model: Model | null, e: Engagement
     if (v.output === "unmet" && q.required) {
       // Only a yes/no check can end it; an information answer that misses stays "not met" for the owner to weigh.
       const isCheck = /^(can|could|do|does|is|are|will|would|have|has|did|shall)\b/i.test(q.question.trim());
-      if (isCheck && (v.byModel || v.settled)) {
+      // An answer that opens with a yes ("Yes, Saturday from 10 am works") never ends it on a reading of the rest: the
+      // owner weighs it.
+      const saysYes = /^(yes|yeah|yep|sure|of course|certainly|definitely|haan|ok|okay|absolutely)\b/i.test(a.answer.trim());
+      if (isCheck && !saysYes && (v.byModel || v.settled)) {
         e.phase = "closed";
         out.decline = `That doesn't work for ${shortName(e.requester.name)}, so we'll leave it here. Thank you.`;
         say(e, "system", `Ended: the answer to “${q.question}” didn't meet a must-have.`);
         say(e, "requester_agent", out.decline, by(v.byModel));
         return out;
       }
-      if (!isCheck) say(e, "system", `The answer to “${q.question}” didn't settle a must-have; the owner can decide.`);
+      if (!isCheck || saysYes) say(e, "system", `The answer to “${q.question}” didn't settle a must-have; the owner can decide.`);
     }
   }
   if (["agreed", "declined", "closed"].includes(e.phase)) return null;

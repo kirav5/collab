@@ -83,9 +83,15 @@ export function start(openChat) {
     clearInterval(poll);
     fs.engagements(list => setEngagements(list, openChat));
     // Demo people's devices are simulated on the server, so their items come through the API: checked less often.
-    // The listener's first snapshot is what refresh() above already loaded.
+    // The listener's first snapshot is what refresh() above already loaded. After that a new item shows at once (left
+    // out, as the server does, when its conversation has ended), and the API's list, with the demo people's, follows.
     let first = true;
-    fs.inbox(() => { if (first) { first = false; return; } refresh(openChat); });
+    const ended = id => { const e = live.engagements.get(id); return !!e && (e.phase === "closed" || e.phase === "declined" || e.fulfilment?.state === "accepted"); };
+    fs.inbox(items => {
+      if (first) { first = false; return; }
+      setInbox([...items.filter(i => !ended(i.engagementId)), ...live.inbox.filter(i => i.owner !== session.uid)], openChat); emit();
+      api("/api/inbox").then(x => { setInbox(x, openChat); emit(); }).catch(() => {});
+    });
     // With live listeners the poll is a backstop (alerts, watches, demo devices): once a minute, and only while the
     // tab is visible — 10,000 open apps must not poll four endpoints every few seconds.
     poll = setInterval(() => { if (!document.hidden) refresh(openChat); }, 60_000);

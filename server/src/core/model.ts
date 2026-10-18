@@ -35,12 +35,17 @@ export interface Fact {
   embedding?: number[];
   /** "chat": remembered from the owner's own chat (a question and the answer they got) — always Private.
    *  "answer": something the owner answered (an agent's question, a request's or a listing's), kept so they aren't
-   *  asked again (memory.ts) — always Private. */
-  source?: "chat" | "answer";
+   *  asked again (memory.ts) — always Private. "summary": the daily agent's note of what the owner did that day
+   *  (daily.ts) — always Private.  */
+  source?: "chat" | "answer" | "summary";
   question?: string;
   answer?: string;
   /** What it was asked about ("Guitar lessons"). */
   about?: string;
+  /** The question's short label ("Experience"). */
+  label?: string;
+  /** The kind of request it was answered for ("tutoring"): reused on its own only for the same kind. */
+  category?: string;
   /** The owner let their agent give this answer again without asking them. */
   reuse?: boolean;
   /** The owner said their agent must never use this note to answer anyone (it's still theirs to read). */
