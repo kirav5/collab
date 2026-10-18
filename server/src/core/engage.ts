@@ -389,7 +389,7 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
   // when it's confirmed, "needs to be confirmed" when it's stale, "isn't tracked" when there's no ledger.
   if (!paused && s === "provider" && e.offer.factId && isStockQuestion(q.question)) {
     const r = await resourceFor(db, e.offer.factId);
-    if (r) return { text: availabilityText(r, now()), src: "listing", review: false, byModel: false };
+    if (r) return { text: availabilityText(r, now(), q.question), src: "listing", review: false, byModel: false };
   }
   // An answer the owner gave before and said their agent may give again: their exact words, no model — unless this
   // request says it itself (today's "2–3 years" over an earlier request's "5+ years"; the old answer is still a fact).
@@ -555,6 +555,8 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
   if (s === "requester" && e.offer.price) {
     const paid = sellerOf(e) === "requester";
     if (!paid && mandate.price.opening >= e.offer.price) mandate = { ...mandate, price: { ...mandate.price, opening: Math.round(e.offer.price * 0.92) } };
+    // Only a ceiling said ("up to ₹1,650"): the agent opens below it rather than at it, so there's room to meet.
+    if (!paid && mandate.price.opening >= mandate.price.limit) mandate = { ...mandate, price: { ...mandate.price, opening: Math.min(Math.round(mandate.price.limit * 0.85), Math.round(e.offer.price * 0.92)) } };
     if (paid && mandate.price.opening <= e.offer.price) mandate = { ...mandate, price: { ...mandate.price, opening: Math.max(mandate.price.limit, Math.round(e.offer.price * 1.08)) } };
   }
   // A first offer people would say: ₹1,04,90,000 or ₹1,780, not ₹1,04,96,900 or ₹1,784 — rounded in the owner's

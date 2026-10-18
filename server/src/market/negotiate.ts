@@ -251,8 +251,11 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         const said = clean(move.message);
         return { ...move, message: (said && !leaks(said, ctx) && !invents(said, t) && !misnames(said) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
       }
+      // Handing the decision to the owner is for when the offers are used up: before that the rules' next move goes out
+      // (holding at the limit when there's no room), so the other side gets its turn — a buyer at its limit once gave
+      // up after one counter while the seller still had ₹200 of room.
       case "escalate":
-        return { ...move, message: escalation(ctx) };
+        return ctx.mine.length >= ctx.mandate.maxRounds ? { ...move, message: escalation(ctx) } : null;
       case "propose": {
         const p: Proposal = { ...move.proposal, terms: Object.fromEntries(Object.entries(move.proposal.terms).filter(([k]) => ctx.mandate.terms[k])), round: ctx.mine.length };
         // How many it's for (dropped from the terms above when it isn't negotiated): a message may say the total.

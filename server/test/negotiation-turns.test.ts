@@ -185,3 +185,20 @@ test("a demo seller at its limit repeats its best price as an offer, so the turn
   assert.equal(myTurnToMove(e, "requester"), true);
   assert.match(e.events.at(-1).text, /₹2,400\/night is our best/);
 });
+
+test("an agent hands the decision to its owner only when its offers are used up", async () => {
+  const { NegotiateTask } = await import("../src/market/negotiate.ts");
+  const ctx: any = { side: "buyer", unit: "day", mandate: { price: { opening: 1650, limit: 1650 }, terms: {}, maxRounds: 5 }, catalog: { buyerPrefersLower: () => true, termLabel: (k: string) => k, termUnit: () => null },
+    mine: [{ id: "m0", price: 1650, terms: {}, round: 0 }], theirs: [{ id: "t", price: 1700, terms: {}, round: 1 }] };
+  assert.equal(NegotiateTask.validate({ action: "escalate", message: "Checking with my owner" } as any, { ctx, listPrice: 1800 }), null, "four offers left: keep going");
+  ctx.mine = [0, 1, 2, 3, 4].map(round => ({ id: `m${round}`, price: 1650, terms: {}, round }));
+  assert.equal(NegotiateTask.validate({ action: "escalate", message: "x" } as any, { ctx, listPrice: 1800 })?.action, "escalate");
+});
+
+test("a request's time is answered for the day it names, not the next free slots", async () => {
+  const { askedDay } = await import("../src/core/resources.ts");
+  const mon = Date.parse("2026-10-19T04:30:00Z") / 1000; // Monday 10:00 IST
+  assert.deepEqual(askedDay("Are you available this Saturday afternoon?", mon, "Asia/Kolkata"), { day: 6, from: 12, to: 17, label: "Saturday" });
+  assert.equal(askedDay("Can you come tomorrow morning?", mon, "Asia/Kolkata")?.day, 2);
+  assert.equal(askedDay("How long does it take?", mon, "Asia/Kolkata"), null);
+});
