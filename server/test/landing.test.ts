@@ -1,29 +1,26 @@
-// The front page (web/js/landing.js): who sees it, and who goes straight into Collab.
+// The front page (web/js/landing.js): the Collab site whenever collab-55.web.app is opened in a browser; Collab
+// itself for the installed app, links, the site's Try and a reload inside Collab.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 // @ts-ignore browser module, pure functions
-import { returning, shouldLand } from "../../web/js/landing.js";
+import { inApp, shouldLand } from "../../web/js/landing.js";
 
-const store = (o: Record<string, string>) => ({ get length() { return Object.keys(o).length; }, key: (i: number) => Object.keys(o)[i] ?? null, getItem: (k: string) => o[k] ?? null });
-
-test("someone new in a browser sees the front page; the installed app, links and returning visitors go straight in", () => {
+test("the plain address in a browser shows the site — for everyone, signed in or not", () => {
   assert.equal(shouldLand(""), true);
-  assert.equal(shouldLand("?install"), true, "the front page's own QR");
-  assert.equal(shouldLand("", { installed: true }), false, "the installed app opens Collab");
-  assert.equal(shouldLand("", { before: true }), false, "used Collab here before");
-  assert.equal(shouldLand("?to=riya"), false, "a shop or person QR opens them");
-  assert.equal(shouldLand("?screen=requests&engagement=e1"), false, "a notification opens its conversation");
-  assert.equal(shouldLand("?landing", { installed: true, before: true }), true, "?landing always shows it");
+  assert.equal(shouldLand("?install"), true, "the site's own QR");
 });
 
-test("returning: a profile kept in this browser, or Try tapped once", () => {
-  assert.equal(returning(store({})), false);
-  assert.equal(returning(store({ "collab.me.u1": "null" })), false, "an account gone since");
-  assert.equal(returning(store({ "collab.me.u1": "{\"handle\":\"fr\"}" })), true);
-  assert.equal(returning(store({ "collab.tried": "1" })), true);
-  assert.equal(returning({ get length(): number { throw new Error("blocked"); } } as any), false, "storage blocked");
+test("the installed app, links, the site's Try and a reload inside Collab open Collab", () => {
+  assert.equal(shouldLand("", { installed: true }), false);
+  assert.equal(shouldLand("?try"), false, "Try it now / Open Collab");
+  assert.equal(shouldLand("", { opened: true }), false, "a reload or update of Collab in this tab");
+  assert.equal(shouldLand("?to=riya"), false, "a shop or person QR");
+  assert.equal(shouldLand("?screen=requests&engagement=e1"), false, "a notification");
+  assert.equal(shouldLand("?landing", { installed: true, opened: true }), true, "?landing always shows it");
 });
 
-test("coming back from the site's Try opens Collab, not the site again", () => {
-  assert.equal(shouldLand("?try"), false);
+test("in-app is per tab and survives blocked storage", () => {
+  assert.equal(inApp({ getItem: () => "1" }), true);
+  assert.equal(inApp({ getItem: () => null }), false);
+  assert.equal(inApp({ getItem: () => { throw new Error("blocked"); } }), false);
 });

@@ -1225,7 +1225,7 @@ footer .end { margin-left: auto; }
     e.preventDefault(); btn.hidden = false;
     btn.onclick = async () => { e.prompt(); const r = await e.userChoice; if (r.outcome === 'accepted') btn.hidden = true; };
   });
-  if (new URLSearchParams(location.search).has('install')) { box.classList.add('lit'); box.closest('.reveal')?.classList.add('in'); setTimeout(() => box.scrollIntoView({ block: 'center' }), 300); }
+  if (new URLSearchParams(location.search).has('install')) { box.classList.add('lit'); box.closest('.reveal')?.classList.add('in'); const go = () => box.scrollIntoView({ block: 'center' }); addEventListener('load', () => { go(); setTimeout(go, 800); }); }
 })();
 </script>
 </body>
