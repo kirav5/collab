@@ -107,19 +107,39 @@ Targeted re-check (normal allowance, so times include waiting out "Slow down a l
 the whole run (126 + 24 + 9), every conversation's state, agent log and receipt agree, and the screens match the
 server on Mac and iPhone sizes.
 
-## 5. Still to decide / smaller notes
+## 5. Follow-ups — all fixed (#34, #35)
 
-- **The demo portrait seller's limit differs from its seed** (₹1,600 / 8 rounds stored vs ₹1,500 / 5 seeded). Left
-  as is; reseeding would reset it.
-- **Normal allowance and busy people.** With the boost off, a person running 2 negotiations at once while answering
-  questions hits "Slow down a little" within minutes (60 requests, then 4 a minute). Fine for people; worth knowing
-  for heavy sellers answering many buyers.
-- **Below-floor conversations wait forever.** When both agents reach their owners' limits, each hands the decision to
-  its owner ("No deal inside your limits after 5 offers…") and the conversation stays "negotiating" until someone acts.
-  Correct for safety; a time-out that closes it politely after, say, 24 h would keep Activity tidy.
-- **Amount style varies** within one conversation ("₹1.11 Cr" and "₹1,16,00,000"): both readable; could be made one.
-- **Role words slip** occasionally in Gemini's lines ("Would your client be open…", "lower her offer").
-- **"ACTIVITY" twice** at the top of every side-panel screen (title bar and the small label above the headline). → The
-  repeated label is removed.
-- The test harness answered with canned words ("As in my request") — real answers would give agents better context.
+| Was | Now |
+|---|---|
+| The demo portrait seller's limit had drifted to ₹1,600 / 8 rounds (someone acting for it chose that, and it was stored for everyone) | A limit chosen while acting for a demo person applies to that conversation only; drifted demo limits are reset on start. Production is back to ₹1,500 / 5. |
+| A person running 2 negotiations while answering questions hit "Slow down a little" within minutes (60, then 4 a minute) | 120, then 10 a minute; answering your own agent's question costs 1 instead of 2. |
+| Below-floor conversations stayed "negotiating" until someone acted | After a day with neither limit changed, the conversation closes politely ("Closed without a deal… either side can start again"), both inbox items close and the owner is told. Also fixed: a reminded question stayed "due" for ever, so past 50 of them newer deadlines weren't processed — it now leaves the due list. |
+| "₹1.11 Cr" on cards and "₹1,16,00,000" in the log | One style, exact: ₹1,16,00,000 everywhere; Gemini's "₹1.16 Cr" / "₹6.8 lakh" are converted. |
+| Role words in Gemini's lines ("your client", "lower her offer") | A line naming a client, customer, buyer or seller, or saying he/she, is replaced by the plain line ("Could you do ₹1,600?"); the prompt says the same. |
+| "ACTIVITY" twice at the top of side-panel screens | The repeated label is removed. |
+| The test answered questions with canned words | The re-check below answers each question as a person would. |
 
+### Re-check with the follow-ups live, answering as a person would
+
+Six negotiations on production after #35, each question answered with a specific, human answer ("I have a clear
+front-facing photo of my parents from their anniversary", "Warm and hand-made: earthy colours…"), normal allowance:
+
+| Seller | Buyer's limit | Seller's limit | Deal | Time |
+|---|---|---|---|---|
+| Portrait | ₹1,500 | ₹1,500 (reset) | **₹1,500** | 29 s |
+| Portrait | ₹1,545 | ₹1,500 | **₹1,520** | 27 s |
+| 3BHK flat | ₹1,29,00,000 | ₹1,28,00,000 | **₹1,28,50,000** | 25 s |
+| 3BHK flat | ₹1,32,00,000 | ₹1,28,00,000 | **₹1,28,50,000** | 16 s |
+| Logo | ₹5,000 | ₹4,800 | **₹5,000** | 21 s |
+| 2BHK rent | ₹35,000 | ₹34,500 | **₹35,000** | 20 s |
+
+6 of 6 closed, all inside both limits, no "Slow down" waits, no "₹… Cr" anywhere, no role words in the agents'
+offers. Two things it surfaced, also handled:
+
+- **Role words in the request's summary** ("A client requires a custom logo…", "A buyer is looking to purchase…") —
+  the first line the other agent reads. The summary now speaks as the request ("Needs a custom logo…", "Looking to
+  purchase…"), and Gemini is told to write it that way (#36).
+- **Old canned answers come back.** The flat's agent answered "Own funds, no loan" and "This Saturday, any time after
+  10 am" for the test account — remembered answers from earlier harness runs, reused as designed ("answered once,
+  never asked again"). The feature works; the test account's remembered answers are test leftovers and should be
+  cleared in About me → remembered answers before any further testing on it.

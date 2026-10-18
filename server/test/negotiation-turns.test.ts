@@ -126,3 +126,10 @@ test("an agent's line that names a role or guesses a gender is replaced by the p
   for (const bad of ["Would your client be open to ₹1,600?", "She can lower her offer to ₹500.", "Our customer can do ₹900.", "The seller asks ₹2,000."]) assert.equal(misnames(bad), true, bad);
   for (const ok of ["Could you do ₹1,600?", "We can come down to ₹4,800.", "Here's our offer: ₹900."]) assert.equal(misnames(ok), false, ok);
 });
+
+test("a request's summary speaks for itself, never 'a client' or 'a buyer'", async () => {
+  const { neutral } = await import("../src/core/tasks.ts");
+  assert.equal(neutral("A client requires a custom logo designed for a new café."), "Needs a custom logo designed for a new café.");
+  assert.equal(neutral("A buyer is looking to purchase a ready-to-move 3BHK. The client is seeking parking."), "Looking to purchase a ready-to-move 3BHK. Seeking parking.");
+  assert.equal(neutral("Looking for a guitar teacher at home."), "Looking for a guitar teacher at home.");
+});
