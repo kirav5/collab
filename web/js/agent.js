@@ -406,10 +406,13 @@ async function workOnce() {
   // is woken once (the server lets the seller's agent answer the latest offer).
   const t = Date.now() / 1000;
   for (const e of live.engagements.values()) {
-    if (kicked.has(e.id) || e.requester?.uid !== session.uid || !["negotiating", "asking"].includes(e.phase) || e.waiting?.requester || e.waiting?.provider) continue;
+    if (kicked.has(e.id) || e.requester?.uid !== session.uid || !["negotiating", "asking"].includes(e.phase) || e.waiting?.requester) continue;
+    // Their questions for us, untouched while their agent checks with its owner, are taken up too.
+    const theirOpen = e.waiting?.provider && (e.qa ?? []).some(q => q.from === "provider" && q.status === "open");
+    if (e.waiting?.provider && !theirOpen) continue;
     const n = e.negotiation ?? { requester: [], provider: [] };
     const sellersMove = n.lastBy ? n.lastBy === "requester" : n.provider.length <= n.requester.length;
-    if (!sellersMove || t - (e.updatedAt ?? t) < 20 || live.inbox.some(i => i.engagementId === e.id)) continue;
+    if ((!sellersMove && !theirOpen) || t - (e.updatedAt ?? t) < 20 || live.inbox.some(i => i.engagementId === e.id)) continue;
     kicked.add(e.id);
     api(`/api/engagements/${e.id}/run`, {}).then(poke).catch(() => {});
   }

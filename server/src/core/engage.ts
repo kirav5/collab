@@ -651,6 +651,19 @@ export async function providerTurn(db: Docs, model: Model | null, e: Engagement,
 
 // MARK: - The requester's agent
 
+/**
+ * While the provider's agent is checking something with its owner, its questions for the requester don't wait: the
+ * requester's agent answers what it can from its owner's context (or asks its owner) at once, so one person being away
+ * doesn't stop both sides. Returns the answers to send, or null.
+ */
+export async function answerWhileTheyCheck(db: Docs, model: Model | null, e: Engagement, t: Turn | null): Promise<Turn | null> {
+  if (t) applyTheirs(e, "requester", t);
+  if (["agreed", "declined", "closed"].includes(e.phase) || !e.qa.some(q => q.from === "provider" && q.status === "open")) return null;
+  const out: Turn = { kind: "collab.turn/v1", from: "requester", engagementId: e.id };
+  await answerOpen(db, model, e, "requester", out);
+  return out.answers?.length ? out : null;
+}
+
 /** Applies the provider's turn and decides the requester's (null when there's nothing to send yet). */
 export async function requesterTurn(db: Docs, model: Model | null, e: Engagement, t: Turn): Promise<Turn | null> {
   const out: Turn = { kind: "collab.turn/v1", from: "requester", engagementId: e.id };

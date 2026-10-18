@@ -45,3 +45,19 @@ test("a buyer with many rounds still reaches their limit in a few offers, and ne
   const again = planned({ ...base, mine: [{ id: "a", price: 930, terms: {}, round: 3 }], theirs: [{ id: "b", price: 1030, terms: {}, round: 3 }] }, 2);
   assert.ok(again.price > 930 && again.price <= 1000, `moves on from a repeated ₹930 (got ${again.price})`);
 });
+
+test("while their agent checks with its owner, their questions for us are still taken up — no stall", async () => {
+  const { memoryDocs } = await import("../src/docs.ts");
+  const { answerWhileTheyCheck } = await import("../src/core/engage.ts");
+  const db = memoryDocs();
+  const e: any = { id: "e1", phase: "asking", requester: { uid: "u1", handle: "me", name: "Asha" }, provider: { uid: "u2", handle: "steel", name: "Steel Bottle Store" },
+    participants: ["u1", "u2"], offer: { factId: "f1", title: "Water Bottles", price: 450, unit: "each", category: "goods" }, brief: { title: "Water bottles", summary: "", requirements: [] },
+    qa: [{ id: "q1", from: "requester", question: "Do you provide a GST invoice?", status: "pending" }, { id: "q2", from: "provider", question: "What quantity of bottles are you looking to order?", status: "open" }],
+    waiting: { requester: null, provider: { kind: "answer", inbox: ["i1"], text: "Do you provide a GST invoice?" } }, negotiation: { requester: [], provider: [], deal: null, dealBy: null, confirmed: { requester: false, provider: false } },
+    events: [], createdAt: 1, updatedAt: 1 };
+  await answerWhileTheyCheck(db, null, e, null);
+  const q2 = e.qa.find((q: any) => q.id === "q2");
+  assert.notEqual(q2.status, "open", "their question is answered or put to our owner, not left untouched");
+  const asked = (await db.find("inbox", [["owner", "==", "u1"]])).map((i: any) => i.question);
+  assert.ok(q2.status === "answered" || asked.includes("What quantity of bottles are you looking to order?"));
+});

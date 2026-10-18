@@ -25,7 +25,7 @@ import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./cor
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { rememberAnswer } from "./core/memory.ts";
 import { JDTask, JoinError, hiringStatus, isApplication, joiningEffects, joiningMove, joinsOnLetter, requirementsFrom, screen } from "./core/hiring.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -1496,6 +1496,14 @@ app.post("/api/engagements/:id/run", route(async req => {
   else if (e.requester.uid === req.uid && ["negotiating", "asking"].includes(e.phase) && !e.waiting.requester && !e.waiting.provider && myTurnToMove(e, "provider")) {
     await spend(req.uid, 2);
     await sendTurn(cfg, e.id, { kind: "collab.turn/v1", from: "requester", engagementId: e.id });
+  }
+  // Their agent is checking with its owner and asked us things nobody has taken up (a stall from before that was
+  // handled): our agent answers them now, or asks our owner.
+  else if (e.requester.uid === req.uid && ["negotiating", "asking"].includes(e.phase) && e.waiting.provider && !e.waiting.requester && e.qa.some(q => q.from === "provider" && q.status === "open")) {
+    await spend(req.uid, 2);
+    const answers = await answerWhileTheyCheck(db, model, e, null);
+    await saveEngagement(db, e);
+    if (answers) await sendTurn(cfg, e.id, answers);
   }
   return load(db, e.id);
 }));

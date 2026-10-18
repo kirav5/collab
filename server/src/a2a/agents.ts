@@ -19,7 +19,7 @@ import { rolesFor } from "../market/roles.ts";
 import type { Engagement, Fact, Profile } from "../core/model.ts";
 import { FACTS, PROFILES } from "../core/policy.ts";
 import { byHandle, chooseOffering } from "../core/directory.ts";
-import { type Turn, fresh, load, providerTurn, requesterTurn, save } from "../core/engage.ts";
+import { type Turn, answerWhileTheyCheck, fresh, load, providerTurn, requesterTurn, save } from "../core/engage.ts";
 import { take, withLease } from "../core/limits.ts";
 import { pushTo } from "../core/push.ts";
 import { outboxKey } from "../core/recovery.ts";
@@ -413,7 +413,9 @@ async function onProviderTask(cfg: A2AConfig, engagementId: string, task: Task):
   const e = await load(cfg.db, engagementId);
   if (!e.taskId) { e.taskId = task.id; e.contextId = task.contextId; }
   const theirs = turnOf(task.status?.message);
-  if (!theirs || task.status?.state === TaskState.TASK_STATE_WORKING) { await save(cfg.db, e); return null; }
+  if (!theirs) { await save(cfg.db, e); return null; }
+  // Their agent is checking with its owner: its questions for us are still answered now (from context, or our owner).
+  if (task.status?.state === TaskState.TASK_STATE_WORKING) { const answers = await answerWhileTheyCheck(cfg.db, cfg.model, e, theirs); await save(cfg.db, e); return answers; }
   const next = await requesterTurn(cfg.db, cfg.model, e, theirs);
   await save(cfg.db, e);
   return next;
