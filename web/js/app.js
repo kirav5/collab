@@ -1055,7 +1055,12 @@ async function send(text, offerFactId = null, hint = null) {
     await saveSession(cur);
   } finally { S.sending = false; $("#send").disabled = false; }
   paint();
-  if (autoFind) document.querySelector(`[data-act="brief-send"][data-msg="${autoFind}"]`)?.click();
+  // The card renders on the next frame: wait for its Find button, then press it (as the owner would).
+  if (autoFind) for (let i = 0; i < 40; i++) {
+    const b = document.querySelector(`[data-act="brief-send"][data-msg="${autoFind}"]`);
+    if (b) { b.click(); break; }
+    await new Promise(r => setTimeout(r, 100));
+  }
 }
 
 const findCard = el => {
