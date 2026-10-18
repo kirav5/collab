@@ -436,7 +436,22 @@ function howItWorks() {
     <div class="steps-plain"><div><b>1</b><span>Say what you need</span></div><div><b>2</b><span>Agents ask and bargain</span></div><div><b>3</b><span>You confirm, pay, collect</span></div></div></div>`;
 }
 
-/** The start of a chat: one question, your words, and a few things your agent thinks you might want next. */
+/** Starts shown at once, no model call: each is written for one of the live demo businesses, with a limit, so tapping it
+ *  runs the whole thing on its own — request, matching, agents asking and bargaining — and stops only for the one tap
+ *  that confirms the deal. Tested end to end on production (docs/STATIC-STARTS-2026-10-19.md). */
+export const STARTERS = [
+  { label: "Haircut this Saturday", category: "beauty", text: "Men's haircut in Indiranagar this Saturday afternoon, up to ₹420" },
+  { label: "Deep clean my 2BHK", category: "tasks", text: "Deep clean of my 2BHK in Koramangala this Saturday morning, kitchen and two bathrooms, up to ₹3,300" },
+  { label: "Eggless birthday cake", category: "food", text: "Eggless 1 kg chocolate birthday cake, simple design with Happy Birthday written on it, delivered in Whitefield this Sunday evening, up to ₹1,050" },
+  { label: "AC service", category: "tasks", text: "AC service for one 1.5 ton split AC in HSR Layout this Saturday, up to ₹560" },
+  { label: "Guitar lessons", category: "lessons", text: "Guitar lessons for a beginner adult, at my home in Indiranagar, weekday evenings, up to ₹750 an hour" },
+  { label: "Rent a camera", category: "equipment-rental", text: "Rent a Sony mirrorless camera with a lens for this Saturday, pickup in Koramangala, up to ₹1,650 a day" },
+  { label: "Street food walk", category: "events", text: "Weekend street food walk in Basavanagudi for 2 people this Saturday evening, up to ₹1,100 each" },
+  { label: "Logo for my café", category: "services", text: "Logo and brand kit for my new café in Indiranagar, done in two weeks, up to ₹5,500" },
+];
+
+/** The start of a chat: one question, your words, the ready-made starts, and — for someone with history — a few ideas
+ *  of their own from Gemini, added when they arrive (never waited for). */
 let startIdeas = null;
 function emptyChat() {
   // Shown at once from this device's last copy, then refreshed in the background.
@@ -445,13 +460,14 @@ function emptyChat() {
     cached("/api/start", 120_000).then(r => { const fresh = r.ideas ?? []; try { localStorage.setItem(`collab.start.${session.uid}`, JSON.stringify(fresh)); } catch {}
       const changed = JSON.stringify(fresh) !== JSON.stringify(startIdeas); startIdeas = fresh; if (changed && S.screen === "chat") paintContent(true); }).catch(() => {});
   }
-  const ideas = startIdeas ?? [];
+  const ideas = (startIdeas ?? []).filter(i => !STARTERS.some(x => x.label.toLowerCase() === String(i.label).toLowerCase()));
   return `${howItWorks()}<div class="start">
     <span class="label sq">step 1 of 2 · say it in your words</span>
     <div class="row start-who">${avatarHTML(S.profile.name, S.profile.handle, 36)}<span class="label">your agent</span></div>
     <h2 class="headline">What are you looking for right now?</h2>
     <p class="muted">Something you need, something you offer, or a note to remember. Your agent takes it from there.</p>
-    ${ideas.length ? `<div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="send-text" data-text="${esc(i.text)}"${i.category ? ` data-category="${esc(i.category)}"` : ""} title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : `<div class="start-ideas loading" aria-label="Finding ideas for you">${[92, 128, 110, 140].map(w => `<span class="chip skel" style="width:${w}px"></span>`).join("")}</div>`}
+    <div class="start-ideas">${STARTERS.map(i => `<button class="chip" data-act="send-text" data-auto="1" data-text="${esc(i.text)}" data-category="${esc(i.category)}" title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>
+    ${ideas.length ? `<span class="label">for you</span><div class="start-ideas">${ideas.map(i => `<button class="chip" data-act="send-text" data-text="${esc(i.text)}"${i.category ? ` data-category="${esc(i.category)}"` : ""} title="${esc(i.text)}">${esc(i.label)}</button>`).join("")}</div>` : ""}
     ${privacyCard()}</div>`;
 }
 
@@ -1005,6 +1021,7 @@ async function pullChats() {
 async function send(text, offerFactId = null, hint = null) {
   text = text.trim();
   if (!text || S.sending) return;
+  let autoFind = null;
   S.sending = true;
   $("#send").disabled = true;
   try {
@@ -1028,6 +1045,8 @@ async function send(text, offerFactId = null, hint = null) {
       const r = cur.to ? await sendDirect(cur, text, offerFactId) : await chat(text, recent, S.profile.area, open, hint);
       if (r.askArea) S.pendingAsk = r.askArea;
       Object.assign(reply, r, { pending: null, engine: r.engine ?? "Gemini" });
+      // A ready-made start goes straight on to finding and talking: nothing to fill in, no Find to tap.
+      if (hint?.auto && reply.cards?.[0]?.type === "brief" && reply.cards[0].step === "review") autoFind = reply.id;
     } catch (e) {
       // A refusal (not enough in stock, over budget…) is said as it is; when there's an offer that fits, it's one tap away.
       Object.assign(reply, { pending: null, text: e.status && e.status < 500 ? e.message : `Something went wrong: ${e.message}`,
@@ -1036,6 +1055,7 @@ async function send(text, offerFactId = null, hint = null) {
     await saveSession(cur);
   } finally { S.sending = false; $("#send").disabled = false; }
   paint();
+  if (autoFind) document.querySelector(`[data-act="brief-send"][data-msg="${autoFind}"]`)?.click();
 }
 
 const findCard = el => {
@@ -1281,7 +1301,7 @@ async function onClick(e) {
     if (a === "prompt") { $("#input").value = el.dataset.text; $("#input").focus(); return; }
     if (a === "send-text") {
       if (S.sending) return toast("Your agent is still answering — send this in a moment.");
-      return send(el.dataset.text, el.dataset.offer || null, el.dataset.category ? { category: el.dataset.category } : null);
+      return send(el.dataset.text, el.dataset.offer || null, el.dataset.category ? { category: el.dataset.category, auto: el.dataset.auto === "1" } : null);
     }
     if (a === "preview-card") return await previewCard(el);
     if (a === "agent-card") return await showAgentCard(el.dataset.handle || undefined);

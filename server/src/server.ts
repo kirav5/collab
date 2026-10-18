@@ -412,6 +412,8 @@ app.get("/api/start", route(async req => {
   const offers = facts.filter(f => f.tier === "public" && f.offer).map(f => f.offer!.title.split(" · ")[0]).slice(0, 6);
   const asked = briefs.sort((a, b) => b.createdAt - a.createdAt).map(b => b.shared.title).filter((t, i, a) => a.indexOf(t) === i).slice(0, 6);
   const bought = es.filter(e => e.phase === "agreed" && e[e.seller ?? "provider"].uid !== req.uid).map(e => e.offer.title.split(" · ")[0]).slice(0, 6);
+  // Nothing of their own yet: the app's ready-made starts cover them, and no model call is spent.
+  if (!offers.length && !asked.length && !bought.length) return { ideas: [], byModel: false };
   // What others offer now, nearest first (online ones count anywhere), leaning to what this person asked for before.
   const pub = ((await db.find(FACTS, [["tier", "==", "public"]], 300)) as Fact[]).filter(f => f.offer && f.owner !== req.uid && f.offer.status !== "sold" && !/test: hostile/i.test(f.offer.title));
   const history = `${asked.join(" ")} ${bought.join(" ")}`.toLowerCase();

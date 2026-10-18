@@ -167,7 +167,7 @@ export async function chat(text, recent, area, open = null, hint = null) {
       if (!d.draft) return { text: d.problem ?? "Couldn't read that as a request — try adding what and where.", cards: [], askArea: /area/i.test(d.problem ?? "") ? text : null };
       // Past deals and earlier answers are read together (applyRecalled then finds the answers already loading).
       const [insights] = await Promise.all([insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) }), rememberedAnswers()]);
-      const card = await applyRecalled({ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" });
+      const card = await applyRecalled({ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review", ...(hint?.auto ? { skipAsk: true, gateOverride: true } : {}) });
       // A profile shared on an earlier request, or answered before, starts filled in (the owner can change any of it).
       if (d.draft.profile) d.draft.shared.about = d.draft.profile.filter(q => q.answer).map(q => ({ label: q.label, value: q.answer }));
       const filled = (card.answered ?? []).filter(x => x.before || x.said).length;

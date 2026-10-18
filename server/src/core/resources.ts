@@ -265,7 +265,24 @@ export async function resourceFor(db: Docs, factId: string): Promise<Resource | 
 }
 
 /** What may be said about availability, by anyone: a count only when it's confirmed. */
-export function availabilityText(r: Resource | null, now: number): string {
+const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+/** The day a question asks about, as a weekday (0–6) in the seller's zone: "this Saturday", "Sunday evening",
+ *  "today", "tomorrow"; and the part of the day when said ("morning" 5–12, "afternoon" 12–17, "evening" 17–23). */
+export function askedDay(q: string, now: number, tz: string): { day: number; from: number; to: number; label: string } | null {
+  const t = q.toLowerCase();
+  const local = (x: number) => new Date(new Date(x * 1000).toLocaleString("en-US", { timeZone: tz }));
+  let day: number | null = null, label = "";
+  const named = DAYS.findIndex(d => new RegExp(`\\b${d}s?\\b|\\b${d.slice(0, 3)}\\b`).test(t));
+  if (named >= 0) { day = named; label = DAYS[named][0].toUpperCase() + DAYS[named].slice(1); }
+  else if (/\btoday\b|\btonight\b/.test(t)) { day = local(now).getDay(); label = "today"; }
+  else if (/\btomorrow\b/.test(t)) { day = (local(now).getDay() + 1) % 7; label = "tomorrow"; }
+  else if (/\bweekend\b/.test(t)) { day = 6; label = "Saturday"; }
+  if (day === null) return null;
+  const [from, to] = /\bmorning\b/.test(t) ? [5, 12] : /\bafternoon\b/.test(t) ? [12, 17] : /\bevening\b|\btonight\b/.test(t) ? [17, 23] : [0, 24];
+  return { day, from, to, label };
+}
+
+export function availabilityText(r: Resource | null, now: number, question = ""): string {
   if (!r) return "Availability isn't tracked — they'll confirm.";
   if (certainty(r, now) === "stale") return "Availability needs to be confirmed first.";
   if (r.type === "quantity") { const n = available(r, now); return n > 0 ? `${n} ${r.unit === "each" ? "available" : r.unit + " available"}` : "Out of stock right now."; }
@@ -274,5 +291,17 @@ export function availabilityText(r: Resource | null, now: number): string {
   if (!free.length) return r.hours ? `${hoursText(r.hours)}, and every time is taken right now.` : "No open slots right now.";
   const fmt = (t: number) => new Date(t * 1000).toLocaleString("en-IN", { timeZone: r.timezone || "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
   const mins = Math.round((free[0].end - free[0].start) / 60);
+  // A question about a day ("free this Saturday afternoon?") gets that day's times, the nearest such day first — not
+  // the next free times overall, which once read as "no" to a Saturday request and ended the conversation.
+  const asked = askedDay(question, now, r.timezone || "Asia/Kolkata");
+  if (asked) {
+    const local = (x: number) => new Date(new Date(x * 1000).toLocaleString("en-US", { timeZone: r.timezone || "Asia/Kolkata" }));
+    const onDay = free.filter(sl => { const d = local(sl.start); return d.getDay() === asked.day && d.getHours() >= asked.from && d.getHours() < asked.to; });
+    const first = onDay[0] ? local(onDay[0].start).toDateString() : null;
+    const that = onDay.filter(sl => local(sl.start).toDateString() === first);
+    const part = asked.to - asked.from < 24 ? (asked.from === 5 ? " morning" : asked.from === 12 ? " afternoon" : " evening") : "";
+    if (that.length) return `Yes — ${asked.label}${part} is open: ${that.slice(0, 3).map(sl => fmt(sl.start)).join("; ")}${that.length > 3 ? ` (${that.length} times that day)` : ""}. Each takes about ${mins} minutes.`;
+    return `${asked.label}${part} is fully booked. Next free: ${free.slice(0, 3).map(sl => fmt(sl.start)).join("; ")}. Each takes about ${mins} minutes.`;
+  }
   return `${r.hours ? `${hoursText(r.hours)}. ` : ""}Next free: ${free.slice(0, 3).map(s => fmt(s.start)).join("; ")}${free.length > 3 ? ` (${free.length} open in all)` : ""}. Each takes about ${mins} minutes.`;
 }
