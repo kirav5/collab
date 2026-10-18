@@ -1,4 +1,5 @@
-import { verifyReceiptBundle } from './verify-receipt.js';
+// Imported with this page's own version (?v=<build>), so a browser never pairs a new page with an old verifier.
+const { verifyReceiptBundle } = await import(`./verify-receipt.js${new URL(import.meta.url).search}`);
 try {
   const [id, code] = location.hash.slice(1).split('.');
   const response = await fetch(`/public/receipts/${encodeURIComponent(id)}?code=${encodeURIComponent(code)}`, { cache: 'no-store' });

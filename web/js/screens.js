@@ -1064,32 +1064,42 @@ export const screens = {
 
 document.addEventListener("submit", e => { if (e.target.dataset.form) e.preventDefault(); });
 
-/** Scans a Collab QR code with the camera (where the browser can read codes); the phone camera works everywhere. */
-async function scan(h) {
-  const box = document.getElementById("scanner");
-  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
-    h.toast("Use your phone's camera app to scan a Collab QR code — it opens the chat here.");
-    return;
-  }
+/** Scans a Collab QR code with the camera, inside the app. The browser's BarcodeDetector where it has one (Chrome);
+ *  otherwise jsQR reads the camera frames (iPhone, where scanning with the phone's camera opens the browser instead of
+ *  the installed app). A shop's code opens their chat; a pickup pass opens the pass. */
+let jsQRp = null;
+const loadJsQR = () => (jsQRp ??= new Promise((res, rej) => { const s = document.createElement("script"); s.src = "/vendor/jsQR.js"; s.onload = () => res(window.jsQR); s.onerror = rej; document.head.appendChild(s); }));
+export async function scan(h, box = document.getElementById("scanner")) {
+  if (!navigator.mediaDevices?.getUserMedia) { h.toast("This browser can't use the camera — open Collab from your home screen to scan."); return; }
   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).catch(() => null);
-  if (!stream) return h.toast("Camera not available.");
-  box.innerHTML = `<div class="card"><video autoplay playsinline muted style="width:100%;max-height:320px;background:#000"></video><button class="btn quiet compact" id="scan-stop">Close</button></div>`;
+  if (!stream) return h.toast("Camera not available — allow camera access for Collab and try again.");
+  box.innerHTML = `<div class="card scan-card"><video autoplay playsinline muted style="width:100%;max-height:320px;background:#000;border-radius:6px"></video><span class="small muted">Point at a Collab QR — a shop's card or a pickup pass.</span><button class="btn quiet compact" id="scan-stop">Close</button></div>`;
   const video = box.querySelector("video");
   video.srcObject = stream;
-  const stop = () => { stream.getTracks().forEach(t => t.stop()); box.innerHTML = ""; };
+  const stop = () => { stream.getTracks().forEach(t => t.stop()); box.innerHTML = ""; box.dispatchEvent(new Event("scan-closed")); };
   box.querySelector("#scan-stop").onclick = stop;
-  const detector = new BarcodeDetector({ formats: ["qr_code"] });
+  const detector = "BarcodeDetector" in window ? new BarcodeDetector({ formats: ["qr_code"] }) : null;
+  const decode = detector ? null : await loadJsQR().catch(() => null);
+  if (!detector && !decode) { stop(); return h.toast("The scanner couldn't load — check your connection."); }
+  const canvas = document.createElement("canvas"), ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const read = async () => {
+    if (detector) return (await detector.detect(video).catch(() => []))[0]?.rawValue ?? null;
+    if (!video.videoWidth) return null;
+    const w = Math.min(640, video.videoWidth), hh = Math.round(w * video.videoHeight / video.videoWidth);
+    canvas.width = w; canvas.height = hh; ctx.drawImage(video, 0, 0, w, hh);
+    return decode(ctx.getImageData(0, 0, w, hh).data, w, hh, { inversionAttempts: "dontInvert" })?.data ?? null;
+  };
   for (let i = 0; i < 600 && box.contains(video); i++) {
-    const codes = await detector.detect(video).catch(() => []);
-    const raw = codes[0]?.rawValue;
+    const raw = await read();
     if (raw) {
-      const to = (() => { try { return new URL(raw).searchParams.get("to"); } catch { return null; } })();
       stop();
+      let u = null; try { u = new URL(raw); } catch {}
+      const to = u?.searchParams.get("to");
       if (to) return h.openDirect(to);
-      try { const u = new URL(raw); if (u.origin === location.origin && u.pathname === "/pickup.html") return h.openPass(u.pathname + u.hash); } catch {}
+      if (u && u.origin === location.origin && u.pathname === "/pickup.html") return h.openPass(u.pathname + u.hash);
       return h.toast("That isn't a Collab QR code.");
     }
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 200));
   }
   stop();
 }

@@ -108,6 +108,10 @@ echo "$BUILD_ID" > web/version.txt
 # new worker that fetches the new shell and reloads open apps into it. The tracked file is put back afterwards.
 cp web/sw.js web/.sw.js.orig && trap 'mv -f web/.sw.js.orig web/sw.js' EXIT
 sed -i.bak "s/^const SHELL = \"collab-shell-[^\"]*\";/const SHELL = \"collab-shell-$BUILD_ID\";/" web/sw.js && rm -f web/sw.js.bak
+# The public pass and receipt pages load their scripts with this build's version, so no browser runs a stale copy.
+for f in verify pickup; do cp "web/$f.html" "web/.$f.html.orig"; done
+trap 'mv -f web/.sw.js.orig web/sw.js; for f in verify pickup; do mv -f "web/.$f.html.orig" "web/$f.html"; done' EXIT
+sed -i.bak "s/\.js?v=[A-Za-z0-9_-]*\"/.js?v=$BUILD_ID\"/" web/verify.html web/pickup.html && rm -f web/verify.html.bak web/pickup.html.bak
 # Point-in-time recovery: the database can be restored to any moment in the last 7 days (best effort: needs the
 # Datastore owner role on the deploying account).
 gcloud firestore databases update --database='(default)' --enable-pitr --project "$PROJECT" >/dev/null 2>&1 || true

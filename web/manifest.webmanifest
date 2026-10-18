@@ -1,5 +1,6 @@
 {
   "name": "Collab — your agent",
+  "id": "/",
   "short_name": "Collab",
   "description": "Your agent asks anyone's agent for anything, over A2A with Gemini. Private notes are never shared.",
   "start_url": "/",
@@ -51,5 +52,19 @@
       "name": "About me",
       "url": "/?screen=context"
     }
-  ]
+  ],
+  "handle_links": "preferred",
+  "launch_handler": {
+    "client_mode": [
+      "navigate-existing",
+      "auto"
+    ]
+  },
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://collab-55.web.app/manifest.webmanifest"
+    }
+  ],
+  "prefer_related_applications": false
 }
