@@ -169,3 +169,19 @@ test("an answer that waits on details is never read as a 'no' to a must-have", a
   assert.equal(JudgeTask.validate!("unmet" as any, i as any), "unclear");
   assert.equal(JudgeTask.validate!("unmet" as any, { question: "Is it available next week?", answer: "No, we're fully booked next week." } as any), "unmet");
 });
+
+test("a demo seller at its limit repeats its best price as an offer, so the turn passes to the buyer", async () => {
+  const { fresh, move, myTurnToMove } = await import("../src/core/engage.ts");
+  const brief: any = { title: "Studio", summary: "Looking for a studio.", category: "", mode: null, area: null, requirements: [], budget: null, questions: [] };
+  const e: any = fresh({ briefId: "b1", brief, requester: { uid: "u1", handle: "u1", name: "Atishay" }, provider: { uid: "demo-nest-stays", handle: "nest-stays", name: "Nest Stays" },
+    offer: { factId: null, title: "Furnished studio", price: 2800, unit: "night", category: "stays" } });
+  e.phase = "negotiating";
+  e.negotiation.provider = [2800, 2550, 2450, 2400, 2400].map((price, round) => ({ id: `p${round}`, price, terms: {}, round }));
+  e.negotiation.requester = [{ id: "r1", price: 1950, terms: {}, round: 4 }]; e.negotiation.lastBy = "requester";
+  const out: any = { kind: "collab.turn/v1", from: "provider", engagementId: e.id };
+  const r = await move(null, e, "provider", { price: { opening: 2800, limit: 2400 }, terms: {}, maxRounds: 5 }, out);
+  assert.equal(r, null, "nothing for anyone to decide as them");
+  assert.equal(out.proposal.price, 2400);
+  assert.equal(myTurnToMove(e, "requester"), true);
+  assert.match(e.events.at(-1).text, /₹2,400\/night is our best/);
+});

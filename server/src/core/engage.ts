@@ -590,6 +590,16 @@ export async function move(model: Model | null, e: Engagement, s: Side, mandate:
     out.note = mv.message;
     say(e, agentOf(s), mv.message, by(m.byModel));
     say(e, "system", `Tentative deal: ${describe(theirs, c)}. Nothing is final until both owners confirm.`);
+  } else if (isDemoSide(e, s)) {
+    // A demo person at their limit holds their best price as a real offer — the turn passes to the other side (a
+    // line alone left the turn with them and the conversation stood still), whose agent takes it or asks its owner.
+    const mine = s === "provider" ? e.negotiation.provider : e.negotiation.requester, last = mine.at(-1);
+    const held = sized(e, { id: newId(), price: last?.price ?? mandate.price.limit, terms: last?.terms ?? {}, round: mine.length });
+    mine.push(held);
+    e.negotiation.lastBy = s;
+    out.proposal = held;
+    out.note = `${describe(held, c)} is our best — we can't go further on this one.`;
+    say(e, agentOf(s), out.note, "rules");
   } else {
     return { escalate: mv.message };
   }
