@@ -71,3 +71,12 @@ test("demo customers ask in their own words, never with prices or contacts; with
   const off = await decide(null, DemoAsksTask, listing);
   assert.deepEqual(off.output, ["Looking for home deep cleaning in Koramangala"]);
 });
+
+test("the request asked back isn't a question for providers", async () => {
+  const { ListingFieldsTask } = await import("../src/market/read.ts");
+  const { domain } = await import("../src/market/domains.ts");
+  const text = "Can you book a home deep cleaning for my 2BHK in Koramangala this Saturday?";
+  const d = await decide(model({ item: "home deep cleaning", place: "Koramangala", price: null, limit: null, attributes: {}, questions: [text, "Do you bring your own cleaning supplies?"] }),
+    ListingFieldsTask, { text, domain: domain("tasks")!, side: "find" });
+  assert.deepEqual(d.output.questions, ["Do you bring your own cleaning supplies?"]);
+});

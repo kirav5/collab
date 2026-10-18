@@ -110,7 +110,11 @@ JSON:`; },
       if (!t || !v || v.length > 60) return false;
       return t.kind !== "number" || digits.includes(Number(v.replace(/,/g, "")));
     }));
-    out.questions = f.questions.map(q => q.trim()).filter(q => q.length >= 8 && q.length <= 140 && !/phone|@/i.test(q));
+    // The request itself, asked back ("Can you book a deep clean for my 2BHK this Saturday?"), isn't a question to put to
+    // providers: it's what they're answering already.
+    const said = new Set(i.text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2));
+    const restated = (q: string) => { const w = q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(x => x.length > 2); return w.length >= 4 && w.filter(x => said.has(x)).length / w.length >= 0.8; };
+    out.questions = f.questions.map(q => q.trim()).filter(q => q.length >= 8 && q.length <= 140 && !/phone|@/i.test(q) && !restated(q));
     if (out.item.length > 40) out.item = i.domain.label.toLowerCase();
     // The writer's own words outrank the model's reading ("we're hiring" pays, "selling my bike" is paid).
     out.payer = payerCue(i.text) ?? f.payer;

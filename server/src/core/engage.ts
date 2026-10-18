@@ -658,14 +658,17 @@ export async function requesterTurn(db: Docs, model: Model | null, e: Engagement
     if (v.output === "unmet" && q.required) {
       // Only a yes/no check can end it; an information answer that misses stays "not met" for the owner to weigh.
       const isCheck = /^(can|could|do|does|is|are|will|would|have|has|did|shall)\b/i.test(q.question.trim());
-      if (isCheck && (v.byModel || v.settled)) {
+      // An answer that opens with a yes ("Yes, Saturday from 10 am works") never ends it on a reading of the rest: the
+      // owner weighs it.
+      const saysYes = /^(yes|yeah|yep|sure|of course|certainly|definitely|haan|ok|okay|absolutely)\b/i.test(a.answer.trim());
+      if (isCheck && !saysYes && (v.byModel || v.settled)) {
         e.phase = "closed";
         out.decline = `That doesn't work for ${shortName(e.requester.name)}, so we'll leave it here. Thank you.`;
         say(e, "system", `Ended: the answer to “${q.question}” didn't meet a must-have.`);
         say(e, "requester_agent", out.decline, by(v.byModel));
         return out;
       }
-      if (!isCheck) say(e, "system", `The answer to “${q.question}” didn't settle a must-have; the owner can decide.`);
+      if (!isCheck || saysYes) say(e, "system", `The answer to “${q.question}” didn't settle a must-have; the owner can decide.`);
     }
   }
   if (["agreed", "declined", "closed"].includes(e.phase)) return null;
