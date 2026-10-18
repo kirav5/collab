@@ -68,6 +68,8 @@ export type Verdict = "met" | "unmet" | "unclear";
 const AFFIRMATIVE = /^(yes|yeah|yep|sure|of course|certainly|definitely|haan|ha|ok|okay|done|absolutely)\b[\s.,!]*(that works|that's fine|no problem)?[\s.!]*$/i;
 const NEGATIVE = /^(no|nope|nah|nahi|not possible|can't|cannot|sorry,? no)\b[\s.!]*$/i;
 
+const DEFERS = /\b(send|share|tell|give|let) (us|me)\b|\blet (us|me) know\b|\b(we'?ll|i'?ll|will) (confirm|check|get back|let you know)\b|\bso (we|i) can (confirm|check)\b|\b(depends on|once you|if you (send|share|tell))\b|\?\s*$/i;
+
 export const JudgeTask: Task<{ question: string; answer: string }, Verdict> = {
   name: "judge.requirement",
   tier: "cheap",
@@ -76,7 +78,9 @@ export const JudgeTask: Task<{ question: string; answer: string }, Verdict> = {
   schema: { type: "object", properties: { verdict: { type: "string", enum: ["met", "unmet", "unclear"] } }, required: ["verdict"] },
   prompt: i => `Requirement (asked as): "${i.question.slice(0, 300)}"\nTheir answer: "${i.answer.slice(0, 300)}"`,
   parse: o => (["met", "unmet", "unclear"].includes(o.verdict) ? o.verdict : null),
-  validate: v => v,
+  // An answer that waits on details or says it will confirm isn't a no ("We can't check the calendar here — send us
+  // your dates and we'll confirm" once ended a stay the host could well have offered).
+  validate: (v, i) => (v === "unmet" && DEFERS.test(i.answer) ? "unclear" : v),
   // A bare "Yes." or "No." settles it without the model; anything wordier is the model's call.
   settled: i => { const a = i.answer.trim(); return AFFIRMATIVE.test(a) ? "met" : NEGATIVE.test(a) ? "unmet" : null; },
   fallback: () => "unclear",
