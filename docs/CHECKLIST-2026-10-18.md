@@ -40,6 +40,6 @@ Status: [x] done · [~] in progress · [ ] to do
 
 ## Ship
 - [x] Server checks pass (248 tests)
-- [x] Deployed to production (4d4a6ef)
+- [x] Deployed to production (4d4a6ef for testing, then 4cb1721 from main)
 - [x] Production test run: 27 drafts, 6 negotiations (all deals, no limit leaks), demo customers on a listing, every new feature — docs/TEST-REPORT-2026-10-18-prod.md
-- [~] PR #12 opened, CI green — merge after the production run
+- [x] PR #12 merged to main; production deployed from main (4cb1721) and smoke-tested
