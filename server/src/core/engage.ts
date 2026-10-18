@@ -391,6 +391,10 @@ async function answerAs(db: Docs, model: Model | null, e: Engagement, s: Side, q
     const r = await resourceFor(db, e.offer.factId);
     if (r) return { text: availabilityText(r, now(), q.question), src: "listing", review: false, byModel: false };
   }
+  // An add-on the request didn't ask for ("Would you also like a beard trim?") is declined for the buyer — offering
+  // extras isn't a question only they can answer, and stopping for it held up a whole booking.
+  if (!paused && s === buyerOf(e) && isUpsell(q.question, `${e.brief.title} ${e.brief.summary} ${e.brief.requirements.map(r => `${r.label} ${r.value}`).join(" ")}`))
+    return { text: "No thanks — just what I asked for.", src: "brief", review: false, byModel: false };
   // An answer the owner gave before and said their agent may give again: their exact words, no model — unless this
   // request says it itself (today's "2–3 years" over an earlier request's "5+ years"; the old answer is still a fact).
   if (!paused && owner) {
@@ -464,6 +468,20 @@ export async function demoReply(db: Docs, model: Model | null, e: Engagement, s:
     : { text: `That's something ${shortName(e[s].name)} would confirm directly — happy to go ahead and settle it after booking.`, byModel: false };
 }
 
+/** "Would you also like a beard trim?", "Shall we add a frame?", "Do you want gift wrapping as well?" — an extra the
+ *  request itself doesn't mention. */
+export function isUpsell(question: string, request: string): boolean {
+  const q = question.toLowerCase().trim();
+  // A yes/no offer of something more — not "Which colour do you want?", which asks for a detail of what was asked.
+  if (/^(which|what|how|when|where|who)\b/.test(q)) return false;
+  if (!/\b(also|as well|too|added|add|adding|include|including|extra|upgrade)\b/.test(q)) return false;
+  if (!/\b(would you|do you|shall (we|i)|want (us|me) to|should (we|i)|interested in)\b/.test(q)) return false;
+  // What the extra is: the words after the offer, less those the request already says.
+  const said = new Set(request.toLowerCase().match(/[a-z]{4,}/g) ?? []);
+  const extra = (q.match(/[a-z]{4,}/g) ?? []).filter(w => !["would", "like", "also", "want", "shall", "include", "added", "adding", "interested", "your", "service", "with", "that", "this", "well", "some", "have", "need"].includes(w));
+  return extra.length > 0 && !extra.some(w => said.has(w) || said.has(w.replace(/s$/, "")));
+}
+
 // A note that mentions money — a budget, a floor, what something cost them, a supplier's rate — is never used to
 // answer: prices others see come from listings and offers, never from private notes.
 export const MONEY = /₹|\brs\.?\s?\d|\brupees?\b|\$\s?\d|\binr\b|\b(budget|price limit|lowest|floor price|price floor|at most|max(?:imum)? (?:price|budget)|go below|go above|won'?t (?:go|pay|take)|can'?t (?:go|pay)|afford|kam se kam|best price|cost(?:s|ing)?|charges?|margin|profit|paid|salary|ctc|lakh|crore)\b|\b(?:limit|budget|max|min)\b[^.]{0,12}\d|\b(?:up ?to|under|below|above|over|at least)\s*\d/i;
@@ -499,7 +517,7 @@ async function audit(db: Docs, owner: string | null, to: string, q: string, a: s
 }
 
 /** This side's agent answers the other side's open questions; what it can't answer goes to its owner. */
-async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
+export async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   const names = await wallNames(db, uidOf(e, s), uidOf(e, other(s)) ?? "");
   const toName = s === "provider" ? e.requester.name : e.provider.name;
   // Several questions for the owner at once get one "let me check", not one each.
@@ -510,6 +528,10 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
     if (a && !a.review && outgoingScreen && (await outgoingScreen(a.text)).flagged) a.review = true;
     // Nobody plays a demo person: their agent answers what their notes don't cover itself.
     if ((!a || a.review) && isDemoSide(e, s)) { const r = await demoReply(db, model, e, s, q.question); a = { text: r.text, src: "listing", review: false, byModel: r.byModel }; }
+    // A demo business's detail question the request is silent on ("What brand is the AC?") doesn't stop the try-out
+    // for the person: their agent says it isn't specified and takes the standard option. Never for a real person asking.
+    if (!a && !q.personal && isDemoSide(e, other(s)) && hasOwner(e, s))
+      a = { text: "That isn't in my request — the standard option for what I described is fine. Tell me if it changes the price.", src: "brief", review: false, byModel: false };
     if (a && !a.review) {
       q.answer = clean(a.text, names, [toName]);
       q.source = a.src;

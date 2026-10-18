@@ -202,3 +202,35 @@ test("a request's time is answered for the day it names, not the next free slots
   assert.equal(askedDay("Can you come tomorrow morning?", mon, "Asia/Kolkata")?.day, 2);
   assert.equal(askedDay("How long does it take?", mon, "Asia/Kolkata"), null);
 });
+
+test("an extra the request didn't ask for is declined for the buyer; asked-for details are not", async () => {
+  const { isUpsell } = await import("../src/core/engage.ts");
+  const req = "Men's haircut in Indiranagar. Looking for a men's haircut this Saturday afternoon.";
+  assert.equal(isUpsell("Would you also like a beard trim added to your service?", req), true);
+  assert.equal(isUpsell("Do you want gift wrapping as well?", "Eggless 1 kg chocolate birthday cake"), true);
+  assert.equal(isUpsell("Would you like a haircut on Saturday afternoon?", req), false, "what was asked for");
+  assert.equal(isUpsell("Which style would you like?", req), false, "a detail, not an extra");
+});
+
+test("asking which detail is wanted is never treated as an extra", async () => {
+  const { isUpsell } = await import("../src/core/engage.ts");
+  assert.equal(isUpsell("Which colour do you want?", "Do you have a steel bottle?"), false);
+  assert.equal(isUpsell("Do you want it delivered too?", "Do you have a steel bottle?"), true);
+});
+
+test("a demo business's detail question the request is silent on is answered by the person's agent, not sent to them", async () => {
+  const { memoryDocs } = await import("../src/docs.ts");
+  const { fresh, save, answerOpen, INBOX } = await import("../src/core/engage.ts");
+  const db = memoryDocs();
+  const brief: any = { title: "AC service", summary: "AC service for one split AC in HSR Layout this Saturday.", category: "tasks", mode: null, area: null, requirements: [], budget: null, questions: [] };
+  const mk = (uid: string) => { const e: any = fresh({ briefId: "b1", brief, requester: { uid: "u1", handle: "u1", name: "Atishay" }, provider: { uid, handle: uid, name: "Cool Air" },
+    offer: { factId: null, title: "AC service", price: 600, unit: null, category: "tasks" } });
+    e.qa.push({ id: "q1", from: "provider", question: "What is the brand or make of the AC unit?", status: "open" }); return e; };
+  const demo = mk("demo-cool-air"); await save(db, demo);
+  const out: any = {}; await answerOpen(db, null, demo, "requester", out);
+  assert.match(demo.qa[0].answer, /isn't in my request/);
+  assert.equal((await db.find(INBOX, [["engagementId", "==", demo.id]])).length, 0);
+  const real = mk("someone-real"); await save(db, real);
+  await answerOpen(db, null, real, "requester", {} as any);
+  assert.equal(real.qa[0].status, "pending", "a real person's question still goes to the owner");
+});
