@@ -120,3 +120,9 @@ test("a pending question nobody is asked (its waiting entry lost) is asked again
   assert.equal(items[0].owner, "demo-pixel");
   assert.equal(await reaskPending(db, e), false, "already asked: nothing to do");
 });
+
+test("an agent's line that names a role or guesses a gender is replaced by the plain one", async () => {
+  const { misnames } = await import("../src/market/negotiate.ts");
+  for (const bad of ["Would your client be open to ₹1,600?", "She can lower her offer to ₹500.", "Our customer can do ₹900.", "The seller asks ₹2,000."]) assert.equal(misnames(bad), true, bad);
+  for (const ok of ["Could you do ₹1,600?", "We can come down to ₹4,800.", "Here's our offer: ₹900."]) assert.equal(misnames(ok), false, ok);
+});

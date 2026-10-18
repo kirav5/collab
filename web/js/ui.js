@@ -9,7 +9,9 @@ export function money(amount, period, currency = "INR") {
   if (amount == null) return "";
   if (currency !== "INR") return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount) + (period ? `/${period}` : "");
   const v = Math.round(amount);
-  const s = v >= 1e7 ? `₹${+(v / 1e7).toFixed(2)} Cr` : v >= 1e5 ? `₹${+(v / 1e5).toFixed(2)} L` : "₹" + v.toLocaleString("en-IN");
+  // Exact, in Indian grouping (₹1,16,00,000) — the same style as the agents' messages. "₹1.16 Cr" read differently
+  // in one conversation and rounded away real differences between offers (₹1,15,50,000 and ₹1,16,00,000).
+  const s = "₹" + v.toLocaleString("en-IN");
   return s + (period ? `/${period}` : "");
 }
 

@@ -255,8 +255,18 @@ async function refreshDemoSlots(db: Docs, now: number) {
   }
 }
 
+/** Demo sellers keep their seeded limits: one changed since (by someone acting for them) is put back on start. */
+async function resetDemoLimits(db: Docs) {
+  for (const p of PEOPLE) {
+    const key = `fact:demo-${p.handle}-offer`, l = (await db.get(LIMITS, key)) as DelegatedLimit | null;
+    const want = { price: { opening: p.offer.price, limit: p.offer.floor }, terms: {}, maxRounds: 5 };
+    if (l && (l.mandate.price.opening !== want.price.opening || l.mandate.price.limit !== want.price.limit || l.mandate.maxRounds !== 5 || l.autonomy === "ask"))
+      await db.set(LIMITS, key, { key, owner: `demo-${p.handle}`, mandate: want } satisfies DelegatedLimit);
+  }
+}
+
 export async function seedDemo(db: Docs, model: Model | null, now: number) {
-  if ((await db.get("meta", "demo"))?.version === SEEDED) return refreshDemoSlots(db, now);
+  if ((await db.get("meta", "demo"))?.version === SEEDED) { await resetDemoLimits(db); return refreshDemoSlots(db, now); }
   const city = resolve("Bengaluru");
   for (const p of PEOPLE) {
     const uid = `demo-${p.handle}`;

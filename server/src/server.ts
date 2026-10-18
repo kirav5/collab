@@ -139,7 +139,9 @@ async function uidOf(req: Request): Promise<string> {
 async function spend(uid: string, n = 1) {
   // A test account named for a load test (QUOTA_BOOST_UIDS, set only on that deploy) gets a larger allowance.
   const boosted = (env.QUOTA_BOOST_UIDS ?? "").split(",").map(s => s.trim()).filter(Boolean).includes(uid);
-  if (!(await take(db, `user:${uid}`, n, boosted ? 3000 : 60, boosted ? 3 : 1 / 15))) throw new HttpError(429, "Slow down a little — try again in a minute.");
+  // 120 at once, then 10 a minute: a busy seller answering several buyers' agents at once stays well inside it (the
+  // old 60 and 4 a minute stopped someone running two negotiations within minutes); still a ceiling on model use.
+  if (!(await take(db, `user:${uid}`, n, boosted ? 3000 : 120, boosted ? 3 : 1 / 6))) throw new HttpError(429, "Slow down a little — try again in a minute.");
 }
 
 const route = (h: Handler, auth = true) => async (req: Request, res: Response, next: NextFunction) => {
@@ -1991,7 +1993,7 @@ app.post("/api/inbox/:id", route(async req => {
   // A deal decision is yes or no, said explicitly — a missing or false "confirm" is never taken as yes.
   if (found.kind === "confirm" && (req.body?.confirm === true) === (req.body?.decline === true))
     throw new HttpError(400, "Say confirm: true to accept the deal, or decline: true to say no.");
-  await spend(req.uid, 2);
+  await spend(req.uid, 1); // a person answering their own agent's question: the cheapest thing they do
   // Claimed in a transaction: two devices (or two taps) can't both resolve it.
   let claimed = false;
   await db.update(INBOX, found.id, (cur: InboxItem | null) => { claimed = cur?.status === "open"; return claimed ? { ...cur!, status: "working" } : null; });

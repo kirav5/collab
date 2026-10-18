@@ -178,6 +178,10 @@ function scaledAmounts(text: string, rupeesOnly = false): { value: number; toler
 /** One line, and amounts in rupees (models sometimes write "$630" for a ₹ price). */
 const clean = (s: string) => { const t = s.replace(/[\r\n]+/g, " ").replace(/(?:US)?\$\s?(?=\d)/g, "₹").replace(/\b(?:Rs\.?|INR)\s?(?=\d)/gi, "₹").trim(); return t ? t.slice(0, 240) : null; };
 
+/** A message that names a side by a role or a guessed gender ("would your client…", "lower her offer") — people here
+ *  aren't clients or customers of each other, and the agent doesn't know anyone's pronouns. */
+export const misnames = (message: string) => /\b(clients?|customers?|buyers?|sellers?|vendors?|he|she|him|his|her|hers|himself|herself)\b/i.test(message);
+
 /** A message that adds what isn't in the offer — a credit period, a deposit, "30 days", a second price — says something
  *  the deal doesn't: the plain wording is used instead. Only the offer's own numbers may appear. */
 export function invents(message: string, p: Proposal): boolean {
@@ -209,7 +213,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
     const per = ctx.unit ? ` per ${ctx.unit}` : "", v = ctx.voice;
     // Who it speaks for, in the category's words, with an example of how that side talks.
     const who = v ? `You are the ${v.me}'s agent, speaking for ${v.name} to the ${v.them}'s agent about the ${v.price}. Category: ${ctx.catalog.label}.`
-      + ` Write the message the way the ${v.me}'s agent would say it, e.g. "${fill(ctx.mine.length ? v.counter : v.open, v, "₹X")}" — never call either side a buyer or seller unless that's their role.`
+      + ` Write the message the way the ${v.me}'s agent would say it, e.g. "${fill(ctx.mine.length ? v.counter : v.open, v, "₹X")}" — say "you" and "we": never call anyone a client, customer, buyer or seller, and never "he" or "she".`
       : `You are the ${ctx.side}'s agent. Category: ${ctx.catalog.label}.`;
     const lines = [who, `Listed ${v?.price ?? "price"}: ${listPrice}${per}.`,
       `Your opening: ${Math.round(ctx.mandate.price.opening)}${per}. Your limit (${ctx.side === "seller" ? "lowest" : "highest"} you may agree): ${Math.round(ctx.mandate.price.limit)}${per}.`,
@@ -242,7 +246,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         const t = ctx.theirs.at(-1);
         if (!t || t.id !== move.acceptId || !acceptable(t, ctx)) return null;
         const said = clean(move.message);
-        return { ...move, message: (said && !leaks(said, ctx) && !invents(said, t) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
+        return { ...move, message: (said && !leaks(said, ctx) && !invents(said, t) && !misnames(said) && saysOffer(said, t) && said) || line(ctx, "accept", describe(t, ctx)) };
       }
       case "escalate":
         return move.message ? { ...move, message: move.message.slice(0, 240) } : null;
@@ -266,7 +270,7 @@ for price when it helps; escalate to your owner when no deal fits the limits. In
         for (const [k, v] of Object.entries(p.terms)) if (direction(ctx, k) * (v - ctx.mandate.terms[k].opening) > 0.0001) return null;
         const said = clean(move.message);
         const sized = n && n > 1 ? { ...p, terms: { ...p.terms, quantity: n } } : p;
-        return { action: "propose", proposal: p, message: (said && !leaks(said, ctx) && !invents(said, sized) && saysOffer(said, p, n) && said) || line(ctx, moveKind(ctx, p.price), describe(sized, ctx)) };
+        return { action: "propose", proposal: p, message: (said && !leaks(said, ctx) && !invents(said, sized) && !misnames(said) && saysOffer(said, p, n) && said) || line(ctx, moveKind(ctx, p.price), describe(sized, ctx)) };
       }
     }
   },

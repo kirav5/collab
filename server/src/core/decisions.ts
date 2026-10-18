@@ -1,6 +1,7 @@
 // Decision deadlines. Every request to an owner has a deadline and a stated fallback; silence is never approval. At
 // the deadline a deal waiting for confirmation lapses (a chat reopens for a new offer; a negotiation goes back to
-// offers), and an unanswered question keeps waiting with one reminder. Run every minute with the outbox recovery.
+// offers), a negotiation waiting on its owners' limits closes politely, and an unanswered question keeps waiting with
+// one reminder. Run every minute with the outbox recovery.
 import type { Docs } from "../docs.ts";
 import type { Engagement, InboxItem } from "./model.ts";
 import { ENGAGEMENTS, INBOX } from "./engage.ts";
@@ -9,7 +10,7 @@ import { release } from "./resources.ts";
 
 export async function expireDecisions(db: Docs, now: number, remind: (i: InboxItem) => Promise<void>, max = 50) {
   const due = ((await db.find(INBOX, [["deadline", "<=", now]], max)) as InboxItem[]).filter(i => i.status === "open");
-  let lapsed = 0, reminded = 0;
+  let lapsed = 0, reminded = 0, timedOut = 0;
   for (const i of due) {
     if (i.onTimeout === "lapse") {
       const closed = await db.update(INBOX, i.id, (x: InboxItem | null) => (x?.status === "open" ? { ...x, status: "expired" } : null));
@@ -34,11 +35,28 @@ export async function expireDecisions(db: Docs, now: number, remind: (i: InboxIt
         await db.update(ENGAGEMENTS, e.id, (cur: Engagement | null) => (cur?.reservation ? { ...cur, reservation: { ...cur.reservation, state: "released" } } : null));
       }
       lapsed++;
+    } else if (i.kind === "move") {
+      // Both agents reached their owners' limits and nobody changed theirs within the day: the conversation closes
+      // politely instead of sitting in "negotiating" for ever. Nothing was agreed; either side can start again.
+      const closed = await db.update(INBOX, i.id, (x: InboxItem | null) => (x?.status === "open" ? { ...x, status: "expired" } : null));
+      if (!closed) continue;
+      const done = await db.update(ENGAGEMENTS, i.engagementId, (e: Engagement | null) => {
+        if (!e || e.phase !== "negotiating") return null;
+        return { ...e, phase: "closed", waiting: { requester: null, provider: null },
+          events: [...e.events, { at: now, who: "system", text: "Closed without a deal — the offers didn't meet within both limits, and neither limit changed within a day. Nothing was agreed; either side can start again." }], updatedAt: now };
+      });
+      if (done) {
+        for (const o of (await db.find(INBOX, [["engagementId", "==", i.engagementId], ["status", "==", "open"]], 20)) as InboxItem[])
+          await db.update(INBOX, o.id, (x: InboxItem | null) => (x?.status === "open" ? { ...x, status: "expired" } : null));
+        await remind({ ...i, question: "Closed without a deal — your limits didn't meet. You can start again any time." }).catch(() => {});
+        timedOut++;
+      }
     } else if (!(i as any).reminded) {
-      await db.update(INBOX, i.id, (x: any) => (x?.status === "open" && !x.reminded ? { ...x, reminded: true } : null));
+      // One reminder, then the item leaves the due list (a week on), so reminded items never crowd out newer ones.
+      await db.update(INBOX, i.id, (x: any) => (x?.status === "open" && !x.reminded ? { ...x, reminded: true, deadline: now + 7 * 86_400 } : null));
       await remind(i).catch(() => {});
       reminded++;
     }
   }
-  return { lapsed, reminded };
+  return { lapsed, reminded, timedOut };
 }
