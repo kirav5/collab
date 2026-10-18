@@ -25,7 +25,7 @@ import { HANDLES, Problem, byHandle, saveFact, saveProfile, search } from "./cor
 import { BRIEFS, draft, saveBrief } from "./core/briefs.ts";
 import { rememberAnswer } from "./core/memory.ts";
 import { JDTask, JoinError, hiringStatus, isApplication, joiningEffects, joiningMove, joinsOnLetter, requirementsFrom, screen } from "./core/hiring.ts";
-import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck, pruneWaiting, afterAnswers, hasContent } from "./core/engage.ts";
+import { ANSWERS, AUDIT, CONTACTS, ENGAGEMENTS, INBOX, Invalid, LIMITS, Refused, fresh, load, myTurnToMove, Stale, offerDeal, releaseBudget, reserveFor, resolve as resolveItem, save as saveEngagement, setOutgoingScreen, setSigner, type Turn, closeInbox, autoConfirm, respondToOffer, ShortStock, unitsOf, inStock, takeOffer, doneConfirms, shortlist, inviteToInterview, rejectApplication, ownContext, answerWhileTheyCheck, pruneWaiting, reaskPending, afterAnswers, hasContent } from "./core/engage.ts";
 import { modelArmor } from "./core/armor.ts";
 import { advancePlan, planGoal } from "./core/plans.ts";
 import { compensate, runRecurrence } from "./core/composed.ts";
@@ -2183,6 +2183,7 @@ async function unstick(): Promise<number> {
     const recent = (await db.find(ENGAGEMENTS, [["phase", "==", phase]], 200, "updatedAt").catch(() => db.find(ENGAGEMENTS, [["phase", "==", phase]], 200))) as Engagement[];
     for (const e of recent) {
       if (t - (e.updatedAt ?? t) < 120 || e.outbox) continue;
+      if (await reaskPending(db, e)) { await saveEngagement(db, e); n++; continue; }
       if (await pruneWaiting(db, e)) {
         for (const s of ["provider", "requester"] as const) {
           if (e.waiting[s] || ["agreed", "closed", "declined", "deal"].includes(e.phase)) continue;

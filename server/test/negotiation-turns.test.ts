@@ -104,3 +104,19 @@ test("an agent's own offer can't crawl: too slow toward the limit, and the sched
   const onTime = NegotiateTask.validate({ action: "propose", proposal: { id: "y", price: 1500, terms: {}, round: 3 }, message: "We can do ₹1,500." } as any, { ctx, listPrice: 1800 });
   assert.equal(onTime?.action, "propose");
 });
+
+test("a pending question nobody is asked (its waiting entry lost) is asked again, once", async () => {
+  const { memoryDocs } = await import("../src/docs.ts");
+  const { reaskPending } = await import("../src/core/engage.ts");
+  const db = memoryDocs();
+  const e: any = { id: "e1", title: "Logo", offer: { title: "Logo design · café" }, phase: "asking",
+    requester: { uid: "u1", name: "Asha" }, provider: { uid: "demo-pixel", name: "Pixel Studio" }, participants: ["u1", "demo-pixel"],
+    qa: [{ id: "q1", from: "requester", question: "Do you have a portfolio?", status: "pending", required: true }],
+    waiting: { requester: null, provider: null }, negotiation: { requester: [], provider: [], deal: null, dealBy: null, confirmed: { requester: false, provider: false } }, events: [] };
+  assert.equal(await reaskPending(db, e), true);
+  assert.equal(e.waiting.provider?.kind, "answer");
+  const items = await db.find("inbox", [["engagementId", "==", "e1"], ["status", "==", "open"]]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].owner, "demo-pixel");
+  assert.equal(await reaskPending(db, e), false, "already asked: nothing to do");
+});

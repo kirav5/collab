@@ -235,6 +235,21 @@ export async function pruneWaiting(db: Docs, e: Engagement): Promise<boolean> {
   return changed;
 }
 
+/** A question left pending with nobody asked (a save from an older copy dropped who it waits on, so it showed to no
+ *  one and the conversation stood still) is asked again — the same inbox item, by its fixed id. */
+export async function reaskPending(db: Docs, e: Engagement): Promise<boolean> {
+  let changed = false;
+  for (const q of e.qa.filter(q => q.status === "pending")) {
+    const s = other(q.from);
+    if (!hasOwner(e, s)) continue;
+    const open = await Promise.all((e.waiting[s]?.inbox ?? []).map(id => db.get(INBOX, id) as Promise<InboxItem | null>));
+    if (open.some(i => i?.status === "open" && i.qaId === q.id)) continue;
+    await ask(db, e, s, { kind: "answer", qaId: q.id, question: q.question });
+    changed = true;
+  }
+  return changed;
+}
+
 /** Whether a side has a device that can be asked (our users and demo people do; an outside A2A agent doesn't). */
 // An owner who can be asked: a person, not an anonymous outside agent.
 const hasOwner = (e: Engagement, s: Side) => { const u = uidOf(e, s); return !!u && !u.startsWith("anon:"); };
