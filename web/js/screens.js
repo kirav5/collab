@@ -297,6 +297,7 @@ export const screens = {
             <div class="seg compact end" role="group" aria-label="May your agent use this to answer others?"><button class="${f.noShare ? "" : "on"}" data-act="fact-use" data-id="${esc(f.id)}" data-use="1">Use</button><button class="${f.noShare ? "on" : ""}" data-act="fact-use" data-id="${esc(f.id)}" data-use="0">Never</button></div></div>` : ""}
           ${stockRow(f)}${rulesRow(f)}${termsRow(f)}
           <div class="row">${["private", "protected", "public"].filter(t => t !== f.tier).map(t => `<button class="btn secondary compact" data-act="fact-tier" data-id="${esc(f.id)}" data-tier="${t}">Make ${{ private: "private", protected: "protected", public: "public" }[t]}</button>`).join("")}
+            ${f.tier === "public" && f.offer && !f.offer.ownerPays ? `<button class="btn secondary compact" data-act="demo-customers" data-id="${esc(f.id)}" title="Simulated people nearby ask for this; their agents talk to yours">Try with demo customers</button>` : ""}
             <button class="btn danger compact end" data-act="fact-delete" data-id="${esc(f.id)}">Delete</button></div></div>`).join("") || `<p class="muted">Nothing yet. Tell your agent things in chat, or add them here.</p>`}</div>`);
     },
     async act(a, el, S, h) {

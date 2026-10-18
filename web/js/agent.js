@@ -145,10 +145,10 @@ export async function chat(text, recent, area, open = null) {
       if (d.draft.profile) d.draft.shared.about = d.draft.profile.filter(q => q.answer).map(q => ({ label: q.label, value: q.answer }));
       const insights = await insightsLines({ side: "requester", category: d.draft.need.category, area: d.draft.need.place.name, unit: d.draft.need.unit, item: itemOf(d.draft) });
       const card = await applyRecalled({ type: "brief", text, draft: d.draft, gate: d.gate ?? null, insights, step: "review" });
-      const filled = (card.answered ?? []).filter(x => x.before).length;
+      const filled = (card.answered ?? []).filter(x => x.before || x.said).length;
       return { text: d.gate && !d.gate.ok ? "I need a little more before I can search — tap what fits, or I'll go with what you said."
           : d.draft.profile ? "Here's your application. Add a short profile so I can answer employers for you, then send."
-          : filled ? `Got it. I filled in ${filled === 1 ? "an answer" : `${filled} answers`} from what you told me before — change anything, then I'll search.` : "Got it. Here's what I'll look for — change anything, then I'll search.",
+          : filled ? `Got it. I filled in ${filled === 1 ? "an answer" : `${filled} answers`} from what you've told me — change anything, then I'll search.` : "Got it. Here's what I'll look for — change anything, then I'll search.",
         cards: [card] };
     }
     case "offer": return offerReply(text, await api("/api/offers/draft", { text, here: area }));
@@ -268,6 +268,8 @@ export async function recallBrief(c) {
  * owner isn't held up by round after round of questions.
  */
 export async function applyRecalled(c) {
+  // What the request already says (Gemini read it, with the request's own words as evidence) is answered, not asked.
+  for (const q of c.draft?.clarify ?? []) if (q.answer) answerBrief(c, q.question, q.answer, "said");
   await recallBrief(c);
   const done = new Set((c.answered ?? []).map(x => x.question));
   const todo = [...(c.draft?.clarify ?? []), ...(c.gate?.missing ?? [])].filter(q => c.recalled?.[q.question] && !done.has(q.question))
@@ -282,10 +284,10 @@ export async function applyRecalled(c) {
  * request's requirements (what other agents see), the words are added for the record, and the question is done.
  */
 export function answerBrief(c, question, answer, before = false) {
-  const d = c.draft;
+  const d = c.draft, said = before === "said";
   if (!d || (c.answered ?? []).some(x => x.question === question)) return c;
-  (c.answered ??= []).push({ question, answer, ...(before ? { before: true } : {}) });
-  c.text = `${c.text}. ${question.replace(/\?$/, "")}: ${answer}`;
+  (c.answered ??= []).push({ question, answer, ...(said ? { said: true } : before ? { before: true } : {}) });
+  if (!said) c.text = `${c.text}. ${question.replace(/\?$/, "")}: ${answer}`;
   const when = /\b(when|time|day|days|date|week|book)\b/i.test(question);
   const reqs = d.shared.requirements;
   if (!reqs.some(r => r.value.toLowerCase().includes(String(answer).toLowerCase())))
@@ -296,9 +298,9 @@ export function answerBrief(c, question, answer, before = false) {
       value: String(answer).slice(0, 80), unit: null, strength: "preferred", source: "stated", evidence: String(answer).slice(0, 80), question });
   return trimQuestions(c);
 }
-/** Questions already answered aren't asked again, and two answers are enough. */
+/** Questions already answered aren't asked again, and two answers are enough (what the request itself said doesn't count). */
 export function trimQuestions(c) {
-  const asked = new Set((c.answered ?? []).map(x => x.question)), n = (c.answered ?? []).length;
+  const asked = new Set((c.answered ?? []).map(x => x.question)), n = (c.answered ?? []).filter(x => !x.said).length;
   if (c.draft) c.draft.clarify = n >= 2 ? [] : (c.draft.clarify ?? []).filter(q => !asked.has(q.question)).slice(0, 2 - n);
   if (c.gate && !c.gate.ok) { c.gate = { ...c.gate, missing: (c.gate.missing ?? []).filter(q => !asked.has(q.question)) }; if (!c.gate.missing.length || n >= 2) c.gate = { ...c.gate, ok: true }; }
   return c;

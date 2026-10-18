@@ -1100,6 +1100,14 @@ async function onClick(e) {
       finally { busy(el, false); }
       return refresh(openScreen);
     }
+    if (a === "demo-customers") {
+      // People nearby (simulated phones) whose agents ask for what this listing offers — Gemini writes what each wants.
+      busy(el, true, "Inviting");
+      try { const r = await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/demo-customers`, {}); toast(r.added ? `${r.added} demo customers are asking — their agents are talking to yours. See Activity.` : "The demo customers have already asked about this.", () => openScreen("requests")); }
+      catch (err) { toast(err.message, null, "error"); }
+      finally { busy(el, false); }
+      return refresh(openScreen);
+    }
     if (a === "demo-applicants") {
       busy(el, true, "Applying");
       try { const r = await api(`/api/facts/${encodeURIComponent(el.dataset.id)}/demo-applicants`, {}); toast(r.added ? `${r.added} demo candidates applied — their agents are talking to yours.` : "The demo candidates have already applied."); }
@@ -1461,7 +1469,7 @@ async function cardAction(a, el, { s, m, c }) {
     }
     // The seller's rules in their words, as they confirmed them: the agent's limits, most per buyer, public terms.
     if (fact.offer && c.rulesOk && c.rules) await api(`/api/facts/${fact.id}/rules`, { text: c.rulesText, rules: c.rules.rules }).catch(err => toast(err.message, null, "error"));
-    c.step = "published"; c.publicText = fact.text;
+    c.step = "published"; c.publicText = fact.text; c.factId = fact.id;
   }
   // Accept every suggested answer still open (the owner's own answers stay).
   if (a === "offer-use-suggested") {

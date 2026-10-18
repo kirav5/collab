@@ -421,6 +421,8 @@ async function audit(db: Docs, owner: string | null, to: string, q: string, a: s
 async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side, out: Turn) {
   const names = await wallNames(db, uidOf(e, s), uidOf(e, other(s)) ?? "");
   const toName = s === "provider" ? e.requester.name : e.provider.name;
+  // Several questions for the owner at once get one "let me check", not one each.
+  let toOwner = false;
   for (const q of e.qa.filter(q => q.from === other(s) && q.status === "open")) {
     const a = q.personal ? null : await answerAs(db, model, e, s, q);
     // An answer Model Armor finds sensitive data in isn't sent: the owner checks it first.
@@ -438,12 +440,13 @@ async function answerOpen(db: Docs, model: Model | null, e: Engagement, s: Side,
       (out.pending ??= []).push(q.question);
       if (a?.review) await ask(db, e, s, { kind: "approve", qaId: q.id, question: q.question, draft: a.text });
       else await ask(db, e, s, { kind: "answer", qaId: q.id, question: q.question });
-      say(e, agentOf(s), `Let me check with ${shortName(e[s].name)}.`, "rules");
+      toOwner = true;
     } else {
       q.status = "declined";
       (out.declined ??= []).push(q.question);
     }
   }
+  if (toOwner) say(e, agentOf(s), `Let me check with ${shortName(e[s].name)}.`, "rules");
 }
 
 // MARK: - Negotiating

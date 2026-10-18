@@ -66,7 +66,8 @@ import { FACTS, PROFILES, RULES, ruleActive } from "./core/policy.ts";
 import { RefineTask, RouteTask, TopicsTask } from "./core/tasks.ts";
 import { take } from "./core/limits.ts";
 import { TURN, a2aRouter, deliverProviderTurn, sendTurn, signReceipt } from "./a2a/agents.ts";
-import { DEMO_CANDIDATES, seedDemo } from "./demo.ts";
+import { DEMO_CANDIDATES, DEMO_CUSTOMERS, seedDemo } from "./demo.ts";
+import { demoAsks } from "./core/demo-asks.ts";
 import { log } from "./log.ts";
 import { PUSH, initPush, pushTo, saveToken } from "./core/push.ts";
 import { clean as cleanText } from "./core/wall.ts";
@@ -410,7 +411,10 @@ app.get("/api/start", route(async req => {
   const seenOwner = new Set<string>(), available: Available[] = [];
   for (const { f } of scored) { if (seenOwner.has(f.owner) || available.length >= 24) continue; seenOwner.add(f.owner); available.push({ id: f.id, title: f.offer!.title, where: f.offer!.place?.name ?? "Online" }); }
   const d = await decide(model, StartIdeasTask, { area: p.area?.name ?? "", offers, asked, bought, available });
-  return { ideas: d.output.map(({ label, text }) => ({ label, text })), byModel: d.byModel };
+  // A request idea names a listing that's there now, so its category is known: the app sends it with the request and
+  // drafting skips the classification round.
+  const kindOf = new Map(pub.map(f => [f.id, f.offer!.category]));
+  return { ideas: d.output.map(({ label, text, ref }) => ({ label, text, ...(ref && kindOf.get(ref) ? { category: kindOf.get(ref) } : {}) })), byModel: d.byModel };
 }));
 /**
  * Delete the account: the agent stops at once, everything the person keeps (notes, listings, rules, limits, stock,
@@ -1121,15 +1125,28 @@ app.post("/api/briefs/draft", route(async req => {
   if (t.length < 4) throw new HttpError(400, "Say a bit more.");
   const here = placeFrom(req.body?.here) ?? ((await db.get(PROFILES, req.uid)) as Profile | null)?.area ?? null;
   // Read and judged at the same time: the gate says whether it's specific enough for other people's agents to act on.
-  const [out, gate] = await Promise.all([draft(model, t, here, now(), hint), qualityOf(model, t, "buy", hint ?? "", [])]);
-  // A profile they shared on an earlier request of the same kind is offered again, so it's answered once.
+  const [out, judged] = await Promise.all([draft(model, t, here, now(), hint), qualityOf(model, t, "buy", hint ?? "", here?.name ? [`they are in ${here.name}`] : [])]);
+  // A profile they shared on an earlier request of the same kind is offered again, so it's answered once — what this
+  // request itself says comes first.
   if (out.draft?.profile) {
     const last = ((await db.find(BRIEFS, [["owner", "==", req.uid]], 50)) as Brief[])
       .filter(b => b.shared.category === out.draft!.need.category && b.shared.about?.length).sort((a, b) => b.createdAt - a.createdAt)[0];
-    for (const q of out.draft.profile) { const a = last?.shared.about?.find(x => x.label === q.label); if (a) q.answer = a.value; }
+    for (const q of out.draft.profile) {
+      const a = last?.shared.about?.find(x => x.label === q.label);
+      if (a && !q.answer) { q.answer = a.value; if (!q.options.includes(a.value)) q.options = [a.value, ...q.options].slice(0, 5); }
+    }
   }
-  return { ...out, gate };
+  // The gate runs alongside the reading, so it can repeat what Gemini's questions already ask: asked once.
+  return { ...out, gate: out.draft ? notAskedTwice(judged, out.draft.clarify.map(q => q.question)) : judged };
 }));
+/** The gate's questions without the ones another question already asks ("What time on Saturday?" ↔ "What time slot?"). */
+function notAskedTwice<G extends { ok: boolean; missing: { question: string }[] }>(gate: G, asked: string[]): G {
+  const STOP = /^(what|which|when|where|who|how|many|much|do|does|did|you|your|are|is|the|and|for|any|would|will|prefer|need|want|like|this|that|with|have|kind|type)$/;
+  const words = (q: string) => new Set(q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2 && !STOP.test(w)));
+  const same = (a: string, b: string) => { const x = words(a), y = words(b); if (!x.size || !y.size) return false; let n = 0; for (const w of x) if (y.has(w)) n++; return n / Math.min(x.size, y.size) >= 0.5; };
+  const missing = gate.missing.filter(m => !asked.some(q => same(m.question, q)));
+  return { ...gate, missing, ok: gate.ok || !missing.length };
+}
 /** The owner changes their open request ("try a wider area", "up to 600", "in Koramangala instead"): Gemini reads the
  *  change, code checks it, and the updated request comes back to be searched again. Says exactly what changed. */
 app.post("/api/briefs/refine", route(async req => {
@@ -1351,6 +1368,40 @@ app.post("/api/facts/:id/demo-applicants", route(async req => {
     added.push(e.id);
   }
   if (!added.length && !DEMO_CANDIDATES.some(c => applied.has(c.uid))) throw new HttpError(400, "The demo candidates aren't set up on this server.");
+  return { added: added.length };
+}));
+
+/**
+ * Demo customers come to the owner's own listing through the same flow as anyone: what each asks for (Gemini writes it
+ * from the listing), their own request, a private limit from the listed price, and their agent's first message. Their
+ * phones are simulated, so what would go to them comes to the owner, marked demo.
+ */
+app.post("/api/facts/:id/demo-customers", route(async req => {
+  const f = (await db.get(FACTS, String(req.params.id))) as Fact | null;
+  if (!f || f.owner !== req.uid || f.tier !== "public" || !f.offer) throw new HttpError(404, "listing not found");
+  if (f.offer.ownerPays || rolesFor(f.offer.category).flow === "hire") throw new HttpError(400, "For a job post, try it with the demo applicants.");
+  const owner = await me(req.uid);
+  await spend(req.uid, 4);
+  const came = new Set(((await db.find(ENGAGEMENTS, [["participants", "array-contains", req.uid]], 300)) as Engagement[]).filter(e => e.offer.factId === f.id).map(e => e.requester.uid));
+  const people = DEMO_CUSTOMERS.filter(c => !came.has(c.uid));
+  if (!people.length) return { added: 0 };
+  if (!(await db.get(PROFILES, people[0].uid))) throw new HttpError(400, "The demo customers aren't set up on this server.");
+  const offer = f.offer, asks = await demoAsks(model, { title: offer.title, details: offer.details || f.text, category: offer.category, area: offer.place.name }, people.length);
+  // Each reads their own request at the same time; then their agents open the conversations.
+  const drafts = await Promise.all(people.map((_, k) => draft(model, asks[k], offer.place, now(), offer.category).then(r => r.draft).catch(() => null)));
+  const added: string[] = [];
+  for (const [k, c] of people.entries()) {
+    const profile = (await db.get(PROFILES, c.uid)) as Profile | null, d = drafts[k];
+    if (!profile || !d || d.need.requesterPaid) continue;
+    const b = await saveBrief(db, c.uid, d.need, sharedFrom(d.shared, d.need), now());
+    const limit = Math.max(1, Math.round(offer.price.amount * c.stretch));
+    const m = orientMandate({ price: { opening: Math.max(1, Math.round(limit * 0.8)), limit }, terms: {}, maxRounds: 5 }, false);
+    await db.set(LIMITS, `brief:${b.id}`, { key: `brief:${b.id}`, owner: c.uid, mandate: m, autonomy: "close", expires: null, createdAt: now() });
+    const e = await startConversation(profile, b, f, owner);
+    await sendTurn(cfg, e.id, null).catch(err => log.warn("demo customer didn't start", { id: e.id, error: String(err).slice(0, 160) }));
+    added.push(e.id);
+  }
+  if (!added.length) throw new HttpError(503, "The demo customers couldn't start just now — try again in a minute.");
   return { added: added.length };
 }));
 
