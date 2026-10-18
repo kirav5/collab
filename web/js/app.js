@@ -16,7 +16,7 @@ import { passHTML, passKind, passQR } from "./pass.js";
 import { clearPanel, closePanel, openPanel as showPanel, panelDetail, startPanel } from "./panel.js";
 import { screens } from "./screens.js";
 import { privacyFacts } from "./processing.js";
-import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon } from "./ui.js";
+import { ask, avatarHTML, brand, $, busy, esc, id, label, money, notice, now, shortName, tag, toast, logo, icon, FEATURES } from "./ui.js";
 import { limitPast, offerWords, ownerPays, partyRoles } from "./roles.js";
 
 const S = { profile: null, sessions: [], current: null, screen: "chat", focus: null, sending: false };
@@ -128,7 +128,7 @@ async function boot() {
     <aside class="sidebar" id="sidebar"></aside>
     <main class="main"><div class="topbar" id="topbar"></div><div class="content" id="content"></div>
       <div class="composer" id="composer"><form class="box" id="compose">
-        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent"><button type="button" class="mic" data-act="photo" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></button><input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
+        <div class="bar"><input id="input" autocomplete="off" placeholder="Ask, find or offer anything…" aria-label="Message your agent">${FEATURES.photo ? `<button type="button" class="mic" data-act="photo" title="List something from a photo" aria-label="List something from a photo"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg></button>` : ""}<input type="file" id="photo-in" accept="image/*" hidden><button type="button" class="mic" id="mic" hidden aria-label="Speak instead of typing" title="Speak"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg></button><button class="send" id="send" aria-label="Send">↑</button></div>
         <div class="row" id="composer-note"></div></form></div></main>
       <aside class="panel" id="panel" hidden><div class="resizer" id="resizer" role="separator" aria-orientation="vertical" aria-label="Drag to resize" tabindex="0" title="Drag to resize · double-click to reset"></div><div class="topbar panel-top"><span id="panel-title"></span><button class="btn quiet compact close" data-act="screen" data-screen="chat" aria-label="Back to chat">${icon("x", 20)}</button></div><div class="content" id="panel-body"></div></aside></div>`;
   startPanel(paint);
@@ -1203,7 +1203,7 @@ async function onClick(e) {
     // Anything chosen in the menu closes it (on a phone it covers the page).
     if (el.closest(".sidebar")) setNav(false);
     if (a === "skip") return $("#input").focus();
-    if (a === "photo") return $("#photo-in").click();
+    if (a === "photo") return FEATURES.photo ? $("#photo-in").click() : undefined;
     // ‹ Close or ‹ Back (panel.js has closed it): its entry in the history goes too.
     if (a === "panel-close") { if (history.state?.detail) history.back(); return; }
     if (a === "screen") return openScreen(el.dataset.screen, null, { keepChat: true });
@@ -1522,6 +1522,13 @@ async function cardAction(a, el, { s, m, c }) {
     c.autonomy = r.autonomy;
   }
   if (a === "gate-override") c.gateOverride = true;
+  // The conversational card: show every detail, or go back to the short version; stop asking and search now; a
+  // profile question that takes several answers is done; the owner's private lowest (or "ask me each time").
+  if (a === "card-edit") c.editing = true;
+  if (a === "card-edit-done") c.editing = false;
+  if (a === "brief-skip") c.skipAsk = true;
+  if (a === "brief-about-done") (c.profileDone ??= {})[el.dataset.key] = true;
+  if (a === "offer-floor-pick") { if (el.dataset.val === "ask") c.floorAsked = true; else { c.floor = Number(el.dataset.val); c.floorAsked = true; } }
   if (a === "matches-more") c.showAll = true;
   if (a === "gate-answer") {
     const j = Number(el.dataset.j), q = c.gate.missing[j], opt = el.dataset.val ?? q.options[Number(el.dataset.k)];

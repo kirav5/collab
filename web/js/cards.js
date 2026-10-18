@@ -8,7 +8,7 @@ import { gpay } from "./gpay.js";
 const gpayOk = () => gpay.available;
 import { live } from "./live.js";
 import { fitsReasons } from "./fits.js";
-import { avatarHTML, brand, byTag, esc, label, logo, money, now, shortName, tag, tierTag, time, icon, dots } from "./ui.js";
+import { avatarHTML, brand, byTag, esc, label, logo, money, now, shortName, tag, tierTag, time, icon, dots, FEATURES } from "./ui.js";
 import { cap, limitPast, limitWords, listingRoles, offerWords, partyRoles, rolesOf } from "./roles.js";
 
 const STATUS_ICON = { open: "○", pending: "◔", answered: "●", declined: "✕" };
@@ -28,7 +28,7 @@ export function renderCard(card, m, i) {
     case "offer": return offerCard(card, at);
     case "saved": return savedCard(card, at);
     case "sources": return sourcesCard(card, at);
-    case "suggest": return `<div class="row">${card.options.map(o => (o.text ? `<button class="chip" data-act="send-text" data-text="${esc(o.text)}">↗ ${esc(o.label)}</button>` : `<button class="chip" data-act="photo">${esc(o.label)}</button>`)).join("")}<span class="small faint">${esc(card.hint ?? "Saved to your private context.")}</span></div>`;
+    case "suggest": return `<div class="row">${card.options.filter(o => o.text || FEATURES.photo).map(o => (o.text ? `<button class="chip" data-act="send-text" data-text="${esc(o.text)}">↗ ${esc(o.label)}</button>` : `<button class="chip" data-act="photo">${esc(o.label)}</button>`)).join("")}<span class="small faint">${esc(card.hint ?? "Saved to your private context.")}</span></div>`;
     case "engagement": return engagementCard(live.engagements.get(card.id), card.id);
     case "discovery": return discoveryCard(card, at);
     case "store": return storeCard(card);
@@ -228,6 +228,49 @@ function gateBanner(c, at, kind) {
     <div class="row"><button class="btn quiet compact" data-act="gate-override" ${at}>${kind === "offer" ? "Publish" : "Search"} as it is</button></div></div>`;
 }
 
+/** What the agent still needs to ask about a request, in order: Gemini's questions, the gate's, then a job seeker's profile. */
+function briefQueue(c, ask) {
+  if (c.skipAsk) return [];
+  const d = c.draft, out = ask.map(([q, j]) => ({ q, kind: "clarify", j }));
+  for (const [q, j] of gateOpen(c)) out.push({ q, kind: "gate", j });
+  for (const p of d.profile ?? []) {
+    const have = d.shared.about?.find(x => x.label === p.label)?.value;
+    if (!(c.profileDone ?? {})[p.label] && !(have && !p.multi)) out.push({ q: p, kind: "profile" });
+  }
+  return out;
+}
+
+/** One question, asked the way the agent would in chat: tap an answer, type it below, or skip and search now. */
+function askTurn(c, item, left, who, at) {
+  const q = item.q, said = (c.answered ?? []).filter(x => x.said || x.before);
+  const chips = item.kind === "profile"
+    ? (q.options ?? []).map(o => { const cur = c.draft.shared.about?.find(x => x.label === q.label)?.value ?? "", on = q.multi ? cur.split(/\s*,\s*/).includes(o) : cur === o;
+        return `<button class="chip ${on ? "on" : ""}" aria-pressed="${on}" data-act="brief-about" data-key="${esc(q.label)}" data-val="${esc(o)}" ${at}>${esc(o)}</button>`; }).join("")
+    : recallChips(c, q, (o, k, extra) => `data-act="${item.kind === "gate" ? "gate-answer" : "brief-clarify"}" data-j="${item.j}" ${extra ? `data-val="${esc(o)}"` : `data-k="${k}"`} ${at}`);
+  const typed = item.kind === "profile" && (!q.options?.length || q.multi);
+  return `<div class="card slim agent-ask" ${at}>
+    ${said.length ? `<span class="small faint">From what you've told me: ${said.map(x => `<b>${esc(x.answer)}</b>`).join(" · ")}</span>` : ""}
+    <p class="ask-q">${esc(q.question)}</p>
+    ${chips ? `<div class="row">${chips}</div>` : ""}
+    ${typed ? `<div class="row"><input class="field" data-edit="about" data-key="${esc(q.label)}" ${at} maxlength="120" placeholder="${q.options?.length ? "Or add your own" : "Type it here"}" aria-label="${esc(q.label)}"><button class="btn secondary compact" data-act="brief-about-done" data-key="${esc(q.label)}" ${at}>Next</button></div>` : ""}
+    <div class="row"><span class="small faint">${typed ? "" : "Or type your answer below. "}${left > 1 ? `${left - 1} more after this.` : "Last one."}</span><button class="btn quiet compact end" data-act="brief-skip" ${at}>Skip — find ${esc(who)} now</button></div>
+  </div>`;
+}
+
+/** The request, ready: what goes out in one glance, and two actions — find, or edit the details. */
+function briefSummary(c, { who, where, shown, paid, R }, at) {
+  const d = c.draft, s = d.shared, limit = d.mandate?.price?.limit;
+  return `<div class="card brief" ${at}>
+    <div class="row">${label("I'll look for", "sq accent")}<span class="end">${tag(d.need.category.replace(/-/g, " "))}</span></div>
+    <b class="brief-title">${esc(s.title)}</b>
+    <span class="small muted row" style="gap:6px">${icon("pin", 14)}${esc(where)}</span>
+    ${shown.length ? `<span class="small">${shown.map(({ r }) => esc(r.value)).join(" · ")}</span>` : ""}
+    ${s.about?.length ? `<span class="small">Your profile: ${s.about.map(x => esc(x.value)).join(" · ")}</span>` : ""}
+    <span class="small faint">${limit ? `${paid ? "Least you'd take" : "Most you'll pay"}: ${money(limit)} — private.` : `No ${esc(R.price)} limit set — I'll check with you before agreeing.`} Only what's above goes out.</span>
+    <div class="row"><button class="btn accent" data-act="brief-send" ${at}>Find ${esc(who)}</button><button class="btn quiet" data-act="card-edit" ${at}>Edit details</button></div>
+  </div>`;
+}
+
 function briefCard(c, at) {
   const d = c.draft, s = d.shared, need = d.need;
   if (c.step === "matches") return matchesCard(c, at);
@@ -240,8 +283,15 @@ function briefCard(c, at) {
   const titleWords = new Set(`${s.title} ${need.place.name}`.toLowerCase().split(/[^\p{L}\p{N}]+/u));
   const shown = s.requirements.map((r, j) => ({ r, j })).filter(({ r }) => r.value.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).some(w => !titleWords.has(w)));
   const who = d.who || providers, ask = (d.clarify ?? []).map((q, j) => [q, j]).filter(([q]) => !answeredLike(c, q));
+  // Agentic, as an assistant asks: the questions still open come one at a time, as the agent asking (tap an answer or
+  // type it below); then a short summary with two actions. Every detail is still there under "Edit details".
+  if (!c.editing) {
+    const queue = briefQueue(c, ask);
+    return queue.length ? askTurn(c, queue[0], queue.length, who, at) : briefSummary(c, { who, where, shown, paid, R }, at);
+  }
   // What needs the owner now (Gemini's questions, the requirements, the limit) is in view; the rest is under More options.
   return `<div class="card brief" ${at}>
+    <div class="row"><span class="small faint">All the details</span><button class="btn quiet compact end" data-act="card-edit-done" ${at}>Done</button></div>
     ${stages(0)}
     <div class="row">${label("I'll look for", "sq accent")}<span class="end">${tag(need.category.replace(/-/g, " "))}</span></div>
     <input class="field bare title-edit" data-edit="title" value="${esc(s.title)}" aria-label="Title">
@@ -395,11 +445,42 @@ function hoursPick(c, at) {
 }
 
 
+/** "What's the lowest you'd take?" — asked as the agent would, with amounts to tap (never shown to anyone). */
+function floorTurn(c, o, L, at) {
+  const p = o.price.amount, step = p >= 10_000 ? 500 : p >= 1_000 ? 50 : 10, nice = x => Math.round(x / step) * step;
+  const opts = [...new Set((L.pays ? [1.05, 1.1, 1.2] : [0.95, 0.9, 0.85]).map(f => nice(p * f)))].filter(v => v > 0 && v !== p);
+  return `<div class="card slim agent-ask" ${at}>
+    <span class="small faint">${esc(o.title)} · ${money(p, o.price.period)}${c.missing?.length ? ` · ${c.missing.length} common questions answered for you` : ""}</span>
+    <p class="ask-q">${L.pays ? "What's the most you'd pay" : "What's the lowest you'd take"}? Your agent bargains up to it and never says it.</p>
+    <div class="row">${opts.map(v => `<button class="chip" data-act="offer-floor-pick" data-val="${v}" ${at}>${money(v, o.price.period)}</button>`).join("")}<button class="chip" data-act="offer-floor-pick" data-val="ask" ${at}>Ask me each time</button></div>
+    <div class="row"><input class="field compact" style="max-width:150px" type="number" min="1" data-edit="floor" ${at} placeholder="Another amount" aria-label="${L.pays ? "Most you'd pay" : "Lowest you'd take"}"><button class="btn quiet compact end" data-act="offer-floor-pick" data-val="ask" ${at}>Skip</button></div>
+  </div>`;
+}
+
+/** The listing, ready: what people will see, what's already answered for them, and two actions. */
+function listingSummary(c, o, L, at) {
+  const answers = (c.missing ?? []).map(m => [m.label, c.missingAnswers?.[m.label]]).filter(([, v]) => String(v ?? "").trim());
+  const agent = autonomyOf(c) === "close" ? "bargains and agrees" : autonomyOf(c) ? "bargains; you confirm the deal" : "asks you before each move";
+  return `<div class="card" ${at}>
+    <div class="row">${label("Your listing", "sq accent")}<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span></div>
+    <b>${esc(o.title)}</b>
+    <span class="small muted">${esc(o.place.name)} · ${esc(o.category.replace(/-/g, " "))}</span>
+    <p class="small">${esc(c.publicText ?? c.text)}</p>
+    ${answers.length ? `<span class="small">Answered for ${esc(L.responders)}: ${answers.slice(0, 3).map(([k, v]) => `${esc(k)}: <b>${esc(String(v))}</b>`).join(" · ")}${answers.length > 3 ? ` · ${answers.length - 3} more` : ""}</span>` : ""}
+    <span class="small faint">${c.floor ? `${L.pays ? "Most" : "Lowest"} ${money(c.floor, o.price.period)} — private. ` : ""}Your agent ${agent}.${c.terms?.length ? ` ${c.terms.length} terms set.` : ""}</span>
+    <div class="row"><button class="btn accent" data-act="offer-publish" ${at}>Publish</button><button class="btn quiet" data-act="card-edit" ${at}>Edit details</button></div>
+  </div>`;
+}
+
 function offerCard(c, at) {
   const L = listingRoles(c);
   if (c.step === "published") return `<div class="card"><div class="row">${label("Published", "sq fresh")}${tag("Public")}</div><p class="small">${esc(c.publicText)}</p><p class="small muted">Live. ${autonomyOf(c) === "close" ? `Your agent negotiates and agrees${c.floor ? ` ${L.pays ? "up" : "down"} to ${money(c.floor)} (private)` : ""} for ${c.days ?? 7} days.` : autonomyOf(c) ? `Your agent negotiates${c.floor ? ` ${L.pays ? "up" : "down"} to ${money(c.floor)} (private)` : ""}. You confirm each deal.` : "Your agent asks you before each move."}</p><div class="row"><button class="btn secondary compact" data-act="screen" data-screen="context" title="Stock, bookable hours, your terms and your agent's rules">Manage this listing</button>${c.factId && c.offer && !L.pays ? `<button class="btn secondary compact" data-act="demo-customers" data-id="${esc(c.factId)}" title="Simulated people nearby ask for this; their agents talk to yours">Try it with demo customers</button>` : ""}</div></div>`;
   const o = c.offer;
+  // Agentic: the one thing only the owner knows (their private lowest) is asked as a question; then a short summary
+  // with two actions. Everything else (answers, terms, how the agent bargains…) is under "Edit details".
+  if (o && !c.editing) return !c.floor && !c.floorAsked ? floorTurn(c, o, L, at) : listingSummary(c, o, L, at);
   return `<div class="card" ${at}>
+    ${o ? `<div class="row"><span class="small faint">All the details</span><button class="btn quiet compact end" data-act="card-edit-done" ${at}>Done</button></div>` : ""}
     <div class="row">${label(!o && c.basics ? `Offering · ${c.basics.label}` : c.photo ? "Offering · read from your photo by Gemini" : "Offering · read by Gemini", "sq accent")}${o ? `<span class="end"><b>${money(o.price.amount, o.price.period)}</b></span>` : ""}</div>
     ${c.photo ? `<img class="item-photo" src="${esc(c.photo.url)}" alt="Your photo" decoding="async" onerror="this.remove()">` : ""}
     ${o ? `<b>${esc(o.title)}</b><p class="small muted">${esc(o.place.name)} · ${esc(o.category.replace(/-/g, " "))}</p>

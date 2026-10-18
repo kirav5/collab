@@ -798,3 +798,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; max-heigh
 /* The open screen's title row: menu (or Back), title and close share one centre line. */
 #panel-title { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 #panel-title .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The agent asking one thing at a time (a request's questions, a listing's private lowest): a conversation turn, not a form. */
+.agent-ask { border-left: 3px solid var(--accent); gap: 10px; }
+.agent-ask .ask-q { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.4; }
+.agent-ask .row .field { flex: 1; min-width: 140px; }
+.brief-title { font-size: 16px; }
