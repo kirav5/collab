@@ -224,7 +224,8 @@ async function ask(db: Docs, e: Engagement, s: Side, item: Omit<InboxItem, "id" 
     const x = (await db.get(INBOX, open)) as InboxItem | null;
     if (x?.status === "open" && x.kind === item.kind && (decision ? x.proposalId === proposalId : item.qaId ? x.qaId === item.qaId : x.question === item.question)) return x.id;
   }
-  const id = newId();
+  // A question has one inbox item, whoever asks first: two runs at once write the same one instead of two.
+  const id = item.qaId && !decision ? `${e.id}_${item.kind}_${item.qaId}`.replace(/[^\w-]/g, "").slice(0, 120) : newId();
   const t = now();
   // An offer letter is open until the day it says; a deal to confirm lapses at the usual deadline; the rest wait.
   const deadline = item.kind === "offer" && e.offerLetter ? endOfDay(e.offerLetter.validUntil) : t + policy().timing.decisionTtlSec;

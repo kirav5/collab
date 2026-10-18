@@ -1960,7 +1960,11 @@ async function inboxFor(uid: string): Promise<InboxItem[]> {
   const demo = (await Promise.all(asks.map(async ({ e, side }) => ((await db.find(INBOX, [["engagementId", "==", e.id], ["status", "==", "open"]], 20)) as InboxItem[]).filter(i => i.side === side)))).flat();
   const all = [...mine, ...demo];
   for (const i of all.filter(x => ended.has(x.engagementId))) void db.update(INBOX, i.id, (x: InboxItem | null) => (x ? { ...x, status: "done" } : null)).catch(() => {});
-  return all.filter(i => !ended.has(i.engagementId)).sort((a, b) => b.createdAt - a.createdAt);
+  // One item per question (copies an older race left behind show once).
+  const seen = new Set<string>();
+  return all.filter(i => !ended.has(i.engagementId)).sort((a, b) => a.createdAt - b.createdAt)
+    .filter(i => { const k = i.qaId ? `${i.engagementId}|${i.kind}|${i.qaId}` : i.id; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 app.get("/api/inbox", route(async req => inboxFor(req.uid)));
 app.post("/api/inbox/:id", route(async req => {
@@ -1989,6 +1993,9 @@ app.post("/api/inbox/:id", route(async req => {
     ...(item.kind === "offer" && typeof b.changes === "string" ? { changes: text(b.changes, 300) } : {}) }).catch(async err => { await reopen(); throw err; });
   // What the owner answered is kept, so the same question is answered for them next time — never for a demo person
   // answered on their behalf.
+  // Copies of the same question left by an older race are closed with it.
+  if (item.qaId) for (const x of (await db.find(INBOX, [["engagementId", "==", item.engagementId], ["status", "==", "open"]], 50)) as InboxItem[])
+    if (x.id !== item.id && x.qaId === item.qaId && x.kind === item.kind) await db.update(INBOX, x.id, (c: InboxItem | null) => (c ? { ...c, status: "done" } : null));
   if (item.kind === "answer" && !asDemo && !b.decline && typeof b.text === "string" && b.text.trim() && item.question)
     await rememberAnswer(db, req.uid, { question: item.question, answer: b.text, about: e.offer?.title?.split(" · ")[0] ?? e.title, reuse: b.reuse !== false }, now());
   if (r.turn) {
