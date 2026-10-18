@@ -49,13 +49,13 @@ test("at the deadline an unconfirmed deal lapses; an unanswered question is remi
   await askOwner(db, cur, "provider", { kind: "answer", qaId: "q2", question: "When can you collect?" }); await save(db, cur);
   const later = confirm.deadline! + 1, reminders: string[] = [];
   const r = await expireDecisions(db, later, async i => { reminders.push(i.question!); });
-  assert.deepEqual(r, { lapsed: 1, reminded: 1 });
+  assert.deepEqual(r, { lapsed: 1, reminded: 1, timedOut: 0 });
   const after = await load(db, e.id);
   assert.equal(after.phase, "asking"); assert.equal(after.negotiation.deal, null);
   assert.ok(after.events.some(x => /lapsed/.test(x.text)));
   assert.equal(((await db.get(INBOX, confirm.id)) as InboxItem).status, "expired");
   await assert.rejects(resolve(db, null, confirm, { confirm: true }), Stale, "a lapsed approval can't be used later");
-  assert.deepEqual((await expireDecisions(db, later + 60, async () => {})), { lapsed: 0, reminded: 0 }, "one reminder only");
+  assert.deepEqual((await expireDecisions(db, later + 60, async () => {})), { lapsed: 0, reminded: 0, timedOut: 0 }, "one reminder only");
   assert.equal(confirm.deadline! - confirm.createdAt, DEFAULT_POLICY.timing.decisionTtlSec);
 });
 
@@ -71,4 +71,30 @@ test("a lapsed deal gives its held stock back", async () => {
   await expireDecisions(db, confirm.deadline! + 1, async () => {});
   assert.equal(available(await db.get(RESOURCES, stock.id), confirm.deadline! + 1), 1, "released at the lapse, not only at the hold's own expiry");
   assert.equal((await load(db, e.id)).reservation?.state, "released");
+});
+
+test("a negotiation waiting a day on its owners' limits closes politely; nothing is agreed", async () => {
+  const { db, e } = await setup();
+  e.phase = "negotiating"; await save(db, e);
+  const cur = await load(db, e.id);
+  await askOwner(db, cur, "requester", { kind: "move", question: "No deal inside your limits after 5 offers. Their latest: ₹1,600." }); await save(db, cur);
+  const [move] = await openFor(db, "shop");
+  const notes: string[] = [];
+  assert.deepEqual(await expireDecisions(db, move.deadline! - 60, async () => {}), { lapsed: 0, reminded: 0, timedOut: 0 }, "not before the day is out");
+  assert.deepEqual(await expireDecisions(db, move.deadline! + 1, async i => { notes.push(i.question!); }), { lapsed: 0, reminded: 0, timedOut: 1 });
+  const after = await load(db, e.id);
+  assert.equal(after.phase, "closed"); assert.equal(after.negotiation.deal, null);
+  assert.deepEqual(after.waiting, { requester: null, provider: null });
+  assert.ok(after.events.at(-1)!.text.startsWith("Closed without a deal"));
+  assert.equal((await openFor(db, "shop")).length, 0);
+  assert.match(notes[0], /Closed without a deal/);
+});
+
+test("a reminded question leaves the due list, so it never crowds out newer deadlines", async () => {
+  const { db, e } = await setup();
+  await askOwner(db, e, "provider", { kind: "answer", qaId: "q9", question: "Blue or green?" }); await save(db, e);
+  const [q] = await openFor(db, "ana");
+  await expireDecisions(db, q.deadline! + 1, async () => {});
+  const after = (await db.get(INBOX, q.id)) as InboxItem;
+  assert.ok(after.deadline! > q.deadline! + 86_400, "pushed out after its one reminder");
 });

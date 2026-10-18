@@ -176,6 +176,7 @@ test("rupee amounts in agents' messages read the Indian way", async () => {
   const { indianRupees } = await import("../src/core/engage.ts");
   assert.equal(indianRupees("We can offer it at ₹13,500,000."), "We can offer it at ₹1,35,00,000.");
   assert.equal(indianRupees("₹3,299 per task, or ₹ 720000"), "₹3,299 per task, or ₹7,20,000");
+  assert.equal(indianRupees("We can do ₹1.16 Cr, up from ₹6.8 lakh."), "We can do ₹1,16,00,000, up from ₹6,80,000.");
   assert.equal(indianRupees("₹1,35,00,000 stays"), "₹1,35,00,000 stays");
 });
 

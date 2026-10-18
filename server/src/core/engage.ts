@@ -140,7 +140,10 @@ const checking = (e: Engagement, s: Side) => {
   return `The ${s === sellerOf(e) ? roles.payee : roles.payer}'s agent is checking with ${shortName(e[s].name)}.`;
 };
 /** Rupee amounts read the Indian way, however the model grouped them: "₹13,500,000" → "₹1,35,00,000". */
-export const indianRupees = (t: string) => t.replace(/₹\s?(\d{1,3}(?:,\d{3})+|\d{6,})(?![\d,])/g, (_, n: string) => `₹${Number(n.replace(/,/g, "")).toLocaleString("en-IN")}`);
+export const indianRupees = (t: string) => t
+  // One style for amounts in a conversation: "₹1.16 Cr" / "₹6.8 lakh" (Gemini's) become ₹1,16,00,000 / ₹6,80,000.
+  .replace(/₹\s?(\d+(?:\.\d+)?)\s?(crores?|cr|lakhs?|lacs?|l)\b/gi, (_, n: string, u: string) => `₹${Math.round(Number(n) * (/^c/i.test(u) ? 1e7 : 1e5)).toLocaleString("en-IN")}`)
+  .replace(/₹\s?(\d{1,3}(?:,\d{3})+|\d{6,})(?![\d,])/g, (_, n: string) => `₹${Number(n.replace(/,/g, "")).toLocaleString("en-IN")}`);
 /** One item's price isn't also its total: "₹3,250 per unit, which comes to ₹3,250 in total" → "₹3,250". */
 export const oneTotal = (t: string) => t.replace(/(₹[\d,]+)\s*(?:per|\/)\s*(?:unit|item|piece)[^.₹]{0,30}?(?:comes to|for a total of|totalling|totaling|total of)\s*\1(?:\s*in total)?/gi, "$1");
 const say = (e: Engagement, who: Event["who"], text: string, by?: Event["by"]) => { e.events.push({ at: now(), who, text: oneTotal(indianRupees(text)).slice(0, 600), ...(by ? { by } : {}) }); };
@@ -888,9 +891,11 @@ export async function resolve(db: Docs, model: Model | null, item: InboxItem, r:
       const res = await move(model, e, s, r.mandate, out);
       // Store the limit the owner used, so every device of theirs sees the same one. A delegated row keeps its
       // autonomy and expiry but takes the new mandate; an "ask" row never lets the agent move on its own.
+      // A demo person's limit is the same for everyone who tries them: a limit chosen while acting for one applies to
+      // this conversation only (it once left a demo seller at ₹1,600 instead of its ₹1,500 for every later tester).
       const key = s === "provider" ? `fact:${e.offer.factId}` : `brief:${e.briefId}`;
       const existing = (await db.get(LIMITS, key)) as DelegatedLimit | null;
-      await db.set(LIMITS, key, existing && existing.owner === uidOf(e, s) && existing.autonomy !== "ask"
+      if (!uidOf(e, s)!.startsWith("demo-")) await db.set(LIMITS, key, existing && existing.owner === uidOf(e, s) && existing.autonomy !== "ask"
         ? { ...existing, mandate: r.mandate }
         : { key, owner: uidOf(e, s)!, mandate: r.mandate, autonomy: "ask", expires: null, createdAt: existing?.createdAt ?? now() });
       if (res?.escalate) {
