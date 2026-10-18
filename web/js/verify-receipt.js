@@ -26,7 +26,10 @@ async function verifyAp2(b, key, kid, dealHash, aliases = []) {
 
 export async function verifyReceiptBundle(r, trustedKey) {
   if (!trustedKey) throw new Error('A trusted public key is required to verify this receipt.');
-  const key = await crypto.subtle.importKey('jwk', trustedKey, { name: 'Ed25519' }, false, ['verify']);
+  // Only the members that define the key: Safari's WebCrypto rejects a JWK carrying others (our published keys add
+  // alg "EdDSA", use and an aliases list), with "Data provided to an operation does not meet requirements".
+  const { kty, crv, x } = trustedKey;
+  const key = await crypto.subtle.importKey('jwk', { kty, crv, x }, { name: 'Ed25519' }, false, ['verify']);
   const signature = async (subject, hash, value) => {
     try {
       const [prefix, payload, sig, extra] = value.split('.');
