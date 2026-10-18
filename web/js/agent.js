@@ -271,7 +271,9 @@ export async function offerReply(text, d, extra = {}) {
   return { text: said, cards: [{ type: "offer", text, publicText: d.publicText ?? text, offer: d.offer ?? null, ownerPays: !!d.ownerPays, missing: d.missing ?? [], floor: d.floor ?? null, basics: d.basics ?? null, gate: d.gate ?? null, insights, step: "review", ...suggested,
     ...(Number.isInteger(stated) && stated > 0 && stated < 100_000 ? { stock: stated } : {}),
     ...(Object.keys(missingAnswers).length ? { missingAnswers, answeredMissing: (d.missing ?? []).every(m => missingAnswers[m.label]) } : {}),
-    ...(Object.keys(fromMemory).length ? { fromMemory } : {}), ...(Object.keys(fromNotes).length ? { fromNotes } : {}), ...extra }] };
+    ...(Object.keys(fromMemory).length ? { fromMemory } : {}), ...(Object.keys(fromNotes).length ? { fromNotes } : {}),
+    // The owner's terms came with the draft when they were ready in time (else the card asks for them).
+    ...(d.terms?.terms?.length ? { terms: d.terms.terms, starters: d.terms.starters ?? [], termsTried: true } : {}), ...extra }] };
 }
 
 // MARK: - What the owner answered before
