@@ -23,3 +23,7 @@ test("returning: a profile kept in this browser, or Try tapped once", () => {
   assert.equal(returning(store({ "collab.tried": "1" })), true);
   assert.equal(returning({ get length(): number { throw new Error("blocked"); } } as any), false, "storage blocked");
 });
+
+test("coming back from the site's Try opens Collab, not the site again", () => {
+  assert.equal(shouldLand("?try"), false);
+});
