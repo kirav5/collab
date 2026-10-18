@@ -137,7 +137,9 @@ async function uidOf(req: Request): Promise<string> {
 /** Gemini calls cost money: each account gets a steady allowance (a burst of 60, then 1 every 15 s), counted in
  *  Firestore so it holds across every instance. */
 async function spend(uid: string, n = 1) {
-  if (!(await take(db, `user:${uid}`, n, 60, 1 / 15))) throw new HttpError(429, "Slow down a little — try again in a minute.");
+  // A test account named for a load test (QUOTA_BOOST_UIDS, set only on that deploy) gets a larger allowance.
+  const boosted = (env.QUOTA_BOOST_UIDS ?? "").split(",").map(s => s.trim()).filter(Boolean).includes(uid);
+  if (!(await take(db, `user:${uid}`, n, boosted ? 3000 : 60, boosted ? 3 : 1 / 15))) throw new HttpError(429, "Slow down a little — try again in a minute.");
 }
 
 const route = (h: Handler, auth = true) => async (req: Request, res: Response, next: NextFunction) => {
