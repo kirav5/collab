@@ -256,7 +256,7 @@ app.use("/api", async (req, res, next) => {
   const reason = typeof token !== "string" ? "none" : decision === "expired" ? "expired" : "invalid";
   if (outcome === "refuse") {
     appCheckStats.refused++;
-    log.warn("app check refused", { path: req.path, mode: APPCHECK, reason, replayProtected: consume });
+    log.warn("app check refused", { path: req.path, mode: APPCHECK, reason, replayProtected: consume, clientError: String(req.get("x-appcheck-error") ?? "").slice(0, 80) || null });
     return res.status(401).json({ code: "APP_CHECK", error: consume
       ? "Payments, pickups and price checks need a browser check by Google reCAPTCHA, and this browser couldn't pass it. Reload Collab; if a content blocker is on, allow google.com for this site."
       : "This browser couldn't be verified by Google reCAPTCHA. Reload Collab and try again; a content blocker or private window can stop the check." });
